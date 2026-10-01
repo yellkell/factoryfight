@@ -167,16 +167,23 @@ await page.evaluate(() => window.__tubes.menu.act('start-order'));
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
 await page.waitForTimeout(300);
 let sg = await siege();
-check(sg.phase === 'build' && sg.wave === 0, `the siege opens building for wave 1 (${sg.phase} ${sg.wave})`);
+check(sg.phase === 'core' && sg.breaches.length === 0, `the siege opens waiting for its CORE, no clock, no breach (${sg.phase})`);
+const cat0 = await page.evaluate(() => window.__tubes.build.catalogue().available);
+check(cat0.length === 1 && cat0[0] === 'dock', `and the core is the only thing on offer (${cat0.join(', ')})`);
+const coreAt = await handPlace('dock', 0, 0);
+check(coreAt.ok, 'the CORE stands where you put it');
+await page.waitForTimeout(200);
+sg = await siege();
+check(sg.phase === 'build' && sg.wave === 0, `and the siege begins: building for wave 1 (${sg.phase} ${sg.wave})`);
 check(sg.breaches.length === 1, `one breach is already cracking (${sg.breaches.length})`);
 check((sg.bank.gear ?? 0) === 5, `the bank opens with 5 GEAR (${sg.bank.gear})`);
 let units = await plan();
 const core = units.find((u) => u.type === 'dock');
-check(Boolean(core), 'the CORE stands on its own');
+check(Boolean(core), 'the CORE is on the plan');
 const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(
-  ['maker', 'belt', 'turret'].every((t) => cat.includes(t)) && !cat.includes('wall'),
-  `wave 1's catalogue: maker, rail, turret — no wall yet (${cat.join(', ')})`,
+  ['maker', 'belt', 'turret'].every((t) => cat.includes(t)) && !cat.includes('wall') && !cat.includes('dock'),
+  `wave 1's catalogue: maker, rail, turret — no wall, no second core (${cat.join(', ')})`,
 );
 await studio();
 
@@ -382,8 +389,8 @@ await page.waitForTimeout(400);
 sg = await siege();
 units = await plan();
 check(
-  sg.phase === 'build' && sg.wave === 0 && units.length === 1,
-  `TRY AGAIN deals a fresh floor at wave 1 (${sg.phase}, wave ${sg.wave + 1}, ${units.length} unit)`,
+  sg.phase === 'core' && sg.wave === 0 && units.length === 0,
+  `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units)`,
 );
 
 await browser.close();

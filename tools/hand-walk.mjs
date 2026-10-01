@@ -149,34 +149,34 @@ await frames(4);
 const note = await page.evaluate(() => window.__tubes.menu.boardButtons());
 void note;
 
-/* ── THE CUFF ────────────────────────────────────────────────────────── */
+/* ── THE LEFT HAND ───────────────────────────────────────────────────── */
 
-console.log('THE CUFF');
+console.log('THE LEFT HAND');
 await page.evaluate(() => window.__tubes.startShop());
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
 await pose('left', LEFT_REST);
 await pose('right', RIGHT_REST);
 await frames(8);
 let c = await cuff();
-check(!c.shown, `hands at rest: the cuff stays down (facing ${c.facing.toFixed(2)})`);
-await pose('left', [-0.04, 1.42, -0.28], WRIST_UP);
+check(!c.shown, `hands at rest: nothing on the left hand (facing ${c.facing.toFixed(2)})`);
+const raiseLeft = () => pose('left', [-0.04, 1.42, -0.28], WRIST_UP);
+await raiseLeft();
 await frames(10);
 c = await cuff();
-check(c.shown, `turn the wrist to look at it and it RISES (facing ${c.facing.toFixed(2)})`);
+check(c.shown, `open the left hand toward you and the menu RISES (facing ${c.facing.toFixed(2)})`);
+let ids = c.studs.map((s) => s.id);
 check(
-  c.studs.length === 1 && c.studs[0].id === 'menu',
-  `empty-handed it offers MENU alone (${c.studs.map((s) => s.id).join(', ')})`,
+  ids.includes('tool:dock') && ids.filter((i) => i.startsWith('tool:')).length === 1,
+  `a bare floor: the toolbelt holds ONE tile, the CORE (${ids.join(', ')})`,
 );
-await page.screenshot({ path: 'shots/hands/cuff.png' });
-console.log('  · shots/hands/cuff.png');
+check(ids.includes('menu') && !ids.includes('horn'), 'and the watch offers PAUSE, no horn yet');
+await page.screenshot({ path: 'shots/hands/core-first.png' });
+console.log('  · shots/hands/core-first.png');
 
-/* ── THE POKE ────────────────────────────────────────────────────────── */
-
-console.log('THE POKE');
-/** Drive the RIGHT hand so its real index tip lands on a stud (or `off`
- *  metres out along the stud's face normal). */
-async function tipTo(stud, off = 0) {
-  const want = [stud.x + stud.nx * off, stud.y + stud.ny * off, stud.z + stud.nz * off];
+/** Drive the RIGHT hand so its real index tip lands on a face (or `off`
+ *  metres out along the face's normal). */
+async function tipTo(t, off = 0) {
+  const want = [t.x + t.nx * off, t.y + t.ny * off, t.z + t.nz * off];
   // The tip hangs off the hand at a fixed offset: move the hand by the
   // miss, twice, and the tip lands where it was asked to.
   for (let pass = 0; pass < 2; pass++) {
@@ -190,58 +190,100 @@ async function tipTo(stud, off = 0) {
     await frames(4);
   }
 }
+/** Hover, press, lift — one honest poke. */
+async function poke(t) {
+  await tipTo(t, 0.05);
+  await frames(4);
+  await tipTo(t, 0.0);
+  await frames(6);
+  await tipTo(t, 0.06);
+  await frames(4);
+}
+const stud = async (id) => (await cuff()).studs.find((s) => s.id === id);
+const armed = () => page.evaluate(() => window.__tubes.build.armed());
 check(Array.isArray(await page.evaluate(() => window.__tubes.hands.tip('right'))), 'the right index tip is tracked');
-let menuStud = (await cuff()).studs.find((s) => s.id === 'menu');
-await tipTo(menuStud, 0.05); // hover off the face
-check(!(await page.evaluate(() => window.__tubes.site.paused)), 'hovering over MENU does nothing');
-await tipTo(menuStud, 0.0); // press
-await frames(6);
-check(await page.evaluate(() => window.__tubes.site.paused), 'POKE the MENU stud: the card comes up');
-await page.screenshot({ path: 'shots/hands/poke-menu.png' });
-console.log('  · shots/hands/poke-menu.png');
-c = await cuff();
-const back = c.studs.find((s) => s.id === 'menu');
-check(Boolean(back), 'with the card up, the same stud reads BACK');
-await tipTo(back, 0.06); // lift off (re-arms)
-await frames(10);
-await tipTo(back, 0.0);
-await frames(6);
-check(!(await page.evaluate(() => window.__tubes.site.paused)), 'POKE it again: the card goes away');
 
-// A tool in hand grows TURN and DOWN.
-await tipTo(back, 0.08);
-await page.evaluate(() => window.__tubes.build.arm('maker'));
+await poke(await stud('tool:dock'));
+check((await armed()) === 'dock', 'POKE the CORE tile: the core is in your hand');
+// Placing is the ray and a pinch; the walk aims through the same resolve.
+await page.evaluate(() => {
+  window.__tubes.build.aimAt(0.175, 0.175, 0);
+  window.__tubes.build.trigger();
+});
 await frames(6);
-c = await cuff();
+const sgNow = await page.evaluate(() => window.__tubes.siege.state());
+check(sgNow.phase === 'build', `the core lands and the siege begins (${sgNow.phase})`);
+check((await armed()) === null, 'and the tool goes back down by itself — there is only one core');
+await raiseLeft();
+await frames(6);
+ids = (await cuff()).studs.map((s) => s.id);
 check(
-  ['menu', 'turn', 'stow'].every((id) => c.studs.some((s) => s.id === id)),
-  `a tool in hand: MENU, TURN and DOWN (${c.studs.map((s) => s.id).join(', ')})`,
+  ['tool:maker', 'tool:belt', 'tool:turret', 'tool:delete'].every((t) => ids.includes(t)) && !ids.includes('tool:dock'),
+  `now the belt holds the shop (${ids.filter((i) => i.startsWith('tool:')).join(', ')})`,
 );
-const down = c.studs.find((s) => s.id === 'stow');
-await tipTo(down, 0.06);
-await frames(8);
-await tipTo(down, 0.0);
+check(ids.includes('horn') && ids.includes('menu'), 'and the watch offers HORN and PAUSE');
+await page.screenshot({ path: 'shots/hands/toolbelt.png' });
+console.log('  · shots/hands/toolbelt.png');
+
+/* ── PAUSE, BY TOUCH ─────────────────────────────────────────────────── */
+
+console.log('PAUSE, BY TOUCH');
+await poke(await stud('menu'));
+check(await page.evaluate(() => window.__tubes.site.paused), 'POKE PAUSE: the pause plate comes up');
+const pauseIds = await page.evaluate(() => window.__tubes.menu.cardButtons());
+check(
+  pauseIds.includes('resume') && pauseIds.includes('quit') && !pauseIds.some((i) => i.startsWith('card:build')),
+  `and it is just RESUME / HORN / QUIT — no tabs (${pauseIds.join(', ')})`,
+);
+await page.screenshot({ path: 'shots/hands/pause.png' });
+console.log('  · shots/hands/pause.png');
+const resume = await page.evaluate(() => window.__tubes.menu.buttonWorld('resume'));
+check(Boolean(resume), 'RESUME stands within reach');
+await poke(resume);
+check(!(await page.evaluate(() => window.__tubes.site.paused)), 'POKE RESUME with a fingertip: back to it');
+
+/* ── A TOOL IN HAND ──────────────────────────────────────────────────── */
+
+console.log('A TOOL IN HAND');
+await raiseLeft();
 await frames(6);
-check((await page.evaluate(() => window.__tubes.build.armed())) === null, 'POKE DOWN: the tool is put away');
+await poke(await stud('tool:turret'));
+check((await armed()) === 'turret', 'POKE the TURRET tile: a gun in your hand');
+ids = (await cuff()).studs.map((s) => s.id);
+check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the watch grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
+await poke(await stud('stow'));
+check((await armed()) === null, 'POKE DOWN: the tool is put away');
+await poke(await stud('tool:maker'));
+check((await armed()) === 'maker', 'pick the MAKER');
+await poke(await stud('tool:maker'));
+check((await armed()) === null, 'and poke the same tile again to put it down');
 
-// Look away and the cuff sinks — and a sunk cuff takes no pokes.
-await tipTo(down, 0.1);
+/* ── TOUCH THE CORE ──────────────────────────────────────────────────── */
+
+console.log('TOUCH THE CORE');
 await pose('left', LEFT_REST);
-await frames(10);
-check(!(await cuff()).shown, 'drop the wrist and the cuff sinks');
-
-await page.evaluate(() => {
-  window.__tubes.menu.setPause(true);
-  window.__tubes.menu.act('card:controls');
-});
+await page.evaluate(() => window.__tubes.plant.grantBank({ gear: 12, cell: 4 }));
+const coreUnit = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
+const corePt = { x: (coreUnit.i + 0.5) * 0.35 * S, y: 0.45, z: (coreUnit.j + 0.5) * 0.35 * S, nx: 0, ny: 1, nz: 0 };
+await tipTo(corePt, 0.3);
 await frames(4);
-await savePng('card-controls', await page.evaluate(() => window.__tubes.menu.snapCard()));
-const labels = await page.evaluate(() => window.__tubes.menu.cardLabels());
-void labels;
-await page.evaluate(() => {
-  window.__tubes.menu.act('card:build');
-  window.__tubes.menu.setPause(false);
-});
+await tipTo(corePt, 0);
+await frames(14);
+check(
+  (await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('core'),
+  'touch the core: its panel opens — the bank and the upgrades',
+);
+await page.screenshot({ path: 'shots/hands/core-panel.png' });
+console.log('  · shots/hands/core-panel.png');
+await tipTo(corePt, 0.35);
+const buy = await page.evaluate(() => window.__tubes.menu.buttonWorld('buy:thick-plate'));
+await poke(buy);
+const owned = (await page.evaluate(() => window.__tubes.plant.state())).upgrades;
+check(owned.includes('thick-plate'), `POKE THICK PLATE: bought off the core (${owned.join(', ')})`);
+await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:close')));
+check(!(await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('core'), 'POKE CLOSE: the core panel goes');
+await pose('right', RIGHT_REST);
+await frames(4);
 
 /* ── TWO FISTS ───────────────────────────────────────────────────────── */
 

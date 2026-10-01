@@ -566,6 +566,8 @@ export class BuildSystem extends createSystem({}) {
       // The override is per PIECE: the next one goes back to facing
       // itself, which is right far more often than a stale hand angle.
       this.forced = null;
+      // There is one core: once it stands, the tool goes back down.
+      if (this.armed === 'dock') this.armed = null;
     }
     return ok;
   }
@@ -912,6 +914,7 @@ export function typeAvailable(type: UnitType): boolean {
   // fitting is paid for, and then they are yours for good.
   if (type === 'post') return postsUnlocked();
   if (plant.mode === 'idle') return type === 'chest';
+  if (plant.siege.phase === 'core') return type === 'dock';
   // One bank, and one vat: the shop only ever needs one of each, and a
   // second of either is a way to confuse yourself, not a strategy.
   if (type === 'dock' && plant.units.some((u) => u.type === 'dock')) return false;

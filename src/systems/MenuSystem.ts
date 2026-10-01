@@ -306,6 +306,11 @@ export const menuView: {
   /** THANKS FOR PLAYING — is it up, and what does it say. */
   finaleUp?: () => boolean;
   finaleButtons?: () => string[];
+  /** Where a shown panel's button sits in the ROOM — its centre and the
+   *  panel's face normal — so a walk can poke it with a real fingertip. */
+  buttonWorld?: (id: string) => { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null;
+  /** Which panels are up (board / card / box / core / finale). */
+  panelsUp?: () => string[];
   snapFinale?: () => string;
   /** THE COACH LINE — is it up, and what does it say. */
   coachUp?: () => boolean;
@@ -315,6 +320,12 @@ export const menuView: {
 } = {};
 
 const _origin = new Vector3();
+const _tip = new Vector3();
+/** THE POKE's distances (room metres, along the panel's face normal):
+ *  hover inside `hover`, press when the tip crosses `press`, re-arm once
+ *  it is back out past `rearm`; past `through` it has gone right through
+ *  and stops counting. */
+const POKE = { hover: 0.05, rearm: 0.018, press: 0.006, through: 0.06 };
 const _dir = new Vector3();
 const _fwd = new Vector3();
 const _avoid = new Vector3();
@@ -322,6 +333,10 @@ const _avoidAt = new Vector3();
 /** Roughly half the creature's shoulder width, for the finale card's
  *  step-aside. Generous on purpose: it dances. */
 const GOOP_HALF_WIDTH = 0.34;
+/** Hand mode: how far ahead, and how far under the eyes, a panel lands —
+ *  where a fingertip falls with the elbow bent. */
+const HAND_REACH = 0.42;
+const HAND_DROP = 0.3;
 
 export class MenuSystem extends createSystem({}) {
   private board!: Panel;
@@ -349,6 +364,15 @@ export class MenuSystem extends createSystem({}) {
    *  PROGRESS has always had, for the same reason. Seconds remaining. */
   private quitArm = 0;
   private lastScreen = '';
+  private lastHandMode = false;
+  /** THE CORE PANEL (hands): the bank and the upgrades, on the core. */
+  private core!: Panel;
+  /** Per-hand poke state: a press fires once, then waits for the tip to
+   *  come back out of the face. */
+  private poke: Record<'left' | 'right', { armed: boolean }> = {
+    left: { armed: true },
+    right: { armed: true },
+  };
   /** The factory card's page: the catalogue, or the bank's bills. */
   private cardMode: 'build' | 'goals' | 'supply' | 'controls' = 'build';
   /** The GOALS page's open sheet (null = the list). */
@@ -365,6 +389,10 @@ export class MenuSystem extends createSystem({}) {
     this.box = new Panel(BOARD.boxW, BOARD.boxH, BOARD.boxPx[0], BOARD.boxPx[1]);
     this.box.setShown(false, true);
     this.scene.add(this.box.group);
+
+    this.core = new Panel(0.62, 0.7, 620, 700);
+    this.core.setShown(false, true);
+    this.scene.add(this.core.group);
 
     this.finale = new Panel(BOARD.widthM * 0.78, BOARD.heightM * 0.78, 1060, 700);
     this.finale.setShown(false, true);
@@ -412,6 +440,34 @@ export class MenuSystem extends createSystem({}) {
     menuView.snapBox = () => (this.box.ctx().canvas as HTMLCanvasElement).toDataURL('image/png');
     menuView.finaleUp = () => site.finale;
     menuView.finaleButtons = () => this.finale.buttonIds();
+    menuView.panelsUp = () =>
+      (
+        [
+          ['board', this.board],
+          ['card', this.card],
+          ['box', this.box],
+          ['core', this.core],
+          ['finale', this.finale],
+        ] as Array<[string, Panel]>
+      )
+        .filter(([, p]) => p.isShown)
+        .map(([n]) => n);
+    menuView.buttonWorld = (id) => {
+      for (const panel of [this.board, this.card, this.box, this.core, this.finale]) {
+        if (!panel.isShown) continue;
+        const r = panel.buttonRects().find((b) => b.id === id);
+        if (!r) continue;
+        const lay = panel.layout();
+        const geo = panel.mesh.geometry as import('three').PlaneGeometry;
+        const lx = ((r.x + r.w / 2) / lay.w - 0.5) * geo.parameters.width;
+        const ly = (0.5 - (r.y + r.h / 2) / lay.h) * geo.parameters.height;
+        panel.mesh.updateWorldMatrix(true, false);
+        const p = new Vector3(lx, ly, 0).applyMatrix4(panel.mesh.matrixWorld);
+        const n = new Vector3(0, 0, 1).transformDirection(panel.mesh.matrixWorld);
+        return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
+      }
+      return null;
+    };
     menuView.snapFinale = () =>
       (this.finale.ctx().canvas as HTMLCanvasElement).toDataURL('image/png');
     menuView.coachUp = () => this.coach.isShown;
@@ -436,12 +492,21 @@ export class MenuSystem extends createSystem({}) {
 
   /** Plant a panel in front of the player's face: forward on the floor
    *  plane, at a comfortable height, facing back at them. */
-  private plant(group: Object3D, height: number, reach: number): void {
+  private plant(group: Object3D, height: number, reach: number, handScale = 0.6): void {
     this.camera.getWorldPosition(_origin);
     this.camera.getWorldDirection(_fwd);
     _fwd.y = 0;
     if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1);
     _fwd.normalize();
+    // WITHIN REACH, ON HANDS. A hand presses a panel by touching it, so
+    // the panel comes to where a fingertip falls — a forearm out, a hand
+    // below the eyes — and shrinks to fit there (same canvas, so every
+    // layout and font below is unchanged; it is just nearer and smaller).
+    if (intents.handMode) {
+      reach = HAND_REACH;
+      height = _origin.y - HAND_DROP;
+    }
+    group.scale.setScalar(intents.handMode ? handScale : 1);
     group.position.set(_origin.x + _fwd.x * reach, height, _origin.z + _fwd.z * reach);
     group.rotation.set(0, Math.atan2(_fwd.x, _fwd.z) + Math.PI, 0);
   }
@@ -486,6 +551,11 @@ export class MenuSystem extends createSystem({}) {
         if (Math.abs(off) < clear) yaw += off >= 0 ? -(clear - off) : clear + off;
       }
     }
+    if (intents.handMode) {
+      reach = HAND_REACH;
+      height = _origin.y - HAND_DROP;
+    }
+    group.scale.setScalar(intents.handMode ? 0.5 : 1);
     const fx = Math.sin(yaw);
     const fz = Math.cos(yaw);
     group.position.set(_origin.x + fx * reach, height, _origin.z + fz * reach);
@@ -517,7 +587,7 @@ export class MenuSystem extends createSystem({}) {
           this.closeBox();
         } else {
           site.paused = !site.paused;
-          if (site.paused) this.plant(this.card.group, BOARD.cardPosition[1], 1.0);
+          if (site.paused) this.plant(this.card.group, BOARD.cardPosition[1], 1.0, 0.5);
         }
         this.lastKey = '';
       }
@@ -538,6 +608,17 @@ export class MenuSystem extends createSystem({}) {
     const finaleUp = site.finale;
     const boxUp = site.inspect >= 0 && site.screen === 'factory' && !finaleUp;
     const cardUp = site.paused && midShift && !boxUp && !finaleUp;
+    // THE CORE, on hands, opens its own panel: the bank and the upgrades
+    // — poked, so the things you spend live on the thing you defend.
+    const coreUp = boxUp && intents.handMode && unitById(site.inspect)?.type === 'dock';
+    const boxShow = boxUp && !coreUp;
+    // Switching between hands and controllers re-plants the board, so it
+    // is always at the distance (and size) the input in hand wants.
+    if (boardUp && intents.handMode !== this.lastHandMode) {
+      this.plant(this.board.group, BOARD.position[1], 1.35, 0.46);
+      this.lastKey = '';
+    }
+    this.lastHandMode = intents.handMode;
     // THE COACH LINE: the first sheet's one sentence, up while its
     // flange rides the ray and the card is not. The card pauses the
     // hands and says the same thing bigger, so the two never stack.
@@ -547,14 +628,15 @@ export class MenuSystem extends createSystem({}) {
     if (site.screen !== this.lastScreen) {
       this.lastScreen = site.screen;
       if (boardUp) {
-        this.plant(this.board.group, BOARD.position[1], 1.35);
+        this.plant(this.board.group, BOARD.position[1], 1.35, 0.46);
         this.lastKey = '';
       }
     }
     // The box panel and the finale card come to WHERE YOU ARE, the same
     // as everything else in this file: you clicked a box from wherever
     // you were standing, so that is where the answer appears.
-    if (boxUp && !this.box.isShown) this.plant(this.box.group, BOARD.boxPosition[1], 0.86);
+    if (boxShow && !this.box.isShown) this.plant(this.box.group, BOARD.boxPosition[1], 0.86, 0.7);
+    if (coreUp && !this.core.isShown) this.plant(this.core.group, BOARD.boxPosition[1], 0.86, 0.62);
     if (finaleUp && !this.finale.isShown) {
       // …and the finale card comes to where you are AND steps out of
       // the creature's way, which is the only thing on the last screen
@@ -576,7 +658,8 @@ export class MenuSystem extends createSystem({}) {
 
     this.board.setShown(boardUp);
     this.card.setShown(cardUp);
-    this.box.setShown(boxUp);
+    this.box.setShown(boxShow);
+    this.core.setShown(coreUp);
     this.finale.setShown(finaleUp);
     this.coach.setShown(coachUp);
 
@@ -590,6 +673,7 @@ export class MenuSystem extends createSystem({}) {
       this.board.tick(delta, pulse);
       this.card.tick(delta, pulse);
       this.box.tick(delta, pulse);
+      this.core.tick(delta, pulse);
       this.finale.tick(delta, pulse);
       this.coach.tick(delta, pulse);
       return;
@@ -599,7 +683,8 @@ export class MenuSystem extends createSystem({}) {
     const targets: Object3D[] = [];
     if (boardUp) targets.push(this.board.mesh);
     if (cardUp) targets.push(this.card.mesh);
-    if (boxUp) targets.push(this.box.mesh);
+    if (boxShow) targets.push(this.box.mesh);
+    if (coreUp) targets.push(this.core.mesh);
     if (finaleUp) targets.push(this.finale.mesh);
 
     let hover: string | null = null;
@@ -618,6 +703,36 @@ export class MenuSystem extends createSystem({}) {
             this.pointers[hand].click();
           }
         }
+      }
+    }
+    // THE POKE: a fingertip pushed through a panel's face presses what
+    // is under it. Hover is the tip within a few centimetres of the face.
+    for (const hand of ['left', 'right'] as const) {
+      const st = this.poke[hand];
+      const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.[hand]?.object3D;
+      if (intents[hand].mode !== 'hand' || !tipObj) {
+        st.armed = true;
+        continue;
+      }
+      tipObj.getWorldPosition(_tip);
+      let over: { panel: Panel; id: string | null; depth: number } | null = null;
+      for (const panel of [this.board, this.card, this.box, this.core, this.finale]) {
+        if (!panel.isShown) continue;
+        const at = panel.pokeAt(_tip);
+        if (!at || at.depth > POKE.hover || at.depth < -POKE.through) continue;
+        over = { panel, id: panel.buttonAt(at.u, at.v), depth: at.depth };
+        break;
+      }
+      if (!over) {
+        st.armed = true;
+        continue;
+      }
+      if (over.id) hover = over.id;
+      if (over.depth > POKE.rearm) st.armed = true;
+      else if (over.depth < POKE.press && st.armed && over.id) {
+        st.armed = false;
+        clicked = over.id;
+        clickedPanel = over.panel;
       }
     }
     if (hover !== this.hover) {
@@ -647,6 +762,7 @@ export class MenuSystem extends createSystem({}) {
     this.board.tick(delta, pulse);
     this.card.tick(delta, pulse);
     this.box.tick(delta, pulse);
+    this.core.tick(delta, pulse);
     this.finale.tick(delta, pulse);
     this.coach.tick(delta, pulse);
   }
@@ -656,6 +772,7 @@ export class MenuSystem extends createSystem({}) {
     if (obj === this.board.mesh) return this.board;
     if (obj === this.card.mesh) return this.card;
     if (obj === this.box.mesh) return this.box;
+    if (obj === this.core.mesh) return this.core;
     if (obj === this.finale.mesh) return this.finale;
     return null;
   }
@@ -888,7 +1005,8 @@ export class MenuSystem extends createSystem({}) {
     this.lastKey = key;
     if (boardUp) this.paintBoard();
     if (cardUp) this.paintCard();
-    if (boxUp) this.paintBox();
+    if (boxUp && !(intents.handMode && unitById(site.inspect)?.type === 'dock')) this.paintBox();
+    else if (boxUp) this.paintCore();
     if (finaleUp) this.paintFinale();
     if (coachUp) this.paintCoach();
   }
@@ -1719,6 +1837,153 @@ export class MenuSystem extends createSystem({}) {
   }
 
   /** Can the live bank cover a bill? */
+  /**
+   * PAUSED, ON HANDS — three big plates and nothing else. Building lives
+   * on your palm, the money on the core, the wave on your watch; all
+   * that is left for a pause is to come back, call the horn, or leave.
+   */
+  private paintHandPause(): void {
+    const [cw, ch] = BOARD.cardPx;
+    const sg = plant.siege;
+    const buttons: PanelButton[] = [
+      { id: 'resume', label: 'RESUME', primary: true, x: 40, y: 236, w: cw - 80, h: 160 },
+    ];
+    if (sg.phase === 'build') {
+      buttons.push({
+        id: 'card:horn',
+        label: 'SOUND THE HORN',
+        tone: UI.danger,
+        x: 40,
+        y: 420,
+        w: cw - 80,
+        h: 120,
+      });
+    }
+    buttons.push({
+      id: 'quit',
+      label: this.quitArm > 0 ? 'SURE? POKE AGAIN' : 'QUIT',
+      tone: UI.danger,
+      small: true,
+      x: 40,
+      y: ch - 150,
+      w: cw - 80,
+      h: 110,
+    });
+    const wave = waveSpec(sg.wave);
+    this.card.paint(
+      'PAUSED',
+      (g) => {
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.font = font(600, 30);
+        g.fillStyle = UI.dim;
+        const status =
+          sg.phase === 'core'
+            ? 'PLACE THE CORE'
+            : sg.phase === 'build'
+              ? `WAVE ${sg.wave + 1} \u00b7 ${wave.name} \u00b7 ${Math.ceil(sg.buildT)}s`
+              : sg.phase === 'wave'
+                ? `WAVE ${sg.wave + 1} \u00b7 ${sg.queue.length + sg.enemies.length} INCOMING`
+                : 'THE CORE HAS FALLEN';
+        g.fillText(status, cw / 2, 150, cw - 80);
+        g.font = font(500, 22);
+        g.fillStyle = UI.faint;
+        g.fillText('The works keeps running while you are here.', cw / 2, 196, cw - 80);
+      },
+      buttons,
+      this.hover,
+    );
+  }
+
+  /**
+   * THE CORE PANEL — poke the core and its bank opens: what it is
+   * holding, and the upgrades those parts can buy. On hands this is the
+   * ONLY place money is spent, and it is on the thing they are all
+   * coming to kill.
+   */
+  private paintCore(): void {
+    const W = 620;
+    const H = 700;
+    const ROW0 = 262;
+    const PITCH = 56;
+    const buttons: PanelButton[] = UPGRADES.map((u, k) => ({
+      id: `buy:${u.id}`,
+      label: '',
+      ghost: true,
+      disabled: upgradeOwned(u.id) || !this.canAfford(u.id),
+      x: 26,
+      y: ROW0 + k * PITCH,
+      w: W - 52,
+      h: PITCH - 6,
+    }));
+    buttons.push({ id: 'box:close', label: 'CLOSE', small: true, x: 26, y: H - 86, w: W - 52, h: 64 });
+    const health = coreHealth();
+    this.core.paint(
+      'THE CORE',
+      (g) => {
+        // Its health.
+        g.fillStyle = 'rgba(255,255,255,0.08)';
+        g.beginPath();
+        g.roundRect(26, 104, W - 52, 18, 9);
+        g.fill();
+        g.fillStyle = health > 0.5 ? UI.positive : health > 0.25 ? UI.warn : UI.danger;
+        g.beginPath();
+        g.roundRect(26, 104, Math.max(9, (W - 52) * health), 18, 9);
+        g.fill();
+        // The bank.
+        g.textAlign = 'left';
+        g.textBaseline = 'middle';
+        g.font = font(600, 20);
+        g.fillStyle = UI.faint;
+        g.fillText('THE BANK', 28, 150);
+        const items: ItemId[] = ['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'];
+        items.forEach((item, k) => {
+          const x = 28 + k * 96;
+          itemGlyph(g, item, x, 168, 40, (plant.bank[item] ?? 0) <= 0 ? GLYPH_DEAD : GLYPH_LIVE);
+          g.font = font(700, 24);
+          g.fillStyle = (plant.bank[item] ?? 0) > 0 ? UI.textHi : UI.disabled;
+          g.fillText(`${plant.bank[item] ?? 0}`, x + 46, 190);
+        });
+        g.font = font(600, 20);
+        g.fillStyle = UI.faint;
+        g.fillText('UPGRADES', 28, 240);
+        UPGRADES.forEach((u, k) => {
+          const y = ROW0 + k * PITCH;
+          const owned = upgradeOwned(u.id);
+          const afford = this.canAfford(u.id);
+          const hot = this.hover === `buy:${u.id}` && afford && !owned;
+          g.fillStyle = hot ? UI.accentFaint : 'rgba(255,255,255,0.03)';
+          g.beginPath();
+          g.roundRect(26, y, W - 52, PITCH - 6, 10);
+          g.fill();
+          g.strokeStyle = afford && !owned ? 'rgba(255,162,46,0.7)' : 'rgba(255,255,255,0.08)';
+          g.lineWidth = 2;
+          g.stroke();
+          g.textAlign = 'left';
+          g.font = font(700, 21);
+          g.fillStyle = owned ? UI.positive : afford ? UI.textHi : UI.faint;
+          g.fillText(owned ? `\u2713 ${u.name}` : u.name, 42, y + 16);
+          g.font = font(500, 15);
+          g.fillStyle = UI.faint;
+          g.fillText(u.effect, 42, y + 36, 300);
+          // The bill, right-aligned: a glyph and a count per part.
+          let x = W - 44;
+          for (const [item, n] of Object.entries(u.bill).reverse() as Array<[ItemId, number]>) {
+            g.textAlign = 'right';
+            g.font = font(700, 20);
+            g.fillStyle = (plant.bank[item] ?? 0) >= n ? UI.accent : UI.faint;
+            g.fillText(`${n}`, x, y + 25);
+            x -= g.measureText(`${n}`).width + 6;
+            itemGlyph(g, item, x - 28, y + 11, 28, GLYPH_LIVE);
+            x -= 44;
+          }
+        });
+      },
+      buttons,
+      this.hover,
+    );
+  }
+
   private canAfford(id: UpgradeId): boolean {
     const spec = UPGRADES.find((u) => u.id === id);
     if (!spec) return false;
@@ -1736,6 +2001,10 @@ export class MenuSystem extends createSystem({}) {
    * floats nothing.
    */
   private paintFactoryCard(): void {
+    if (intents.handMode) {
+      this.paintHandPause();
+      return;
+    }
     const [cw, ch] = BOARD.cardPx;
     const armed = buildView.armed?.() ?? null;
     // Three columns, measured off the card instead of nailed to pixels —
@@ -1791,6 +2060,7 @@ export class MenuSystem extends createSystem({}) {
       // The wrecking bar sits in the catalogue like any other tool —
       // playtest went looking for a delete and found nothing.
       const kit: Array<{ tool: BuildTool; label: string }> = [
+        { tool: 'dock', label: 'CORE' },
         { tool: 'maker', label: 'MAKER' },
         { tool: 'belt', label: 'RAIL' },
         { tool: 'turret', label: 'TURRET' },
@@ -1799,7 +2069,7 @@ export class MenuSystem extends createSystem({}) {
         { tool: 'chest', label: 'CHEST' },
         { tool: 'post', label: 'POST' },
         { tool: 'delete', label: 'DELETE' },
-      ];
+      ].filter((e) => e.tool !== 'dock' || typeAvailable('dock')) as Array<{ tool: BuildTool; label: string }>;
       kit.forEach((entry, i) => {
         buttons.push({
           id: `build:${entry.tool}`,
@@ -1868,6 +2138,9 @@ export class MenuSystem extends createSystem({}) {
         } else if (sg.phase === 'wave') {
           g.fillStyle = UI.danger;
           g.fillText(`${sg.queue.length + sg.enemies.length} INCOMING`, 36, 112);
+        } else if (sg.phase === 'core') {
+          g.fillStyle = UI.accent;
+          g.fillText('PLACE THE CORE', 36, 112);
         } else {
           g.fillStyle = UI.danger;
           g.fillText('THE CORE HAS FALLEN', 36, 112);

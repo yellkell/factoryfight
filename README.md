@@ -26,7 +26,7 @@ there. Something else lives in the plaster, and it has heard the hum.
 
 - **Wall your factory in.** A **WALL** costs 1 GEAR. You lay it like a rail:
   pinch and drag out a run, and it is as long as your bank can pay for.
-- **Hold the CORE.** The core stands in the middle of your floor and banks
+- **Hold the CORE.** You place it first, anywhere on your floor, and it banks
   every part railed into it. That bank pays for guns, walls and upgrades. Lose
   the core and the siege is over.
 - **They come out of YOUR walls.** During the build phase, a glowing crack
@@ -42,19 +42,39 @@ there. Something else lives in the plaster, and it has heard the hum.
 - **Ten waves,** each teaching one thing: walls, frost, sappers, arcs, hammers,
   beams, brutes, swarms. After that comes OVERTIME, which never ends.
 
-## Bare hands
+## Bare hands — your left hand is the menu
 
 The game reads controllers or tracked hands through one layer
 (`src/input/intents.ts`), so nothing downstream knows which you are using.
+On hands there are no menus to open and no lasers to aim at buttons:
+everything is **poked with your right index finger**.
 
-| Gesture | What it does |
-| --- | --- |
-| **PINCH** | Aim with your hand and pinch to place a machine, press the card, or inspect a box. Keep pinching and drag to haul a rail or a wall. |
-| **TWO FISTS** | Close both hands on a tube collar, haul it out of the feed, and walk it to a maker. It seats itself. |
-| **FIST** | Lift a part off a rail, then open your hand over a turret, a rail or the core to drop it in. |
-| **THE CUFF** | Turn your left wrist toward your face and a cuff rises on the inside of it. It is a watch (wave and time to the horn), and its studs are the buttons you don't have: **MENU / BACK**, **TURN** and **DOWN** (put the tool away), plus **DONE** while marking the floor. Poke a stud with your right index finger. |
+- **Open your left hand toward you.** Two things rise off it:
+  - **The toolbelt**, floating over your palm. It holds every piece you can
+    build right now, each tile showing the machine's drawing and its price,
+    dimmed when the bank can't pay. Poke a tile to pick it up, then aim with
+    your right hand and pinch to place it. Poke the same tile again to put it
+    down.
+  - **The watch**, on the inside of your wrist. It shows the wave and the time
+    to the horn, and its studs are the buttons you don't have: **HORN** (call
+    the wave now), **PAUSE**, plus **TURN** and **DOWN** while you're holding a
+    tool (**DONE** while marking the floor).
+- **Touch the core.** Walk up to it and poke it, and its panel opens: the
+  bank, and the upgrades your parts can buy.
+- **The core comes first.** A new siege offers exactly one tile, the CORE.
+  Nothing else can be built, no clock runs, and no wall cracks until you place
+  it, because the breaches are chosen relative to where it stands.
+- **Pinch** with your right hand to place what you're holding. Keep pinching
+  and drag to lay a rail or wall run.
+- **Two fists** on a tube collar haul it out of the feed to a maker. **One
+  fist** lifts a part off a rail; open your hand over a turret, a rail or the
+  core to drop it in.
+- **Panels come to you.** Pause, the core panel and the board all appear
+  within arm's reach, a little below your eyes, and you press them by touch.
+  Pause has three plates: RESUME, SOUND THE HORN and QUIT.
 
-With controllers, the same verbs are on trigger, grip, Ⓐ, Ⓑ and Ⓧ/Ⓨ.
+With controllers, the same verbs are on trigger, grip, Ⓐ, Ⓑ and Ⓧ/Ⓨ, and the
+original Ⓐ card is still there.
 
 ## Quick start
 

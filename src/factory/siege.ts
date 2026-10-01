@@ -106,10 +106,11 @@ function applyWakes(n: number): void {
 }
 
 /**
- * MAN THE WALLS. A siege opens on a bare floor with the CORE already
- * standing in the middle of it — the one piece of plant you never have
- * to find a place for — a starting stock in its bank, and the first
- * wave's breaches already cracking.
+ * MAN THE WALLS. A siege opens on a bare floor and asks for ONE thing:
+ * the CORE. It is what they come for, so where it stands is the first
+ * decision of the game — and nothing else is offered, no clock runs and
+ * no wall cracks until it does (the breaches are picked relative to it,
+ * so they can't be chosen before it lands).
  */
 export function startSiege(atWave = 0): void {
   const sg = plant.siege;
@@ -117,17 +118,22 @@ export function startSiege(atWave = 0): void {
   plant.orderIndex = -1;
   plant.goalsDone = false;
   plant.bank = { ...SIEGE.startBank };
-  sg.phase = 'build';
+  sg.phase = 'core';
   sg.wave = Math.max(0, atWave);
   sg.kills = 0;
   sg.won = sg.wave >= WAVES.length;
+  sg.breaches = [];
   applyWakes(sg.wave);
-  standCore();
-  beginBuild(sg.wave);
 }
 
-/** The core stands on the floor cell nearest the tape's middle. */
-function standCore(): void {
+/** Is the floor still waiting for its core? While it is, the core is the
+ *  only thing the catalogue offers. */
+export function awaitingCore(): boolean {
+  return plant.siege.phase === 'core';
+}
+
+/** TOOLS ONLY. Stand the core on the cell nearest the tape's middle. */
+export function standCore(): void {
   if (dockUnit()) return;
   const cx = (floorLayout.left + floorLayout.right) / 2 / PLANT_SCALE;
   const cz = (floorLayout.far + floorLayout.near) / 2 / PLANT_SCALE;
@@ -411,6 +417,11 @@ function fx(e: SiegeFx): void {
 export function siegeTick(dt: number): void {
   const sg = plant.siege;
   if (sg.phase === 'off' || sg.phase === 'fallen') return;
+  // The core just landed: the siege begins.
+  if (sg.phase === 'core') {
+    if (dockUnit()) beginBuild(sg.wave);
+    return;
+  }
 
   if (plant.generation !== fieldGen) fieldDirty = true;
   fieldAge += dt;

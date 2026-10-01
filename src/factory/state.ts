@@ -290,7 +290,9 @@ export interface SiegeFx {
   radius?: number;
 }
 
-export type SiegePhase = 'off' | 'build' | 'wave' | 'fallen';
+/** core: the floor is waiting for its CORE — nothing else can stand and
+ *  no clock runs until it does (the breaches are chosen relative to it). */
+export type SiegePhase = 'off' | 'core' | 'build' | 'wave' | 'fallen';
 
 export interface Siege {
   phase: SiegePhase;

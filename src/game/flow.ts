@@ -6,11 +6,12 @@
  * brings the board back with the sheet stamped.
  */
 
-import { CEREMONY_S, JOBS, ORDERS, UPGRADES, type ItemId, type UpgradeId } from '../config.js';
+import { CEREMONY_S, JOBS, ORDERS, SIEGE, UPGRADES, type ItemId, type UpgradeId } from '../config.js';
 import { freshSeed } from './rng.js';
 import {
   recordJobDone,
   recordOrderDone,
+  hpFactor,
   recordSiege,
   recordUpgrade,
   saveBank,
@@ -194,7 +195,15 @@ export function buyUpgrade(id: UpgradeId): boolean {
     plant.bank[item as ItemId] = (plant.bank[item as ItemId] ?? 0) - (n ?? 0);
   }
   recordUpgrade(id);
-  saveBank(plant.bank);
+  // Plate and armour fit to what is ALREADY standing, not only to what
+  // is built next — the core you are defending gets its armour now.
+  for (const u of plant.units) {
+    const max = SIEGE.hp[u.type] * hpFactor(u.type);
+    if (max > u.maxHp) {
+      u.hp += max - u.maxHp;
+      u.maxHp = max;
+    }
+  }
   sfx.stampDone();
   return true;
 }

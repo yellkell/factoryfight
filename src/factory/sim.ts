@@ -213,6 +213,8 @@ export function unitAvailable(type: UnitType): boolean {
   // A POST is bought, not unlocked by a sheet: it never joins the book's
   // ladder, so the catalogue would never list it.
   if (type === 'post') return postsUnlocked();
+  // CORE FIRST: until it stands, it is the only thing on offer.
+  if (plant.siege.phase === 'core') return type === 'dock';
   return plant.unitsAvailable.includes(type);
 }
 

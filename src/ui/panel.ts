@@ -30,6 +30,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
+  Vector3,
   SRGBColorSpace,
 } from 'three';
 import { font, onFontsReady } from './fonts.js';
@@ -140,6 +141,9 @@ function halo(): CanvasTexture {
   haloTex.colorSpace = SRGBColorSpace;
   return haloTex;
 }
+
+const _poke = new Vector3();
+const _pokeScale = new Vector3();
 
 export class Panel {
   readonly group = new Group();
@@ -537,6 +541,25 @@ export class Panel {
    *  Headless checks ask this instead of hunting for shapes in pixels. */
   liveButtons(): string[] {
     return this.buttons.filter((b) => !b.disabled && !b.display).map((b) => b.id);
+  }
+
+  /**
+   * THE POKE. Where a fingertip (world point) sits against this panel's
+   * face: its UV if it is over the plate, and how far IN FRONT of the
+   * face it is (room metres; negative = pushed through). Null when the
+   * tip is off the plate's edges. MenuSystem turns a crossing of the
+   * face into a press — the whole touch verb.
+   */
+  pokeAt(world: Vector3): { u: number; v: number; depth: number } | null {
+    if (!this.shown || this.showP < 0.9) return null;
+    const p = this.mesh.worldToLocal(_poke.copy(world));
+    const geo = this.mesh.geometry as PlaneGeometry;
+    const w = geo.parameters.width;
+    const h = geo.parameters.height;
+    if (Math.abs(p.x) > w / 2 || Math.abs(p.y) > h / 2) return null;
+    // Depth in ROOM metres, whatever the panel was scaled to.
+    const s = this.mesh.getWorldScale(_pokeScale).z;
+    return { u: p.x / w + 0.5, v: p.y / h + 0.5, depth: p.z * s };
   }
 
   /** UV (from a raycast hit) → button id, or null. */

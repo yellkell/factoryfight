@@ -66,6 +66,7 @@ import {
   coreHealth,
   debugSpawn,
   soundHorn,
+  standCore,
   waveSpec,
 } from '../factory/siege.js';
 import { dockUnit } from '../factory/sim.js';
@@ -92,6 +93,8 @@ export const siegeView: {
     bank: Partial<Record<ItemId, number>>;
   };
   horn?: () => void;
+  /** TOOLS ONLY: stand the core in the middle of the floor. */
+  core?: () => void;
   spawn?: (kind: EnemyId, breach?: number) => void;
   enemies?: () => Array<{ id: number; kind: string; x: number; z: number; hp: number; phase: string }>;
   turrets?: () => Array<{ id: number; ammo: number; loaded: string | null; rounds: number; yaw: number }>;
@@ -629,6 +632,7 @@ export class SiegeSystem extends createSystem({}) {
       };
     };
     siegeView.horn = () => soundHorn();
+    siegeView.core = () => standCore();
     siegeView.spawn = (kind, breach = 0) => debugSpawn(kind, breach);
     siegeView.enemies = () =>
       plant.siege.enemies.map((e) => ({ id: e.id, kind: e.kind, x: e.x, z: e.z, hp: e.hp, phase: e.phase }));
