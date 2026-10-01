@@ -30,6 +30,7 @@ import { PlacementSystem, placeView } from './systems/PlacementSystem.js';
 import { TubeSystem, tubeView } from './systems/TubeSystem.js';
 import { WallSystem, wallsView } from './systems/WallSystem.js';
 import { stageView } from './room/stage.js';
+import { bakePictures, pictureUrls } from './ui/pictures.js';
 
 const container = document.getElementById('scene-container') as HTMLDivElement;
 const enterButton = document.getElementById('enter-ar') as HTMLButtonElement | null;
@@ -84,6 +85,9 @@ World.create(container, {
   },
 }).then((world) => {
   worldRef = world;
+  // THE STUDIO: every menu picture is photographed now, before the first
+  // panel paints (ui/pictures.ts).
+  bakePictures();
 
   // Hardware needs SOME light to read as metal. A soft sky/ground pair
   // plus one keyed directional approximates a ceiling fixture well enough
@@ -176,6 +180,8 @@ declare global {
       plant: typeof factoryView;
       /** THE SIEGE: waves, crawlers, guns — drivable headlessly. */
       siege: typeof siegeView;
+      /** THE PICTURES: every baked menu photograph, as data URLs. */
+      pictures: typeof pictureUrls;
       /** THE HANDS: intents, the wrist cuff, the fist detector. */
       hands: typeof handsView;
       startShop: typeof startShop;
@@ -214,6 +220,7 @@ window.__tubes = {
   plant: factoryView,
   siege: siegeView,
   hands: handsView,
+  pictures: pictureUrls,
   startShop,
   abandonFactory,
   tube: tubeView,

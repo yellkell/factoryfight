@@ -58,6 +58,7 @@ import { CHUTE_SLIDE, glandReach } from './sim.js';
 import type { CraftRig } from './craft.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { createVatLiquid } from '../materials/vat.js';
+import { BODY, NEON, Trim, floorRing } from './neon.js';
 
 /* ── shared geometry / materials ────────────────────────────────────────── */
 
@@ -88,25 +89,25 @@ const discGeo = (): CircleGeometry => (_disc ??= new CircleGeometry(1, 24));
  * plain: infrastructure has no trade.
  */
 export const MAKER_ACCENT = 0xe07a24;
-const brassMat = new MeshStandardMaterial({ color: 0xb08d57, roughness: 0.35, metalness: 0.85 });
-const oliveMat = new MeshStandardMaterial({ color: 0x6f7c49, roughness: 0.55, metalness: 0.45 });
-const goldMat = new MeshStandardMaterial({ color: 0xd8b04a, roughness: 0.3, metalness: 0.9 });
+// THE NEON PASS (factory/neon.ts): the trade liveries stopped being
+// paint and became light — each accent material GLOWS its trade's neon,
+// and the iron they are bolted to is black glass.
+const glowing = (hex: number): MeshStandardMaterial =>
+  new MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: 1.1, roughness: 0.3, metalness: 0.2 });
+const brassMat = glowing(NEON.combiner);
+const oliveMat = glowing(NEON.chest);
+const goldMat = glowing(NEON.dock);
 
-const ironMat = new MeshStandardMaterial({ color: 0x3a332c, roughness: 0.5, metalness: 0.8 });
-const ironOpenMat = new MeshStandardMaterial({
-  color: 0x35302a,
-  roughness: 0.5,
-  metalness: 0.8,
-  side: DoubleSide,
-});
-const railMat = new MeshStandardMaterial({ color: 0x2b2622, roughness: 0.55, metalness: 0.75 });
-const railOpenMat = new MeshStandardMaterial({
-  color: 0x2b2622,
-  roughness: 0.55,
-  metalness: 0.75,
-  side: DoubleSide,
-});
-const edgeMat = new LineBasicMaterial({ color: 0xffa22e, transparent: true, opacity: 0.35 });
+const ironMat = new MeshStandardMaterial({ ...BODY });
+const ironOpenMat = new MeshStandardMaterial({ ...BODY, side: DoubleSide });
+// Rails are black glass with a thin neon line along each skid (drawn in
+// the rail's forms below) — a lit whole skid read as a light-bar and
+// drowned every machine standing beside the lane.
+const railMat = new MeshStandardMaterial({ ...BODY });
+const railOpenMat = new MeshStandardMaterial({ ...BODY, side: DoubleSide });
+// TUBES' amber hairlines are retired: the neon trims trace the edges now,
+// and a 1-px line next to a lit tube only reads as noise.
+const edgeMat = new LineBasicMaterial({ color: 0xffa22e, transparent: true, opacity: 0.35, visible: false });
 const chevronMat = new MeshBasicMaterial({
   color: 0xffa22e,
   transparent: true,
@@ -149,9 +150,9 @@ function bench(group: Group, height = UNITS.crate.height, size = UNITS.crate.siz
  * and the muzzle brake; the wall wears hazard stripes along its crown,
  * because the whole of the siege's livery is caution tape that grew up.
  */
-const signalMat = new MeshStandardMaterial({ color: 0xc8361f, roughness: 0.4, metalness: 0.7 });
-const gunMat = new MeshStandardMaterial({ color: 0x2c2a2b, roughness: 0.38, metalness: 0.9 });
-const plateMat = new MeshStandardMaterial({ color: 0x45403a, roughness: 0.62, metalness: 0.7 });
+const signalMat = glowing(NEON.turret);
+const gunMat = new MeshStandardMaterial({ ...BODY });
+const plateMat = new MeshStandardMaterial({ ...BODY, color: 0x16181e });
 
 let _hazardTex: CanvasTexture | null = null;
 function hazardTexture(): CanvasTexture {
@@ -230,6 +231,17 @@ function buildTurret(group: Group): NonNullable<UnitRefs['gun']> {
     cheek.rotation.z = Math.PI / 2;
     cheek.scale.set(0.085, 0.02, 0.085);
     cheek.position.set(sx * 0.11, 0.17, -0.01);
+    head.add(cheek);
+  }
+
+  // The head's own neon: the mantlet's face traced, a hoop round each
+  // cheek — it slews WITH the head, so it is drawn into the head.
+  new Trim().box(0, 0.17, 0.09, 0.2, 0.17, 0.03).into(head, NEON.turret);
+  for (const sx of [-1, 1]) {
+    const cheek = new Group();
+    cheek.position.set(sx * 0.122, 0.17, -0.01);
+    cheek.rotation.y = Math.PI / 2;
+    new Trim().hoop(0, 0, 0, 0.085).into(cheek, NEON.turret);
     head.add(cheek);
   }
 
@@ -767,11 +779,18 @@ function buildCurveForm(rel: 1 | 3): Group {
   // quarter-turn flips the whole arc for the mirrored chirality.
   wrap.position.set(rel === 3 ? -half : half, UNITS.railTop, half);
   wrap.rotation.y = rel === 3 ? 0 : Math.PI / 2;
+  const lit = new Group();
+  lit.rotation.x = -Math.PI / 2;
+  lit.position.y = 0.011;
+  const arcs = new Trim();
   for (const R of [half - 0.068, half + 0.068]) {
     const rail = new Mesh(new TorusGeometry(R, 0.013, 6, 12, Math.PI / 2), railMat);
     rail.rotation.x = -Math.PI / 2;
     wrap.add(rail);
+    arcs.arc(R, Math.PI / 2, 0.004);
   }
+  arcs.into(lit, NEON.belt);
+  wrap.add(lit);
   const tread = new Mesh(arcStrip(half - 0.057, half + 0.057, 10, rel === 1), treadMaterial());
   tread.position.y = 0.002;
   wrap.add(tread);
@@ -910,9 +929,10 @@ export function buildUnit(type: UnitType): UnitRefs {
     group.add(drum);
     tint = new MeshStandardMaterial({
       color: MAKER_ACCENT,
-      roughness: 0.4,
-      metalness: 0.8,
-      emissive: 0x000000,
+      roughness: 0.3,
+      metalness: 0.2,
+      emissive: MAKER_ACCENT,
+      emissiveIntensity: 1.1,
     });
     for (const y of [0.57, 0.83]) {
       const band = new Mesh(torusGeo(), tint);
@@ -1036,6 +1056,11 @@ export function buildUnit(type: UnitType): UnitRefs {
     chev.scale.setScalar(0.028);
     chev.position.set(0, UNITS.railTop + 0.006, 0.13);
     straight.add(chev);
+    const lane = new Trim();
+    for (const side of [-1, 1]) {
+      lane.line(side * 0.068, UNITS.railTop + 0.011, -0.175, side * 0.068, UNITS.railTop + 0.011, 0.175, 0.004);
+    }
+    lane.into(straight, NEON.belt);
     group.add(straight);
     const curve1 = buildCurveForm(1);
     const curve3 = buildCurveForm(3);
@@ -1200,6 +1225,8 @@ export function buildUnit(type: UnitType): UnitRefs {
     group.add(rim);
   }
 
+  neonTrims(group, type);
+
   if (gland) {
     // On the BACK face (local −Z), facing backward — where the tube
     // arrives from, sunk to the body's own surface with the same reach
@@ -1209,6 +1236,49 @@ export function buildUnit(type: UnitType): UnitRefs {
     group.add(gland.group);
   }
   return { group, gland, lampMat, craft, halo, fill, vatGlow, belt, tint, gun };
+}
+
+/**
+ * THE NEON TRACE, per machine: the edges and rings that carry each
+ * silhouette in light, and the ring of the same colour it stands on.
+ * Drawn in the builder's own coordinates (plant metres, out along +Z).
+ */
+function neonTrims(group: Group, type: UnitType): void {
+  const { benchTop, size, height } = UNITS.crate;
+  const t = new Trim();
+  const hex = NEON[type];
+  if (type === 'dock') {
+    // THE CORE: a caged drum — rings at foot, waist and mouth, and six
+    // staves of light between them. The brightest thing on the floor.
+    t.ring(0.455, 0.154).ring(0.65, 0.156).ring(0.85, 0.154).ring(0.866, 0.118);
+    t.staves(6, 0.153, 0.455, 0.85);
+    floorRing(group, hex, 0.2);
+  } else if (type === 'maker') {
+    t.ring(0.552, 0.146).staves(4, 0.137, 0.56, 0.84, undefined, Math.PI / 4).ring(0.85, 0.137);
+    floorRing(group, hex);
+  } else if (type === 'combiner') {
+    for (const side of [-1, 1]) t.box(side * 0.0775, benchTop - 0.12, 0, 0.128, 0.24, 0.24);
+    floorRing(group, hex, 0.19);
+  } else if (type === 'chest') {
+    t.box(0, benchTop - height / 2, 0, size, height, size);
+    floorRing(group, hex);
+  } else if (type === 'turret') {
+    t.ring(0.6, 0.13).ring(0.73, 0.135);
+    floorRing(group, hex, 0.18);
+  } else if (type === 'wall') {
+    const c = FLOOR.cell;
+    // The crown's edge and the four corner posts: a run of these reads
+    // as one long lit barrier.
+    t.box(0, 0.62, 0, c - 0.03, 0.001, c - 0.03);
+    for (const x of [-1, 1]) for (const z of [-1, 1]) t.line(x * (c / 2 - 0.01), 0.05, z * (c / 2 - 0.01), x * (c / 2 - 0.02), 0.6, z * (c / 2 - 0.02));
+  } else if (type === 'post') {
+    // The stick IS the light: a white neon rod with its three collars.
+    const { postHeight } = UNITS.pull;
+    t.line(0, 0.012, 0, 0, postHeight, 0, 0.019);
+    for (const k of [0.35, 0.6, 0.85]) t.ring(postHeight * k, 0.026);
+    floorRing(group, hex, 0.06);
+  }
+  t.into(group, hex);
 }
 
 /* ── the feeds ──────────────────────────────────────────────────────────── */
@@ -1409,10 +1479,14 @@ function bodyMat(lineId: 'mains' | 'coolant' | 'volt'): MeshStandardMaterial {
   let m = _bodyMats.get(lineId);
   if (!m) {
     const line = LINES[lineId];
+    // NEON PARTS: black glass bodies that glow their line from within,
+    // so a gear on a rail reads amber and a cell cyan across the room.
     m = new MeshStandardMaterial({
-      color: line.shell,
-      roughness: line.roughness,
-      metalness: line.metalness,
+      color: 0x15171d,
+      roughness: 0.3,
+      metalness: 0.6,
+      emissive: line.glow,
+      emissiveIntensity: 0.12,
     });
     _bodyMats.set(lineId, m);
   }
@@ -1426,16 +1500,17 @@ function glowFor(lineId: 'mains' | 'coolant' | 'volt'): MeshBasicMaterial {
     m = new MeshBasicMaterial({
       color: LINES[lineId].glow,
       transparent: true,
-      opacity: 0.85,
+      opacity: 1,
       blending: AdditiveBlending,
       depthWrite: false,
+      toneMapped: false,
     });
     _glowMats.set(lineId, m);
   }
   return m;
 }
 
-const hubMat = new MeshStandardMaterial({ color: 0x231e19, roughness: 0.45, metalness: 0.85 });
+const hubMat = new MeshStandardMaterial({ ...BODY, color: 0x181a20 });
 
 const _q = new Quaternion();
 const _s = new Vector3();

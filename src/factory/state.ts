@@ -538,6 +538,6 @@ export function openShopFully(): void {
       plant.events.push({ kind: 'feed-wake', side });
     }
   }
-  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat'];
+  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat', 'turret', 'wall'];
   plant.generation++;
 }

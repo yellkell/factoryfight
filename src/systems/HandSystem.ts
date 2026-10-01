@@ -716,7 +716,7 @@ function paintTile(t: Poke, tool: string, armed: boolean, afford: boolean, cost:
   g.strokeStyle = armed ? '#ffa22e' : tool === 'delete' ? 'rgba(255,90,70,0.6)' : 'rgba(255,162,46,0.45)';
   g.lineWidth = armed ? 6 : 3;
   g.stroke();
-  unitGlyph(g, tool as GlyphId, 32, 14, 96, afford ? GLYPH_LIVE : GLYPH_DEAD);
+  unitGlyph(g, tool as GlyphId, 25, 8, 110, afford ? GLYPH_LIVE : GLYPH_DEAD);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.font = font(700, 24);

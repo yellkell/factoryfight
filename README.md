@@ -42,6 +42,28 @@ there. Something else lives in the plaster, and it has heard the hum.
 - **Ten waves,** each teaching one thing: walls, frost, sappers, arcs, hammers,
   beams, brutes, swarms. After that comes OVERTIME, which never ends.
 
+## Neon
+
+Every machine is near-black glass with its outline traced in neon tube,
+standing on a ring of the same light, one colour per trade:
+
+| Machine | Colour |
+| --- | --- |
+| CORE | gold |
+| MAKER | orange (retints to its feed's line) |
+| RAIL | ice blue |
+| COMBINER | yellow |
+| CHEST | green |
+| TURRET | red |
+| WALL | hazard amber |
+| POST | white |
+
+Parts glow with their line's colour. The menus use no drawings: at load, a
+small studio (`src/ui/pictures.ts`) photographs every machine and part with
+the same builders the floor uses. Redesign a machine and its menu picture
+updates on the next load. `node tools/neon-look.mjs` shoots the line-up and a
+contact sheet of every picture.
+
 ## Bare hands — your left hand is the menu
 
 The game reads controllers or tracked hands through one layer

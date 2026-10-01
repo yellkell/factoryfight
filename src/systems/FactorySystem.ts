@@ -1899,8 +1899,10 @@ export class FactorySystem extends createSystem({}) {
         if (seated) _tintColor.setHex(seated.line.glow).multiplyScalar(0.75);
         else _tintColor.setHex(MAKER_ACCENT);
         refs.tint.color.lerp(_tintColor, Math.min(1, delta * 5));
-        const lit = seated && seated.phase === 'flowing' ? 0.35 : 0;
-        _tintColor.setHex(seated ? seated.line.glow : 0).multiplyScalar(lit);
+        // NEON: the bands always glow — dim in their own orange while the
+        // box is cold, full in the line's colour once it is fed.
+        const lit = seated && seated.phase === 'flowing' ? 1.1 : 0.55;
+        _tintColor.setHex(seated ? seated.line.glow : MAKER_ACCENT).multiplyScalar(lit);
         refs.tint.emissive.lerp(_tintColor, Math.min(1, delta * 5));
       }
       if (refs.lampMat) {
