@@ -32,6 +32,7 @@ import {
   BufferGeometry,
   CanvasTexture,
   CircleGeometry,
+  ConeGeometry,
   CylinderGeometry,
   DoubleSide,
   EdgesGeometry,
@@ -48,6 +49,7 @@ import {
   Quaternion,
   RepeatWrapping,
   RingGeometry,
+  SphereGeometry,
   SRGBColorSpace,
   TorusGeometry,
   Vector3,
@@ -56,7 +58,7 @@ import {
 import { FACTORY, FLOOR, LINES, UNITS, type ItemId, type LineSpec, type UnitType } from '../config.js';
 import { CHUTE_SLIDE, glandReach } from './sim.js';
 import type { CraftRig } from './craft.js';
-import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
+import { beamGradientTexture, glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { createVatLiquid } from '../materials/vat.js';
 import { BODY, NEON, Trim, floorRing } from './neon.js';
 
@@ -190,7 +192,7 @@ function hazardTexture(): CanvasTexture {
  * the room. The muzzle sits at SIEGE.turret.muzzleY (1.02), which is
  * where the sim says shots leave from.
  */
-function buildTurret(group: Group): NonNullable<UnitRefs['gun']> {
+function buildTurret(group: Group): GunRefs {
   unitLeg(group, 0.6, 0.05);
   const pedestal = new Mesh(sided(8), gunMat);
   pedestal.scale.set(0.13, 0.12, 0.13);
@@ -290,29 +292,231 @@ function buildTurret(group: Group): NonNullable<UnitRefs['gun']> {
   flashMesh.renderOrder = 14;
   barrel.add(flashMesh);
 
-  // The breech hopper on the back — where a rail's parts drop in.
-  const hopper = new Mesh(new CylinderGeometry(1, 0.6, 1, 4, 1, true), ironOpenMat);
-  hopper.rotation.y = Math.PI / 4;
-  hopper.scale.set(0.08, 0.08, 0.08);
-  hopper.position.set(0, 0.29, -0.11);
-  head.add(hopper);
-  const pips: MeshBasicMaterial[] = [];
-  for (let k = 0; k < 4; k++) {
-    const m = new MeshBasicMaterial({
-      color: 0x222222,
+  // The band round the barrel's root is the gun's pilot light: lit while
+  // it can see something to shoot.
+  return { head, barrel, kick: 0.05, flash, flashMesh, pilot: band };
+}
+
+const pilotMat = (hex: number): MeshBasicMaterial =>
+  new MeshBasicMaterial({ color: hex, transparent: true, blending: AdditiveBlending, depthWrite: false, toneMapped: false });
+const flashMat = (hex: number): MeshBasicMaterial =>
+  new MeshBasicMaterial({
+    color: hex,
+    transparent: true,
+    opacity: 0,
+    blending: AdditiveBlending,
+    depthWrite: false,
+    side: DoubleSide,
+    toneMapped: false,
+  });
+
+/**
+ * THE MORTAR — artillery. A squat drum on a turntable, and a fat short
+ * tube cocked up at 55°, ringed in teal at the mouth. It kicks DOWN its
+ * own bore when it fires; the shell goes up out of the room's view and
+ * comes down on the crowd.
+ */
+function buildMortar(group: Group): GunRefs {
+  const hex = NEON.mortar;
+  const base = new Mesh(sided(8), gunMat);
+  base.scale.set(0.15, 0.36, 0.15);
+  base.position.y = 0.18;
+  group.add(base);
+  new Trim().ring(0.36, 0.152).ring(0.02, 0.155).staves(4, 0.15, 0.03, 0.35, undefined, Math.PI / 8).into(group, hex);
+  const head = new Group();
+  head.position.y = 0.4;
+  group.add(head);
+  const turntable = new Mesh(new CylinderGeometry(1, 1, 1, 20), plateMat);
+  turntable.scale.set(0.13, 0.05, 0.13);
+  head.add(turntable);
+  // Two cheek plates hold the trunnion.
+  for (const sx of [-1, 1]) {
+    const cheek = new Mesh(boxGeo(), gunMat);
+    cheek.scale.set(0.025, 0.2, 0.16);
+    cheek.position.set(sx * 0.085, 0.12, 0);
+    head.add(cheek);
+  }
+  const tilt = new Group();
+  tilt.position.y = 0.16;
+  tilt.rotation.x = -0.96; // cocked up, firing over +Z
+  head.add(tilt);
+  const barrel = new Group();
+  tilt.add(barrel);
+  const tube = new Mesh(new CylinderGeometry(1, 1, 1, 18), gunMat);
+  tube.rotation.x = Math.PI / 2;
+  tube.scale.set(0.058, 0.36, 0.058);
+  tube.position.z = 0.06;
+  barrel.add(tube);
+  const mouth = new Group();
+  mouth.position.z = 0.24;
+  barrel.add(mouth);
+  new Trim().hoop(0, 0, 0, 0.062).hoop(0, 0, -0.06, 0.062).hoop(0, 0, -0.2, 0.062).into(mouth, hex);
+  const flash = flashMat(0xfff0c0);
+  const flashMesh = new Mesh(new CylinderGeometry(0, 1, 1, 10, 1, true), flash);
+  flashMesh.rotation.x = -Math.PI / 2;
+  flashMesh.scale.set(0.09, 0.2, 0.09);
+  flashMesh.position.z = 0.36;
+  barrel.add(flashMesh);
+  const pilot = pilotMat(hex);
+  const sight = new Mesh(new SphereGeometry(1, 10, 8), pilot);
+  sight.scale.setScalar(0.014);
+  sight.position.set(0.09, 0.26, 0.05);
+  head.add(sight);
+  return { head, barrel, kick: 0.07, flash, flashMesh, pilot };
+}
+
+/**
+ * THE TESLA COIL — a drum on a leg wound with violet neon coils, a
+ * standing column, and a crown: the toroid the arcs leave from. Doesn't
+ * turn; arcs don't need aiming. The crown burns while it is plumbed.
+ */
+function buildTesla(group: Group): GunRefs {
+  const hex = NEON.tesla;
+  unitLeg(group, 0.5, 0.05);
+  const drum = new Mesh(new CylinderGeometry(1, 1, 1, 20), gunMat);
+  drum.scale.set(0.1, 0.32, 0.1);
+  drum.position.y = 0.66;
+  group.add(drum);
+  const coil = new Trim();
+  for (let k = 0; k < 7; k++) coil.ring(0.52 + k * 0.042, 0.104, 0.0045);
+  coil.staves(3, 0.03, 0.82, 1.18, 0.006).into(group, hex);
+  const column = new Mesh(new CylinderGeometry(1, 1, 1, 12), plateMat);
+  column.scale.set(0.028, 0.36, 0.028);
+  column.position.y = 1.0;
+  group.add(column);
+  const crown = new Mesh(new TorusGeometry(0.075, 0.03, 10, 28), gunMat);
+  crown.rotation.x = Math.PI / 2;
+  crown.position.y = 1.22;
+  group.add(crown);
+  new Trim().ring(1.22, 0.075, 0.009).into(group, hex);
+  const pilot = pilotMat(hex);
+  const orb = new Mesh(new SphereGeometry(1, 16, 12), pilot);
+  orb.scale.setScalar(0.045);
+  orb.position.y = 1.3;
+  group.add(orb);
+  const flash = flashMat(0xf3e6ff);
+  const flashMesh = new Mesh(new SphereGeometry(1, 14, 10), flash);
+  flashMesh.scale.setScalar(0.12);
+  flashMesh.position.y = 1.3;
+  group.add(flashMesh);
+  return { head: null, barrel: null, kick: 0, flash, flashMesh, pilot };
+}
+
+/**
+ * THE FLAMETHROWER — a fuel drum on its side (the amber tube seats into
+ * it), and a long nozzle out the front ringed in fire-orange, a pilot
+ * flame always burning at its lip while it is fed. The cone itself is
+ * SiegeSystem's: this is the hardware it pours out of.
+ */
+function buildFlamer(group: Group): GunRefs {
+  const hex = NEON.flamer;
+  unitLeg(group, 0.56, 0.05);
+  const tank = new Mesh(new CylinderGeometry(1, 1, 1, 20), gunMat);
+  tank.scale.set(0.115, 0.22, 0.115);
+  tank.position.y = 0.67;
+  group.add(tank);
+  new Trim().ring(0.565, 0.118).ring(0.775, 0.118).staves(6, 0.116, 0.57, 0.77).into(group, hex);
+  const head = new Group();
+  head.position.y = 0.78;
+  group.add(head);
+  const hub = new Mesh(new CylinderGeometry(1, 1, 1, 14), plateMat);
+  hub.scale.set(0.06, 0.06, 0.06);
+  hub.position.y = 0.03;
+  head.add(hub);
+  const barrel = new Group();
+  barrel.position.y = 0.045;
+  head.add(barrel);
+  const nozzle = new Mesh(new CylinderGeometry(0.022, 0.032, 1, 14), gunMat);
+  nozzle.rotation.x = Math.PI / 2;
+  nozzle.scale.set(1, 0.24, 1);
+  nozzle.position.z = 0.1;
+  barrel.add(nozzle);
+  const lip = new Group();
+  lip.position.z = 0.22;
+  barrel.add(lip);
+  new Trim().hoop(0, 0, 0, 0.026).hoop(0, 0, -0.07, 0.03).hoop(0, 0, -0.14, 0.033).into(lip, hex);
+  const pilot = pilotMat(0xff9a3a);
+  const flame = new Mesh(new SphereGeometry(1, 10, 8), pilot);
+  flame.scale.set(0.012, 0.012, 0.022);
+  flame.position.z = 0.24;
+  barrel.add(flame);
+  // THE TONGUE: a cone with its point in the nozzle, opening out along
+  // +Z. Two layers, so the fire is hot at its root and red at its reach.
+  const cone = new ConeGeometry(1, 1, 18, 1, true);
+  cone.rotateX(-Math.PI / 2);
+  cone.translate(0, 0, 0.5);
+  const jet: Mesh[] = [];
+  for (const [color, opacity] of [
+    [0xff3d0a, 0.42],
+    [0xffb347, 0.55],
+    [0xfff2c0, 0.7],
+  ] as Array<[number, number]>) {
+    const mat = new MeshBasicMaterial({
+      color,
       transparent: true,
-      opacity: 0.95,
+      opacity,
       blending: AdditiveBlending,
       depthWrite: false,
+      side: DoubleSide,
+      toneMapped: false,
+      // Bright at the nozzle, burning out to nothing at its reach.
+      map: beamGradientTexture(true),
     });
-    const pip = new Mesh(discGeo(), m);
-    pip.scale.setScalar(0.011);
-    pip.position.set(-0.045 + k * 0.03, 0.12, -0.111);
-    pip.rotation.y = Math.PI;
-    head.add(pip);
-    pips.push(m);
+    const m = new Mesh(cone, mat);
+    m.position.z = 0.23;
+    m.visible = false;
+    m.renderOrder = 14;
+    m.userData.opacity = opacity;
+    barrel.add(m);
+    jet.push(m);
   }
-  return { head, barrel, flash, flashMesh, band, pips };
+  return { head, barrel, kick: 0.006, flash: null, flashMesh: null, pilot, jet };
+}
+
+/**
+ * THE PISTON — a squat hydraulic block on the floor that turns to face
+ * what is coming and DRIVES a ram out at it: a fat steel rod with a
+ * striking plate ringed in neon. The trap you set into a gap in your
+ * wall, at the height a crawler's head is.
+ */
+function buildPiston(group: Group): GunRefs {
+  const hex = NEON.piston;
+  const base = new Mesh(boxGeo(), gunMat);
+  base.scale.set(0.26, 0.08, 0.26);
+  base.position.y = 0.04;
+  group.add(base);
+  new Trim().box(0, 0.04, 0, 0.26, 0.08, 0.26).into(group, hex);
+  const head = new Group();
+  head.position.y = 0.08;
+  group.add(head);
+  const block = new Mesh(boxGeo(), plateMat);
+  block.scale.set(0.22, 0.32, 0.24);
+  block.position.set(0, 0.2, -0.04);
+  head.add(block);
+  new Trim().box(0, 0.2, -0.04, 0.22, 0.32, 0.24).into(head, hex);
+  const barrel = new Group();
+  barrel.position.set(0, 0.42, 0.08);
+  head.add(barrel);
+  const rod = new Mesh(new CylinderGeometry(1, 1, 1, 14), plateMat);
+  rod.rotation.x = Math.PI / 2;
+  rod.scale.set(0.035, 0.26, 0.035);
+  rod.position.z = -0.05;
+  barrel.add(rod);
+  const plate = new Mesh(new CylinderGeometry(1, 1, 1, 18), gunMat);
+  plate.rotation.x = Math.PI / 2;
+  plate.scale.set(0.085, 0.04, 0.085);
+  plate.position.z = 0.09;
+  barrel.add(plate);
+  const face = new Group();
+  face.position.z = 0.11;
+  barrel.add(face);
+  new Trim().hoop(0, 0, 0, 0.08, 0.008).hoop(0, 0, 0, 0.04, 0.006).into(face, hex);
+  const pilot = pilotMat(hex);
+  const lamp = new Mesh(new SphereGeometry(1, 10, 8), pilot);
+  lamp.scale.setScalar(0.014);
+  lamp.position.set(0.09, 0.37, 0.081);
+  head.add(lamp);
+  return { head, barrel, kick: 0.2, ramOut: true, flash: null, flashMesh: null, pilot };
 }
 
 /**
@@ -581,14 +785,28 @@ export interface UnitRefs {
    *  barrel that recoils along its local +Z, the muzzle flash, the band
    *  that wears the colour of whatever is chambered, and the magazine's
    *  pip lamps (one per loaded part). Null on everything else. */
-  gun: {
-    head: Group;
-    barrel: Group;
-    flash: MeshBasicMaterial;
-    flashMesh: Mesh;
-    band: MeshBasicMaterial;
-    pips: MeshBasicMaterial[];
-  } | null;
+  gun: GunRefs | null;
+}
+
+/** A weapon's moving parts, as SiegeSystem animates them. Every weapon
+ *  wears the same shape; the parts it doesn't have are null. */
+export interface GunRefs {
+  /** Slews about +Y to face its target (null: the tesla doesn't turn). */
+  head: Group | null;
+  /** Kicks back along its local −Z when it fires (the piston DRIVES its
+   *  ram out along +Z instead — `ramOut`). */
+  barrel: Group | null;
+  /** How far, at full stroke (plant m). */
+  kick: number;
+  ramOut?: boolean;
+  flash: MeshBasicMaterial | null;
+  flashMesh: Mesh | null;
+  /** A light that is on whenever it can fire: the flamer's pilot flame,
+   *  the coil's crown, the mortar's sight. */
+  pilot: MeshBasicMaterial | null;
+  /** THE FLAMER's tongue: nested additive cones off the nozzle, shown
+   *  while it pours (outer red-orange, inner white-yellow). */
+  jet?: Mesh[];
 }
 
 /**
@@ -874,6 +1092,16 @@ export function buildUnit(type: UnitType): UnitRefs {
 
   if (type === 'turret') {
     gun = buildTurret(group);
+  } else if (type === 'mortar') {
+    gun = buildMortar(group);
+  } else if (type === 'tesla') {
+    gun = buildTesla(group);
+    gland = buildGland();
+  } else if (type === 'flamer') {
+    gun = buildFlamer(group);
+    gland = buildGland();
+  } else if (type === 'piston') {
+    gun = buildPiston(group);
   } else if (type === 'wall') {
     buildWall(group);
   } else if (type === 'dock') {
@@ -1271,6 +1499,10 @@ function neonTrims(group: Group, type: UnitType): void {
     // as one long lit barrier.
     t.box(0, 0.62, 0, c - 0.03, 0.001, c - 0.03);
     for (const x of [-1, 1]) for (const z of [-1, 1]) t.line(x * (c / 2 - 0.01), 0.05, z * (c / 2 - 0.01), x * (c / 2 - 0.02), 0.6, z * (c / 2 - 0.02));
+  } else if (type === 'mortar' || type === 'piston') {
+    floorRing(group, hex, 0.19);
+  } else if (type === 'tesla' || type === 'flamer') {
+    floorRing(group, hex, 0.17);
   } else if (type === 'post') {
     // The stick IS the light: a white neon rod with its three collars.
     const { postHeight } = UNITS.pull;
@@ -1293,6 +1525,8 @@ export interface FeedRefs {
   /** Where the spout's tube leaves (local +Z, off the pillar face). */
   mouthOffset: number;
   awakeVisual: boolean;
+  /** Each spout's offset along the pillar's local +X (plant metres). */
+  spoutX: number[];
 }
 
 /**
@@ -1361,39 +1595,6 @@ export function buildFeed(line: LineSpec | null): FeedRefs {
   cap.position.y = 1.437;
   group.add(cap);
 
-  // THE BOSS — neck, plate, gland collar and halo on one tight axis.
-  const neck = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
-  neck.rotation.x = Math.PI / 2;
-  neck.scale.set(0.048, 0.09, 0.048);
-  neck.position.set(0, FACTORY.spoutHeight, 0.045);
-  group.add(neck);
-
-  const plate = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
-  plate.rotation.x = Math.PI / 2;
-  plate.scale.set(0.118, 0.032, 0.118);
-  plate.position.set(0, FACTORY.spoutHeight, 0.09);
-  group.add(plate);
-
-  // A ring of hex heads on the plate face — the fabrication tell, at the
-  // one height the player actually looks at.
-  for (let b = 0; b < 6; b++) {
-    const a = (b / 6) * Math.PI * 2 + Math.PI / 6;
-    const bolt = new Mesh(new CylinderGeometry(1, 1, 1, 6), hubMat);
-    bolt.rotation.x = Math.PI / 2;
-    bolt.scale.set(UNITS.boltR, 0.01, UNITS.boltR);
-    bolt.position.set(
-      Math.cos(a) * 0.09,
-      FACTORY.spoutHeight + Math.sin(a) * 0.09,
-      0.108,
-    );
-    group.add(bolt);
-  }
-
-  const gland = new Mesh(torusGeo(), shell);
-  gland.scale.setScalar(0.102);
-  gland.position.set(0, FACTORY.spoutHeight, 0.122);
-  group.add(gland);
-
   const glowMat = new MeshBasicMaterial({
     color: line ? line.glow : 0xe8e2d6,
     transparent: true,
@@ -1402,11 +1603,69 @@ export function buildFeed(line: LineSpec | null): FeedRefs {
     depthWrite: false,
     side: DoubleSide,
   });
-  const halo = new Mesh(ringGeo(), glowMat);
-  halo.scale.setScalar(0.128);
-  halo.position.set(0, FACTORY.spoutHeight, 0.112);
-  halo.renderOrder = 12;
-  group.add(halo);
+
+  // THE BOSS — neck, plate, gland collar and halo on one tight axis.
+  // Built once on the riser and once on the TWIN a cell along: every
+  // live feed pours from two spouts.
+  const spoutX = line ? [0, FLOOR.cell] : [0];
+  for (const x of spoutX) {
+    const neck = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    neck.rotation.x = Math.PI / 2;
+    neck.scale.set(0.048, 0.09, 0.048);
+    neck.position.set(x, FACTORY.spoutHeight, 0.045);
+    group.add(neck);
+
+    const plate = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    plate.rotation.x = Math.PI / 2;
+    plate.scale.set(0.118, 0.032, 0.118);
+    plate.position.set(x, FACTORY.spoutHeight, 0.09);
+    group.add(plate);
+
+    // A ring of hex heads on the plate face — the fabrication tell, at
+    // the one height the player actually looks at.
+    for (let b = 0; b < 6; b++) {
+      const a = (b / 6) * Math.PI * 2 + Math.PI / 6;
+      const bolt = new Mesh(new CylinderGeometry(1, 1, 1, 6), hubMat);
+      bolt.rotation.x = Math.PI / 2;
+      bolt.scale.set(UNITS.boltR, 0.01, UNITS.boltR);
+      bolt.position.set(x + Math.cos(a) * 0.09, FACTORY.spoutHeight + Math.sin(a) * 0.09, 0.108);
+      group.add(bolt);
+    }
+
+    const gland = new Mesh(torusGeo(), shell);
+    gland.scale.setScalar(0.102);
+    gland.position.set(x, FACTORY.spoutHeight, 0.122);
+    group.add(gland);
+
+    const halo = new Mesh(ringGeo(), glowMat);
+    halo.scale.setScalar(0.128);
+    halo.position.set(x, FACTORY.spoutHeight, 0.112);
+    halo.renderOrder = 12;
+    group.add(halo);
+  }
+
+  if (spoutX.length > 1) {
+    // THE TWIN: a slimmer riser a cell along, tied to the main one by a
+    // header across the top — a manifold, not two pipes that met.
+    const x = spoutX[1];
+    const twin = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    twin.scale.set(0.046, 1.3, 0.046);
+    twin.position.set(x, 0.65, 0);
+    group.add(twin);
+    const twinFoot = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    twinFoot.scale.set(0.075, 0.022, 0.075);
+    twinFoot.position.set(x, 0.011, 0);
+    group.add(twinFoot);
+    const header = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    header.rotation.z = Math.PI / 2;
+    header.scale.set(0.05, x, 0.05);
+    header.position.set(x / 2, 1.3, 0);
+    group.add(header);
+    const elbow = new Mesh(new CylinderGeometry(1, 1, 1, sides), shell);
+    elbow.scale.set(0.06, 0.1, 0.06);
+    elbow.position.set(x, 1.3, 0);
+    group.add(elbow);
+  }
 
   let hatch: Group | null = null;
   if (line?.id === 'pearl') {
@@ -1446,7 +1705,7 @@ export function buildFeed(line: LineSpec | null): FeedRefs {
     group.add(shut);
   }
 
-  return { group, glowMat, hatch, mouthOffset: 0.135, awakeVisual: false };
+  return { group, glowMat, hatch, mouthOffset: 0.135, awakeVisual: false, spoutX };
 }
 
 /* ── the parts ──────────────────────────────────────────────────────────

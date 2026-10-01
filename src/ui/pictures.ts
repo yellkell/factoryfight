@@ -48,7 +48,7 @@ export function pictureUrls(): Record<string, string> {
   return out;
 }
 
-const MACHINES: UnitType[] = ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'turret', 'wall'];
+const MACHINES: UnitType[] = ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'turret', 'wall', 'flamer', 'piston', 'tesla', 'mortar'];
 const PARTS: ItemId[] = ['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'];
 
 /** Take every photograph. Safe to call once; a failure leaves the menus
@@ -88,8 +88,9 @@ export function bakePictures(): void {
       // A machine's picture is a portrait of its WORKING BODY: the bench
       // leg under it is the same on every one of them and only made the
       // machine small in its own picture. Rails, walls and posts stand
-      // on the floor and are shot whole.
-      const whole = type === 'belt' || type === 'wall' || type === 'post';
+      // on the floor and are shot whole — and so is the piston, which is
+      // a block on the floor with no leg at all.
+      const whole = type === 'belt' || type === 'wall' || type === 'post' || type === 'piston';
       shoot(
         type,
         refs.group,

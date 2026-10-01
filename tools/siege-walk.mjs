@@ -8,7 +8,7 @@
  * Everything goes through the hands' own doors (build.aimAt / trigger,
  * the haul, the pull's driven grips) — the same resolve-and-commit path a
  * controller runs — and the sim runs for real: real breaches on the
- * fallback room's walls, real flow field, real crawlers, real rounds.
+ * fallback room's walls, real flow field, real crawlers, real guns.
  *
  *   MAN THE WALLS   one door; the core stands; the first breach cracks
  *   THE GUN CHAIN   amber feed → maker → hauled rail → turret
@@ -79,7 +79,7 @@ async function seatRun(side, unit) {
   const g = (await page.evaluate((s) => window.__tubes.plant.glands(s), side)).find((x) => x.unit === unit);
   if (!g) return false;
   await page.evaluate((s) => window.__tubes.plant.grab(s), side);
-  const head = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.side === side).head;
+  const head = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === (side.includes(':') ? side : `${side}:0`)).head;
   const seat = { x: g.x + g.nx * 0.1, y: g.y, z: g.z + g.nz * 0.1 };
   for (let k = 1; k <= 6; k++) {
     await page.evaluate(
@@ -92,7 +92,7 @@ async function seatRun(side, unit) {
   const ok = await page
     .waitForFunction(
       ({ s, u }) => {
-        const r = window.__tubes.plant.state().runs.find((x) => x.side === s);
+        const r = window.__tubes.plant.state().runs.find((x) => x.key === (s.includes(':') ? s : `${s}:0`));
         return r && (r.phase === 'seated' || r.phase === 'flowing') && r.target === u;
       },
       { s: side, u: unit },
@@ -190,21 +190,20 @@ await studio();
 /* ── THE GUN CHAIN ───────────────────────────────────────────────────── */
 
 console.log('THE GUN CHAIN');
-// The breach side decides where the gun goes: between it and the core.
+// The gun costs parts and fires for free: it goes between the breach and
+// the core, and the factory's job is to rail GEARS into the CORE's bank.
 const b0 = sg.breaches[0];
 const cx = core.i;
 const cz = core.j;
-// Build along the far side's lane (amber comes in from the far tape).
-const row = cz - 2;
-const gunAt = [cx + (b0.x > 0 ? 1 : -1), row];
+const gunAt = [cx + (b0.x > 0 ? 1 : -1), cz - 2];
 const sideStep = b0.x > 0 ? -1 : 1;
-const makerAt = [gunAt[0] + sideStep * 3, row];
+const makerAt = [cx + sideStep * 3, cz];
 let r = await handPlace('turret', gunAt[0], gunAt[1]);
 check(r.ok, `a TURRET stands at ${gunAt} (cost: 3 GEAR)`);
 sg = await siege();
 check((sg.bank.gear ?? 0) === 2, `and the bank paid for it (${sg.bank.gear} left)`);
-const railFrom = [makerAt[0] + sideStep * -1, row];
-const railTo = [gunAt[0] + sideStep * 1, row];
+const railFrom = [makerAt[0] - sideStep, cz];
+const railTo = [cx + sideStep, cz];
 const hauled = await haulRun('belt', railFrom, railTo);
 check(hauled.laid >= 1, `a rail run hauled ${railFrom} → ${railTo} (${hauled.laid + 1} pieces)`);
 r = await handPlace('maker', makerAt[0], makerAt[1]);
@@ -212,34 +211,31 @@ check(r.ok, `a MAKER stands at ${makerAt}`);
 units = await plan();
 const maker = units.find((u) => u.type === 'maker');
 const gun = units.find((u) => u.type === 'turret');
-// Walk the chain: maker → … → turret.
+// Walk the chain: maker → … → core.
 let at = maker;
 let hops = 0;
 while (at && at.feeds !== null && hops < 20) {
   at = units.find((u) => u.id === at.feeds);
   hops++;
 }
-check(at?.id === gun.id, `the maker's chute runs down the lane into the gun (${hops} hops)`);
+check(at?.id === core.id, `the maker's chute runs down the lane into the CORE (${hops} hops)`);
 check(await seatRun('far', maker.id), 'the amber feed is hauled into the maker');
 await page.evaluate(() => window.__tubes.plant.timeScale(6));
-const loaded = await page
-  .waitForFunction(() => window.__tubes.siege.turrets()[0]?.ammo > 0, undefined, { timeout: 30000 })
+const banked = await page
+  .waitForFunction(() => (window.__tubes.siege.state().bank.gear ?? 0) >= 5, undefined, { timeout: 30000 })
   .then(() => true)
   .catch(() => false);
-check(loaded, 'GEARS ride the rail into the gun’s breech');
+sg = await siege();
+check(banked, `GEARS ride the rail into the core's bank (${sg.bank.gear} GEAR)`);
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
+const idle = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.id === gun.id);
+check(idle && idle.fired > 5, `and the gun sits quiet with nothing to shoot (no magazine to fill)`);
 await lookAt(0.2, 0.9, -0.5, 0.05, 0.4, -0.35);
 await shot('01-the-chain');
 
 /* ── FIRST WATCH ─────────────────────────────────────────────────────── */
 
 console.log('FIRST WATCH');
-// Let the magazine fill before the horn.
-await page.evaluate(() => window.__tubes.plant.timeScale(8));
-await page
-  .waitForFunction(() => window.__tubes.siege.turrets()[0]?.ammo >= 4, undefined, { timeout: 30000 })
-  .catch(() => {});
-await page.evaluate(() => window.__tubes.plant.timeScale(1));
 await page.evaluate(() => window.__tubes.siege.horn());
 sg = await siege();
 check(
@@ -257,6 +253,11 @@ const b = sg.breaches[0];
   await lookAt(-ux * 0.9 + uz * 0.5, -uz * 0.9 - ux * 0.5, 0.1, b.x * S * 0.5, 0.1, b.z * S * 0.5);
 }
 await shot('02-first-watch');
+const fired = await page
+  .waitForFunction(() => window.__tubes.siege.turrets().some((t) => t.type === 'turret' && t.fired < 1), undefined, { timeout: 30000 })
+  .then(() => true)
+  .catch(() => false);
+check(fired, 'the turret opens up on its own — free rounds, no hands');
 await page.evaluate(() => window.__tubes.plant.timeScale(3));
 const cleared = await page
   .waitForFunction(() => window.__tubes.siege.state().wave === 1, undefined, { timeout: 90000 })
@@ -304,7 +305,9 @@ const wr = await haulRun('wall', [cx - 4, wallRow], [cx - 4 + want, wallRow]);
 const gearsAfter = (await siege()).bank.gear ?? 0;
 const laidWalls = (await plan()).filter((u) => u.type === 'wall').length;
 check(
-  laidWalls === Math.min(gearsBefore, want + 1) && gearsAfter === gearsBefore - laidWalls,
+  // (The maker is still banking GEARS while the wall goes down, so the
+  // bank can only be held to "paid at least this much".)
+  laidWalls === Math.min(gearsBefore, want + 1) && gearsAfter <= gearsBefore - laidWalls + 2,
   `a hauled wall is as long as the bank can pay for (${laidWalls} laid, ${gearsBefore} → ${gearsAfter} GEAR)`,
 );
 void wr;
@@ -361,6 +364,87 @@ if (g) {
   await lookAt(g.x * 0.7 * 0.4 + 0.6, g.z * 0.7 * 0.4 + 0.9, -0.5, g.x * 0.7 * 0.6, 0.15, g.z * 0.7 * 0.6);
   await shot('04-the-chew');
 }
+
+/* ── THE ARSENAL ─────────────────────────────────────────────────────── */
+
+console.log('THE ARSENAL');
+// Every weapon stood round the core, each with a crawler in front of it.
+// They cost parts and fire for free; the flamer and the coil fire only
+// while their feed's tube is seated — the TWIN spouts mean the amber feed
+// can run a maker and a flamer at once.
+await page.evaluate(
+  ({ cx, cz }) => {
+    const p = window.__tubes;
+    for (const u of p.plant.plan()) if (u.type === 'wall') p.build.removeAt(u.i, u.j);
+    p.siege.wakeAll();
+    p.plant.grantBank({ gear: 40, cell: 6, chip: 6, pump: 4 });
+  },
+  { cx, cz },
+);
+await page.waitForTimeout(300);
+const arms = {
+  piston: [cx, cz + 1, 2],
+  flamer: [cx - 1, cz - 1, 0],
+  tesla: [cx + 1, cz + 1, 2],
+  mortar: [cx, cz + 3, 2],
+};
+const stood = await page.evaluate(
+  ({ arms }) =>
+    Object.fromEntries(
+      Object.entries(arms).map(([t, [i, j, r]]) => [t, window.__tubes.build.placeAt(i, j, t, r)]),
+    ),
+  { arms },
+);
+check(Object.values(stood).every(Boolean), `four more weapons stand (${JSON.stringify(stood)})`);
+units = await plan();
+const unitOf = (t) => units.find((u) => u.type === t);
+const runs0 = (await page.evaluate(() => window.__tubes.plant.state())).runs.map((r) => r.key);
+check(runs0.includes('far:0') && runs0.includes('far:1'), `every feed pours from TWO spouts (${runs0.join(' ')})`);
+const fuelled = async (t) =>
+  (await page.evaluate(() => window.__tubes.siege.turrets())).find((w) => w.type === t)?.fuelled;
+check(!(await fuelled('flamer')), 'an unplumbed flamer is dark');
+check(await seatRun('far:1', unitOf('flamer').id), "the amber feed's TWIN spout is hauled into the flamer (the maker keeps its own)");
+{
+  const r0 = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === 'far:0');
+  check(r0?.target === maker.id, `and the main amber spout is still in the maker (${r0?.target} = ${maker.id})`);
+}
+check(await seatRun('right', unitOf('tesla').id), 'the volt feed is hauled into the tesla coil');
+await page.waitForTimeout(600);
+check((await fuelled('flamer')) && (await fuelled('tesla')), 'both burners light their pilots');
+const S = 0.7;
+const cell = 0.35;
+const cellAt = (i, j) => [(i + 0.5) * cell, (j + 0.5) * cell];
+// A crawler in front of each weapon, inside its reach.
+const targets = {
+  piston: [cellAt(cx, cz + 1)[0], cellAt(cx, cz + 1)[1] + 0.38, 'brute'],
+  flamer: [cellAt(cx - 1, cz - 1)[0], cellAt(cx - 1, cz - 1)[1] - 0.7, 'grub'],
+  tesla: [cellAt(cx + 1, cz + 1)[0] + 0.4, cellAt(cx + 1, cz + 1)[1] + 0.9, 'skitter'],
+  mortar: [cellAt(cx, cz + 3)[0] - 0.4, cellAt(cx, cz + 3)[1] + 1.9, 'brute'],
+};
+for (const [w, [x, z, kind]] of Object.entries(targets)) {
+  await page.evaluate(({ kind, x, z }) => window.__tubes.siege.place(kind, x, z, Math.PI), { kind, x, z });
+  // Second skitter for the coil to chain to.
+  if (w === 'tesla') await page.evaluate(({ x, z }) => window.__tubes.siege.place('skitter', x + 0.3, z + 0.25, Math.PI), { x, z });
+}
+await page.evaluate(() => window.__tubes.siege.tough(8));
+// Watch all four at once: each must fire at least once.
+const heard = await page.evaluate(
+  () =>
+    new Promise((done) => {
+      const seen = new Set();
+      const t0 = performance.now();
+      const look = () => {
+        for (const t of window.__tubes.siege.turrets()) if (t.fired < 0.3) seen.add(t.type);
+        if (seen.size >= 5 || performance.now() - t0 > 20000) return done([...seen]);
+        requestAnimationFrame(look);
+      };
+      look();
+    }),
+);
+for (const w of ['piston', 'flamer', 'tesla', 'mortar']) {
+  check(heard.includes(w), `the ${w.toUpperCase()} fires on its own`);
+}
+// (The portraits of each weapon firing are tools/weapons-look.mjs.)
 
 /* ── THE FALL ────────────────────────────────────────────────────────── */
 

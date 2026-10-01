@@ -19,6 +19,7 @@ import {
   type EnemyId,
   type ItemId,
   type LineId,
+  type WeaponId,
   type LineSpec,
   type OrderSpec,
   type UnitType,
@@ -61,14 +62,12 @@ export interface Unit {
   maxHp: number;
   /** Seconds since the last bite landed on it (repair waits on this). */
   hurtT: number;
-  /** TURRET ONLY: the parts loaded behind the breech (each one several
-   *  rounds), the part being fired now and its rounds left, the cycle
-   *  cooldown, and where the barrel points (plan yaw, radians). */
-  ammo?: ItemId[];
-  loaded?: ItemId | null;
-  rounds?: number;
+  /** WEAPONS: the cycle cooldown, where the head points (plan yaw,
+   *  radians), and how long ago it last fired (drives recoil, the flame,
+   *  the piston's stroke — the look of firing, kept with the gun). */
   cool?: number;
   yaw?: number;
+  firedT?: number;
 }
 
 /** One supply run off a feed's spout. Field names deliberately mirror
@@ -76,6 +75,10 @@ export interface Unit {
  *  pull is TubeSystem's verb, forked (see factory/pull.ts). */
 export interface FactoryRun {
   side: FloorSide;
+  /** Which of the pillar's spouts it leaves from (0 = the main boss,
+   *  1 = the twin a cell along). Every feed pours from TWO now: one line
+   *  for a maker and one for a flamer or a coil, without choosing. */
+  spout: number;
   line: LineSpec;
   phase: 'pull' | 'seated' | 'flowing' | 'retract';
   /** The spout (A) and, once the magnet takes, the gland (B). */
@@ -151,6 +154,8 @@ export interface PlantEvent {
   unit?: number;
   item?: ItemId;
   side?: FloorSide;
+  /** The run's key ('far:1') where a feed has more than one spout. */
+  key?: string;
   order?: number;
 }
 
@@ -233,6 +238,24 @@ export interface Enemy {
   flash: number;
   /** How far it has walked (drives the leg cycle). */
   stride: number;
+  /** PUNCHED: knock-back velocity (plant m/s) and how long it lasts, and
+   *  how long it stays stunned after. */
+  kvx: number;
+  kvz: number;
+  kT: number;
+  stunT: number;
+  /** ON FIRE: seconds left burning, and how hard. */
+  burnT: number;
+  burnDps: number;
+}
+
+/** A patch of burning floor where a flame landed. */
+export interface Fire {
+  x: number;
+  z: number;
+  r: number;
+  t: number;
+  life: number;
 }
 
 export interface Breach {
@@ -248,7 +271,7 @@ export interface Breach {
 
 export interface Shot {
   id: number;
-  ammo: ItemId;
+  weapon: WeaponId;
   /** Muzzle and (live) aim point, plant metres. */
   x0: number;
   y0: number;
@@ -278,11 +301,17 @@ export interface SiegeFx {
     | 'horn'
     | 'clear'
     | 'victory'
-    | 'fallen';
+    | 'fallen'
+    | 'flame'
+    | 'punch'
+    | 'shell';
   x: number;
   y: number;
   z: number;
-  ammo?: ItemId;
+  weapon?: WeaponId;
+  /** FLAME: the cone's direction (plan yaw) and reach. PUNCH: the ram's yaw. */
+  yaw?: number;
+  reach?: number;
   enemy?: EnemyId;
   unit?: number;
   /** ARC: every hop, as [x, y, z] triples. BEAM: start and end. */
@@ -308,6 +337,8 @@ export interface Siege {
   nextEnemy: number;
   shots: Shot[];
   nextShot: number;
+  /** Burning floor. */
+  fires: Fire[];
   /** The breaches the NEXT (or current) wave comes out of — telegraphed
    *  through the whole build phase so you can wall the right side. */
   breaches: Breach[];
@@ -351,6 +382,7 @@ export function freshSiege(): Siege {
     nextEnemy: 1,
     shots: [],
     nextShot: 1,
+    fires: [],
     breaches: [],
     kills: 0,
     won: false,
@@ -376,8 +408,16 @@ export function partById(id: number): Part | undefined {
   return plant.parts.find((p) => p.id === id);
 }
 
-export function runForSide(side: FloorSide): FactoryRun | undefined {
-  return plant.runs.find((r) => r.side === side);
+/** A run's name: its side and spout, 'far:0'. */
+export function runKey(r: { side: FloorSide; spout: number }): string {
+  return `${r.side}:${r.spout}`;
+}
+
+/** The run off a side's spout. Takes 'far' (the main spout) or 'far:1'. */
+export function runForSide(ref: string): FactoryRun | undefined {
+  const [side, n] = ref.split(':');
+  const spout = Number(n ?? 0) || 0;
+  return plant.runs.find((r) => r.side === side && r.spout === spout);
 }
 
 export function runSeatedAt(unitId: number): FactoryRun | undefined {
@@ -414,7 +454,9 @@ export function bankTotal(): number {
  *  to, back when a sheet counted draughts, and every player who walked a
  *  collar past one had it snatched out of their hands. */
 export function takesTube(unit: Unit): boolean {
-  return unit.type === 'maker' || unit.type === 'vat';
+  // …and the two fuel-burning weapons: a flamethrower drinks amber, a
+  // tesla coil violet, straight off a feed.
+  return unit.type === 'maker' || unit.type === 'vat' || unit.type === 'flamer' || unit.type === 'tesla';
 }
 
 /** Everything the given box is holding right now, for the box panel:
@@ -428,10 +470,17 @@ export function unitContents(unitId: number): Part[] {
 }
 
 /** A fresh spout run: the capped stub, straight out of the pillar. */
-export function freshRun(side: FloorSide, line: LineSpec, spout: Vector3, normal: Vector3): FactoryRun {
+export function freshRun(
+  side: FloorSide,
+  line: LineSpec,
+  spout: Vector3,
+  normal: Vector3,
+  index = 0,
+): FactoryRun {
   const head = spout.clone().addScaledVector(normal, TUBE.stubLength);
   return {
     side,
+    spout: index,
     line,
     phase: 'pull',
     pointA: spout.clone(),
@@ -538,6 +587,6 @@ export function openShopFully(): void {
       plant.events.push({ kind: 'feed-wake', side });
     }
   }
-  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat', 'turret', 'wall'];
+  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat', 'turret', 'wall', 'flamer', 'piston', 'tesla', 'mortar'];
   plant.generation++;
 }

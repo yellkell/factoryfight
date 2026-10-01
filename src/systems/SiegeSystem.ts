@@ -30,6 +30,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
+  type Texture,
   CircleGeometry,
   Color,
   CylinderGeometry,
@@ -51,7 +52,7 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { AMMO, ENEMIES, LINES, SIEGE, type EnemyId, type ItemId } from '../config.js';
+import { ENEMIES, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { site } from '../game/state.js';
@@ -63,13 +64,25 @@ import {
   breachHex,
   coreHealth,
   debugFreeze,
+  debugWakeAll,
+  debugClear,
+  debugTough,
   debugPlace,
   debugSpawn,
   soundHorn,
   standCore,
   waveSpec,
 } from '../factory/siege.js';
-import { dockUnit } from '../factory/sim.js';
+import { dockUnit, isWeapon } from '../factory/sim.js';
+import { runSeatedAt } from '../factory/state.js';
+
+/** Is a fuel-burner plumbed with its own line, pouring? */
+function fuelledNow(unitId: number, type: string): boolean {
+  const need = WEAPONS[type as WeaponId]?.fuel;
+  if (!need) return true;
+  const run = runSeatedAt(unitId);
+  return Boolean(run && run.phase === 'flowing' && run.line.id === need);
+}
 import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
@@ -100,13 +113,21 @@ export const siegeView: {
   /** TOOLS ONLY: stand a crawler at plant (x, z), and freeze the fight. */
   place?: (kind: EnemyId, x: number, z: number, heading?: number) => void;
   freeze?: (on: boolean) => void;
+  /** Every feed awake and every weapon on offer (tools). */
+  wakeAll?: () => void;
+  /** Every crawler, round and fire off the floor; the clock held (tools). */
+  clear?: () => void;
+  /** Every crawler on the floor ×m as hard to kill (tools). */
+  tough?: (m: number) => void;
   enemies?: () => Array<{ id: number; kind: string; x: number; z: number; hp: number; phase: string }>;
-  turrets?: () => Array<{ id: number; ammo: number; loaded: string | null; rounds: number; yaw: number }>;
+  /** Every weapon: what it is, seconds since it last fired, its aim, and
+   *  whether it is plumbed (the fuel-burners). */
+  turrets?: () => Array<{ id: number; type: string; fired: number; yaw: number; fuelled: boolean }>;
 } = {};
 
 /** What each round glows. Base parts wear their line; deep parts wear
  *  the mix they are made of. */
-export const AMMO_COLOR: Record<ItemId, number> = {
+export const ITEM_COLOR: Record<ItemId, number> = {
   gear: LINES.mains.glow,
   cell: LINES.coolant.glow,
   chip: LINES.volt.glow,
@@ -212,6 +233,24 @@ interface BreachHw {
 
 const MAX_P = 900;
 
+let _softTex: Texture | null = null;
+/** A soft round blob — fire and smoke, where a glint would read as a star. */
+function softTexture(): Texture {
+  if (_softTex) return _softTex;
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  const r = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  r.addColorStop(0, 'rgba(255,255,255,1)');
+  r.addColorStop(0.3, 'rgba(255,255,255,0.6)');
+  r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r;
+  g.fillRect(0, 0, size, size);
+  _softTex = new CanvasTexture(c);
+  return _softTex;
+}
+
 class Sparks {
   readonly points: Points;
   private pos = new Float32Array(MAX_P * 3);
@@ -224,14 +263,14 @@ class Sparks {
   private grav = new Float32Array(MAX_P);
   private next = 0;
 
-  constructor() {
+  constructor(map: Texture = glintTexture()) {
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(this.pos, 3).setUsage(DynamicDrawUsage));
     geo.setAttribute('color', new BufferAttribute(this.col, 3).setUsage(DynamicDrawUsage));
     geo.setAttribute('aSize', new BufferAttribute(this.size, 1).setUsage(DynamicDrawUsage));
     const mat = sizedPointsMaterial({
       size: 0.05,
-      map: glintTexture(),
+      map,
       vertexColors: true,
       transparent: true,
       depthWrite: false,
@@ -273,6 +312,42 @@ class Sparks {
       this.life[i] = this.maxLife[i] = life * (0.6 + Math.random() * 0.6);
       this.grav[i] = gravity;
       this.size[i] = size * (0.6 + Math.random() * 0.8);
+    }
+  }
+
+  /** A directed jet (the flame): along (dx, dz) with `spread`, drifting
+   *  UP as it goes (negative gravity), each particle a colour from `cols`. */
+  jet(
+    x: number,
+    y: number,
+    z: number,
+    dx: number,
+    dz: number,
+    n: number,
+    speed: number,
+    spread: number,
+    cols: number[],
+    life: number,
+    size: number,
+  ): void {
+    for (let k = 0; k < n; k++) {
+      const i = this.next;
+      this.next = (this.next + 1) % MAX_P;
+      this.pos[i * 3] = x;
+      this.pos[i * 3 + 1] = y;
+      this.pos[i * 3 + 2] = z;
+      const a = Math.atan2(dx, dz) + (Math.random() - 0.5) * 2 * spread;
+      const sp = speed * (0.6 + Math.random() * 0.5);
+      this.vel[i * 3] = Math.sin(a) * sp;
+      this.vel[i * 3 + 1] = (Math.random() - 0.3) * sp * 0.25;
+      this.vel[i * 3 + 2] = Math.cos(a) * sp;
+      _col.set(cols[Math.floor(Math.random() * cols.length)]);
+      this.base[i * 3] = _col.r;
+      this.base[i * 3 + 1] = _col.g;
+      this.base[i * 3 + 2] = _col.b;
+      this.life[i] = this.maxLife[i] = life * (0.7 + Math.random() * 0.5);
+      this.grav[i] = -1.2;
+      this.size[i] = size * (0.7 + Math.random() * 0.9);
     }
   }
 
@@ -325,6 +400,7 @@ export class SiegeSystem extends createSystem({}) {
   private bars!: InstancedMesh;
   private barBacks!: InstancedMesh;
   private sparks!: Sparks;
+  private flames!: Sparks;
   private rings: Flare[] = [];
   private flashes: Flare[] = [];
   private beams: Flare[] = [];
@@ -345,6 +421,7 @@ export class SiegeSystem extends createSystem({}) {
   private plateTex!: CanvasTexture;
   private plateKey = '';
   private lastPhase = '';
+  private fireClock = 0;
   /** Seconds since the core went — the fall plays before the card. */
   private fallenT = 0;
 
@@ -390,6 +467,9 @@ export class SiegeSystem extends createSystem({}) {
 
     this.sparks = new Sparks();
     this.root.add(this.sparks.points);
+    // FIRE is soft: round blobs that bloom into each other, not glints.
+    this.flames = new Sparks(softTexture());
+    this.root.add(this.flames.points);
 
     const ringGeo = new RingGeometry(0.86, 1, 40);
     for (let k = 0; k < 24; k++) {
@@ -412,7 +492,9 @@ export class SiegeSystem extends createSystem({}) {
     }
     const beamGeo = new CylinderGeometry(1, 1, 1, 10, 1, true);
     beamGeo.rotateX(Math.PI / 2);
-    for (let k = 0; k < 10; k++) {
+    // Beams double as the coil's BOLTS: every kink of an arc is one, so
+    // the pool is deep.
+    for (let k = 0; k < 90; k++) {
       const mat = glow(0xffffff);
       mat.side = DoubleSide;
       const mesh = new Mesh(beamGeo, mat);
@@ -483,17 +565,20 @@ export class SiegeSystem extends createSystem({}) {
     siegeView.spawn = (kind, breach = 0) => debugSpawn(kind, breach);
     siegeView.place = (kind, x, z, heading = 0) => debugPlace(kind, x, z, heading);
     siegeView.freeze = (on) => debugFreeze(on);
+    siegeView.wakeAll = () => debugWakeAll();
+    siegeView.clear = () => debugClear();
+    siegeView.tough = (m) => debugTough(m);
     siegeView.enemies = () =>
       plant.siege.enemies.map((e) => ({ id: e.id, kind: e.kind, x: e.x, z: e.z, hp: e.hp, phase: e.phase }));
     siegeView.turrets = () =>
       plant.units
-        .filter((u) => u.type === 'turret')
+        .filter((u) => isWeapon(u.type))
         .map((u) => ({
           id: u.id,
-          ammo: u.ammo?.length ?? 0,
-          loaded: u.loaded ?? null,
-          rounds: u.rounds ?? 0,
+          type: u.type,
+          fired: u.firedT ?? 99,
           yaw: u.yaw ?? 0,
+          fuelled: u.type === 'flamer' || u.type === 'tesla' ? fuelledNow(u.id, u.type) : true,
         }));
   }
 
@@ -526,10 +611,12 @@ export class SiegeSystem extends createSystem({}) {
     this.tickBreaches(delta);
     this.drawEnemies();
     this.drawShots();
+    this.drawFire(dt);
     this.drawBars();
     this.tickGuns(delta);
     this.tickFlares(dt);
     this.sparks.tick(dt);
+    this.flames.tick(dt);
     this.tickCore(delta);
   }
 
@@ -541,12 +628,59 @@ export class SiegeSystem extends createSystem({}) {
   }
 
   private perform(f: SiegeFx): void {
-    const color = f.ammo ? AMMO_COLOR[f.ammo] : 0xffa22e;
+    const color = f.weapon ? WEAPONS[f.weapon].color : 0xffa22e;
     switch (f.kind) {
       case 'fire': {
         if (f.unit !== undefined) this.recoil.set(f.unit, 1);
-        this.sparks.burst(f.x, f.y, f.z, 4, color, 0.8, 0.18, 0, 0.7);
-        if (f.ammo) sfx.gunFire(AMMO[f.ammo].kind);
+        if (f.weapon === 'turret') {
+          this.sparks.burst(f.x, f.y, f.z, 5, color, 0.9, 0.16, 0, 0.7);
+          // A brass casing kicked out the side, pinging off the floor.
+          const side = (f.yaw ?? 0) + Math.PI / 2;
+          this.sparks.jet(f.x, f.y - 0.05, f.z, Math.sin(side), Math.cos(side), 1, 0.9, 0.4, [0xd8b04a], 0.7, 0.9);
+          sfx.gunFire('slug');
+        } else if (f.weapon === 'mortar') {
+          this.sparks.burst(f.x, f.y + 0.1, f.z, 18, 0xfff0c0, 1.4, 0.35, -0.5, 1.2);
+          this.ring(f.x, f.z, color, 0.35, 0.4);
+          sfx.gunFire('hammer');
+          buzz(this.world, 'both', 0.2, 40);
+        } else if (f.weapon === 'tesla') {
+          sfx.gunFire('arc');
+        }
+        break;
+      }
+      case 'flame': {
+        // THE CONE: a jet of fire along the nozzle, white-yellow at the
+        // lip and red by the end of its reach.
+        const yaw = f.yaw ?? 0;
+        const reach = f.reach ?? 1;
+        // A hot core to the jet, so it reads as one tongue, not confetti.
+        const lip = reach * 0.55;
+        this.beam([f.x, f.y, f.z, f.x + Math.sin(yaw) * lip, f.y + 0.02, f.z + Math.cos(yaw) * lip], 0xffa040);
+        this.flames.jet(f.x, f.y, f.z, Math.sin(yaw), Math.cos(yaw), 10, reach * 2.4, 0.3, [0xfff2b0, 0xffb347, 0xff7a1a, 0xff4d1a, 0xe02a10], 0.45, 3.2);
+        if (f.unit !== undefined) this.recoil.set(f.unit, 1);
+        sfx.flameRoar();
+        break;
+      }
+      case 'punch': {
+        // THE RAM lands: a shock ring where it hit, steel sparks.
+        this.ring(f.x, f.z, color, 0.32, 0.35);
+        this.flash(f.x, f.y, f.z, 0xffffff, 0.12, 0.15);
+        const yaw = f.yaw ?? 0;
+        this.sparks.jet(f.x, f.y, f.z, Math.sin(yaw), Math.cos(yaw), 14, 2.2, 0.7, [0xffffff, 0xd8e4ff, 0xffd27a], 0.3, 1);
+        sfx.pistonSlam();
+        break;
+      }
+      case 'shell': {
+        // A MORTAR SHELL lands: fireball, ground shockwave, debris.
+        const r = f.radius ?? 0.6;
+        this.ring(f.x, f.z, 0xffd36a, r * 1.4, 0.6);
+        this.ring(f.x, f.z, 0xff7a1a, r * 0.8, 0.45);
+        this.flash(f.x, 0.12, f.z, 0xffc070, r * 0.75, 0.35);
+        this.sparks.burst(f.x, 0.1, f.z, 60, 0xffa040, 2.4, 0.7, 4, 1.4);
+        this.sparks.burst(f.x, 0.1, f.z, 20, 0x6b5a4a, 1.6, 1.1, 6, 1.6);
+        this.flames.jet(f.x, 0.05, f.z, 0, 0, 16, 0.5, Math.PI, [0xff7a1a, 0xffb347, 0xfff2b0], 0.9, 4);
+        sfx.mortarBoom();
+        buzz(this.world, 'both', 0.35, 70);
         break;
       }
       case 'hit':
@@ -561,30 +695,25 @@ export class SiegeSystem extends createSystem({}) {
         break;
       }
       case 'blast': {
+        // A sapper's charge, or plant chewed to scrap.
         const r = f.radius ?? 0.3;
-        const big = f.ammo === 'servo';
-        this.ring(f.x, f.z, f.ammo ? color : 0xff5a1e, r, 0.45);
-        this.flash(f.x, f.y + 0.05, f.z, f.ammo ? color : 0xffb060, r * 0.7, 0.28);
-        this.sparks.burst(f.x, f.y + 0.05, f.z, big ? 80 : 30, f.ammo ? color : 0xff7a2a, big ? 2.6 : 1.7, 0.6, 4, 1.3);
-        sfx.shellBurst(big || (f.radius ?? 0) > 0.6);
-        if (!f.ammo && f.unit === undefined) buzz(this.world, 'both', 0.35, 60);
+        this.ring(f.x, f.z, 0xff5a1e, r, 0.45);
+        this.flash(f.x, f.y + 0.05, f.z, 0xffb060, r * 0.7, 0.28);
+        this.sparks.burst(f.x, f.y + 0.05, f.z, 30, 0xff7a2a, 1.7, 0.6, 4, 1.3);
+        sfx.shellBurst(r > 0.4);
+        if (f.unit === undefined) buzz(this.world, 'both', 0.35, 60);
         break;
       }
-      case 'frost':
-        this.ring(f.x, f.z, LINES.coolant.glow, f.radius ?? 0.4, 0.6);
-        this.flash(f.x, 0.08, f.z, LINES.coolant.foam, (f.radius ?? 0.4) * 0.6, 0.3);
-        this.sparks.burst(f.x, 0.1, f.z, 22, LINES.coolant.foam, 1.0, 0.7, 1.5, 1.1);
-        sfx.frostCrack();
-        break;
       case 'arc':
-        if (f.path) this.arc(f.path);
+        if (f.path) {
+          this.arc(f.path);
+          // Arcs are doubled: a second, jaggier bolt along the same hops.
+          this.arc(f.path);
+        }
         for (let k = 3; k + 2 < (f.path?.length ?? 0); k += 3) {
           const p = f.path!;
-          this.sparks.burst(p[k], p[k + 1], p[k + 2], 6, LINES.volt.glow, 1.2, 0.3, 3, 0.9);
+          this.sparks.burst(p[k], p[k + 1], p[k + 2], 8, LINES.volt.glow, 1.4, 0.3, 3, 1);
         }
-        break;
-      case 'beam':
-        if (f.path) this.beam(f.path, color);
         break;
       case 'bite':
         this.sparks.burst(f.x, 0.3, f.z, 3, 0xffc070, 0.7, 0.25, 4, 0.6);
@@ -658,18 +787,18 @@ export class SiegeSystem extends createSystem({}) {
     f.mesh.visible = true;
   }
 
-  private beam(path: number[], color: number): void {
+  private beam(path: number[], color: number, life = 0.22, width = 0.035): void {
     const f = this.take(this.beams);
     const [x0, y0, z0, x1, y1, z1] = path;
     _v.set(x1 - x0, y1 - y0, z1 - z0);
     const len = _v.length();
     f.mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     f.mesh.quaternion.setFromUnitVectors(Z, _v.normalize());
-    f.mesh.scale.set(0.03, 0.03, len);
+    f.mesh.scale.set(width, width, len);
     f.mat.color.set(color);
     f.t = 0;
-    f.life = 0.22;
-    f.start = 0.035;
+    f.life = life;
+    f.start = width;
     f.grow = 0;
     f.peak = 1;
     f.mesh.visible = true;
@@ -694,12 +823,14 @@ export class SiegeSystem extends createSystem({}) {
       let pz = az;
       for (let s = 1; s <= 5 && n < 62; s++) {
         const t = s / 5;
-        const j = s === 5 ? 0 : 0.05;
+        const j = s === 5 ? 0 : 0.09;
         const qx = ax + (bx - ax) * t + (Math.random() - 0.5) * j;
         const qy = ay + (by - ay) * t + (Math.random() - 0.5) * j;
         const qz = az + (bz - az) * t + (Math.random() - 0.5) * j;
         arr.set([px, py, pz, qx, qy, qz], n * 3);
         n += 2;
+        // A line is a hair in a headset: each kink is a lit rod too.
+        this.beam([px, py, pz, qx, qy, qz], 0xe6d4ff, 0.24, 0.011);
         px = qx;
         py = qy;
         pz = qz;
@@ -790,30 +921,53 @@ export class SiegeSystem extends createSystem({}) {
     for (const s of plant.siege.shots) {
       if (n >= 240) break;
       const p = Math.min(1, s.t / s.dur);
-      const spec = AMMO[s.ammo];
+      const shell = s.weapon === 'mortar';
       const x = s.x0 + (s.x1 - s.x0) * p;
       const z = s.z0 + (s.z1 - s.z0) * p;
       const dist = Math.hypot(s.x1 - s.x0, s.z1 - s.z0);
-      // Shells LOB; slugs fly flat and stretched.
-      const lob = spec.kind === 'slug' ? 0 : dist * (spec.kind === 'frost' ? 0.18 : 0.32);
+      // Slugs fly flat and stretched; a mortar shell goes HIGH and drops.
+      const lob = shell ? dist * 0.7 + 0.7 : 0;
       const y = s.y0 + (s.y1 - s.y0) * p + Math.sin(p * Math.PI) * lob;
       _v.set(s.x1 - s.x0, s.y1 - s.y0 + Math.cos(p * Math.PI) * lob * Math.PI, s.z1 - s.z0).normalize();
       _q.setFromUnitVectors(Z, _v);
-      const r = spec.kind === 'slug' ? 0.014 : spec.kind === 'bigone' ? 0.06 : 0.032;
-      const len = spec.kind === 'slug' ? 5 : 1.3;
+      const r = shell ? 0.04 : 0.016;
+      const len = shell ? 1.6 : 12;
       trs(_m, x, y, z, _q, r, r, r * len);
       this.shotsMesh.setMatrixAt(n, _m);
-      this.shotsMesh.setColorAt(n, _col.set(AMMO_COLOR[s.ammo]));
+      this.shotsMesh.setColorAt(n, _col.set(WEAPONS[s.weapon].color));
       n++;
-      // Shells leave a short trail.
-      if (spec.kind !== 'slug' && Math.random() < 0.5) {
-        this.sparks.burst(x, y, z, 1, AMMO_COLOR[s.ammo], 0.05, 0.25, 0, 0.6);
+      // A shell trails fire and smoke all the way up and down.
+      if (shell) {
+        this.sparks.burst(x, y, z, 2, Math.random() < 0.5 ? 0xffb347 : 0x5a4a3a, 0.08, 0.5, -0.3, 1.1);
       }
     }
     this.shotsMesh.count = n;
     this.shotsMesh.visible = n > 0;
     this.shotsMesh.instanceMatrix.needsUpdate = true;
     if (this.shotsMesh.instanceColor) this.shotsMesh.instanceColor.needsUpdate = true;
+  }
+
+  /** BURNING: crawlers on fire smoke and flicker as they come, and the
+   *  floor where a flame landed burns for a few seconds. */
+  private drawFire(dt: number): void {
+    this.fireClock += dt;
+    if (this.fireClock < 0.05) return;
+    this.fireClock = 0;
+    const cols = [0xffb347, 0xff7a1a, 0xff4d1a];
+    for (const e of plant.siege.enemies) {
+      if (e.burnT <= 0) continue;
+      const r = ENEMIES[e.kind].radius;
+      this.flames.jet(e.x + (Math.random() - 0.5) * r, r * 1.2, e.z + (Math.random() - 0.5) * r, 0, 0, 2, 0.15, Math.PI, cols, 0.45, 2.4);
+    }
+    for (const f of plant.siege.fires) {
+      const fade = Math.min(1, (f.life - f.t) / 0.8);
+      const n = Math.round(4 * fade);
+      for (let k = 0; k < n; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.sqrt(Math.random()) * f.r;
+        this.flames.jet(f.x + Math.sin(a) * d, 0.02, f.z + Math.cos(a) * d, 0, 0, 1, 0.1, Math.PI, cols, 0.55, 3);
+      }
+    }
   }
 
   /** Health bars over anything hurt — crawlers and plant alike. They
@@ -858,29 +1012,53 @@ export class SiegeSystem extends createSystem({}) {
 
   private tickGuns(delta: number): void {
     for (const u of plant.units) {
-      if (u.type !== 'turret') continue;
       const refs = liveUnitRefs.get(u.id);
       const gun = refs?.gun;
       if (!refs || !gun) continue;
       // The head slews in WORLD yaw; the unit's group is already turned.
-      gun.head.rotation.y = (u.yaw ?? 0) - refs.group.rotation.y;
+      if (gun.head) gun.head.rotation.y = (u.yaw ?? 0) - refs.group.rotation.y;
       let r = this.recoil.get(u.id) ?? 0;
       if (r > 0) {
-        r = Math.max(0, r - delta * 7);
+        r = Math.max(0, r - delta * (u.type === 'piston' ? 4 : 7));
         this.recoil.set(u.id, r);
       }
-      gun.barrel.position.z = 0.08 - r * r * 0.05;
-      gun.flash.opacity = r > 0.55 ? (r - 0.55) / 0.45 : 0;
-      gun.flashMesh.scale.set(0.05 + r * 0.03, 0.08 + r * 0.1, 0.05 + r * 0.03);
-      const chambered = u.loaded ?? u.ammo?.[0] ?? null;
-      gun.band.color.set(chambered ? AMMO_COLOR[chambered] : 0x222222);
-      gun.flash.color.set(chambered ? AMMO_COLOR[chambered] : 0xffd38a).lerp(_tmpWhite, 0.4);
-      const loaded = u.ammo?.length ?? 0;
-      gun.pips.forEach((m, k) => {
-        const item = u.ammo?.[k];
-        m.color.set(item ? AMMO_COLOR[item] : 0x1a1a1a);
-        m.opacity = k < loaded ? 0.95 : 0.4;
-      });
+      if (gun.barrel) {
+        // A gun KICKS back down its bore; the piston DRIVES its ram out
+        // fast and hauls it home slow.
+        const stroke = gun.ramOut ? (r > 0.75 ? (1 - r) / 0.25 : r / 0.75) : r * r;
+        const base = gun.barrel.userData.rest ?? (gun.barrel.userData.rest = gun.barrel.position.z);
+        gun.barrel.position.z = base + (gun.ramOut ? 1 : -1) * stroke * gun.kick;
+      }
+      if (gun.flash && gun.flashMesh) {
+        gun.flash.opacity = r > 0.5 ? (r - 0.5) / 0.5 : 0;
+        if (u.type === 'tesla') gun.flashMesh.scale.setScalar(0.08 + r * 0.12);
+        else gun.flashMesh.scale.set(0.05 + r * 0.04, 0.1 + r * 0.14, 0.05 + r * 0.04);
+      }
+      if (gun.jet) {
+        // The tongue pours while the flamer is firing (it fires ten times
+        // a second, so this is continuous), licking in and out.
+        const on = (u.firedT ?? 99) < 0.16;
+        const reach = WEAPONS.flamer.range * 0.92;
+        const spread = Math.tan(WEAPONS.flamer.cone ?? 0.5) * 0.55;
+        gun.jet.forEach((m, k) => {
+          m.visible = on;
+          if (!on) return;
+          const lick = 0.82 + 0.18 * Math.sin(this.clock * (37 + k * 11) + k) + Math.random() * 0.08;
+          const len = reach * lick * (1 - k * 0.24);
+          const rad = len * spread * (1 - k * 0.22);
+          m.scale.set(rad * (0.9 + Math.random() * 0.2), rad * (0.9 + Math.random() * 0.2), len);
+          const mat = m.material as MeshBasicMaterial;
+          mat.opacity = (m.userData.opacity as number) * (0.8 + Math.random() * 0.3);
+        });
+      }
+      if (gun.pilot) {
+        // The pilot is lit while the weapon can fire: plumbed (for the
+        // fuel-burners) and on a live siege. The coil's crown crackles.
+        const live = u.type === 'flamer' || u.type === 'tesla' ? fuelledNow(u.id, u.type) : true;
+        const flicker =
+          u.type === 'tesla' ? 0.6 + 0.4 * Math.random() : u.type === 'flamer' ? 0.75 + 0.25 * Math.sin(this.clock * 31) : 1;
+        gun.pilot.opacity = live ? flicker : 0.08;
+      }
     }
   }
 
@@ -1055,7 +1233,7 @@ export class SiegeSystem extends createSystem({}) {
     for (const item of items) {
       const n = bank[item] ?? 0;
       if (n <= 0 && item !== 'gear') continue;
-      g.fillStyle = `#${AMMO_COLOR[item].toString(16).padStart(6, '0')}`;
+      g.fillStyle = `#${ITEM_COLOR[item].toString(16).padStart(6, '0')}`;
       g.beginPath();
       g.arc(x + 10, 186, 9, 0, Math.PI * 2);
       g.fill();
@@ -1070,4 +1248,3 @@ export class SiegeSystem extends createSystem({}) {
 
 const _tmpWhite = new Color(0xffffff);
 const _tmpIce = new Color(0xa8eeff);
-void SIEGE;

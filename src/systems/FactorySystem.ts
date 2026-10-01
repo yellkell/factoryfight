@@ -38,7 +38,6 @@ import {
 import {
   COMBINES,
   FACTORY,
-  SIEGE,
   FLOW,
   ITEMS,
   LINES,
@@ -59,7 +58,6 @@ import { updateConnectionGuide } from '../tube/connection.js';
 import { CELL, cellCenter, worldToCell } from '../floor/grid.js';
 import { PLANT_SCALE, ensurePlantRoot, plantRoot, toPlant } from '../factory/frame.js';
 import { siegeTick, standDown } from '../factory/siege.js';
-import { loadTurret } from '../factory/sim.js';
 import { floorLayout, type FloorSide } from '../floor/plan.js';
 import {
   DIRS,
@@ -73,10 +71,10 @@ import {
   plant,
   postOrder,
   runForSide,
+  runKey,
   runSeatedAt,
   takesTube,
   unitAtCell,
-  unitById,
   type FactoryRun,
   type Part,
 } from '../factory/state.js';
@@ -142,7 +140,7 @@ export const factoryView: {
     brew?: number;
   };
   /** How close a seated line is to coming off its gland (0..1). */
-  strain?: (side: FloorSide) => number;
+  strain?: (side: string) => number;
   /** THE CLEARANCE PASS, visible: each offset seated run's control
    *  shift [x, y, z] (m). Empty = nothing needed moving. */
   dodges?: () => Partial<Record<FloorSide, [number, number, number]>>;
@@ -150,7 +148,7 @@ export const factoryView: {
    *  n samples of the centreline, for clearance AUDITS: a tool can
    *  measure tube-to-tube and tube-to-plant distances instead of
    *  eyeballing screenshots. Null unless seated/flowing. */
-  runCurve?: (side: FloorSide, n?: number) => Array<[number, number, number]> | null;
+  runCurve?: (side: string, n?: number) => Array<[number, number, number]> | null;
   /** The route a haul between two floor points would lay. */
   route?: (
     from: { x: number; z: number },
@@ -171,7 +169,7 @@ export const factoryView: {
   /** Every gland on the floor: the pose it would present to `side`'s
    *  spout (the collar swivels, so ask from somewhere), and whether a
    *  run already holds it. */
-  glands?: (side?: FloorSide) => Array<{
+  glands?: (side?: string) => Array<{
     unit: number;
     type: string;
     x: number;
@@ -183,7 +181,7 @@ export const factoryView: {
     seated: boolean;
   }>;
   /** The driven two hands, per feed side (the tools' pull). */
-  grab?: (side: FloorSide) => boolean;
+  grab?: (side: string) => boolean;
   dragTo?: (x: number, y: number, z: number) => void;
   release?: () => void;
   /** Unbolt a seated run off a unit's gland. */
@@ -285,7 +283,7 @@ export class FactorySystem extends createSystem({}) {
   private lastGen = -1;
   private feeds = new Map<FloorSide, FeedRefs>();
   private feedFlash = new Map<FloorSide, number>();
-  private runHw = new Map<FloorSide, RunHw>();
+  private runHw = new Map<string, RunHw>();
   private unitRefs = liveUnitRefs;
   /** One InstancedMesh per item COMPONENT (parts are little assemblies —
    *  see factory/units.ts partKit). Indexed in lockstep with partLocals. */
@@ -295,7 +293,7 @@ export class FactorySystem extends createSystem({}) {
   /** A tool's carry (factoryView.take) — the real grip's open hand must
    *  not drop it between the tool's two calls. */
   private carriedDriven: Partial<Record<'left' | 'right', boolean>> = {};
-  private driven = { active: false, side: 'far' as FloorSide, pos: new Vector3() };
+  private driven = { active: false, key: 'far:0', pos: new Vector3() };
   /** The dock halo's delivery flash (decays in the dressing tick). */
   private dockFlash = 0;
   /** THE LINKS, drawn: a chevron on every live join, so a chain reads as
@@ -318,8 +316,8 @@ export class FactorySystem extends createSystem({}) {
   private dodgeSig = '';
   /** The SOLVED offsets (per seated side) and the DRAWN ones, which ease
    *  toward them — and back to nothing once a line is loose again. */
-  private dodgeLift = new Map<FloorSide, Vector3>();
-  private dodgeShown = new Map<FloorSide, Vector3>();
+  private dodgeLift = new Map<string, Vector3>();
+  private dodgeShown = new Map<string, Vector3>();
   private dodgeA: Vector3[] = Array.from({ length: DODGE_SAMPLES }, () => new Vector3());
   private dodgeB: Vector3[] = Array.from({ length: DODGE_SAMPLES }, () => new Vector3());
   /** One context record, refilled per machine per frame for the theatre. */
@@ -348,6 +346,7 @@ export class FactorySystem extends createSystem({}) {
         feeds: { ...plant.feedsAwake },
         runs: plant.runs.map((r) => ({
           side: r.side,
+          key: runKey(r),
           phase: r.phase,
           ext: r.extension,
           target: r.targetUnit,
@@ -415,7 +414,7 @@ export class FactorySystem extends createSystem({}) {
         return false;
       }
       this.driven.active = true;
-      this.driven.side = side;
+      this.driven.key = runKey(run);
       this.driven.pos.copy(run.headVisual);
       return true;
     };
@@ -432,7 +431,7 @@ export class FactorySystem extends createSystem({}) {
       return run ? Math.min(1, run.strain / TUBE.unseatHoldS) : 0;
     };
     factoryView.dodges = () => {
-      const out: Partial<Record<FloorSide, [number, number, number]>> = {};
+      const out: Record<string, [number, number, number]> = {};
       for (const [side, v] of this.dodgeLift) {
         if (v.lengthSq() > 1e-6) out[side] = [v.x, v.y, v.z];
       }
@@ -441,7 +440,7 @@ export class FactorySystem extends createSystem({}) {
     factoryView.runCurve = (side, n = 64) => {
       const run = runForSide(side);
       if (!run || (run.phase !== 'seated' && run.phase !== 'flowing')) return null;
-      const lift = this.dodgeShown.get(side);
+      const lift = this.dodgeShown.get(runKey(run));
       const pts: Array<[number, number, number]> = [];
       _mouth.copy(run.pointA);
       bendControl(_mouth, run.normalA, run.extension, _p1);
@@ -529,19 +528,20 @@ export class FactorySystem extends createSystem({}) {
     // applied inside layTube.
     let sig = `g${plant.generation}|`;
     for (const r of plant.runs) {
-      if (r.phase === 'seated' || r.phase === 'flowing') sig += `${r.side}:${r.targetUnit}|`;
+      if (r.phase === 'seated' || r.phase === 'flowing') sig += `${runKey(r)}:${r.targetUnit}|`;
     }
     if (sig !== this.dodgeSig) {
       this.dodgeSig = sig;
       this.recomputeDodges();
     }
     for (const run of plant.runs) {
-      let shown = this.dodgeShown.get(run.side);
+      const key = runKey(run);
+      let shown = this.dodgeShown.get(key);
       if (!shown) {
         shown = new Vector3();
-        this.dodgeShown.set(run.side, shown);
+        this.dodgeShown.set(key, shown);
       }
-      easeLift(shown, this.dodgeLift.get(run.side), delta);
+      easeLift(shown, this.dodgeLift.get(key), delta);
     }
 
     // The runs: pull physics, seat magnet, pours, retraction.
@@ -645,16 +645,18 @@ export class FactorySystem extends createSystem({}) {
       }
     }
 
-    // A run per awake feed (the stub waits on the spout).
+    // A run per spout of every awake feed (each stub waits on its spout).
     for (const [side, refs] of this.feeds) {
       const lineId = FACTORY.sides[side];
       if (!lineId || !plant.feedsAwake[side]) continue;
-      if (!runForSide(side)) {
-        this.spoutPose(side, refs, _g, _gn);
-        plant.runs.push(freshRun(side, LINES[lineId], _g, _gn));
+      for (let spout = 0; spout < refs.spoutX.length; spout++) {
+      const key = `${side}:${spout}`;
+      if (!runForSide(key)) {
+        this.spoutPose(side, refs, _g, _gn, spout);
+        plant.runs.push(freshRun(side, LINES[lineId], _g, _gn, spout));
       }
-      if (!this.runHw.has(side)) {
-        const run = runForSide(side)!;
+      if (!this.runHw.has(key)) {
+        const run = runForSide(key)!;
         const root = new Group();
         const segments: SegmentRefs[] = [];
         for (let s = 0; s < TUBE.segments; s++) {
@@ -665,7 +667,8 @@ export class FactorySystem extends createSystem({}) {
         const collar = buildCollar(run.line);
         root.add(collar.group);
         plantRoot.add(root);
-        this.runHw.set(side, { root, segments, collar, humOn: false });
+        this.runHw.set(key, { root, segments, collar, humOn: false });
+      }
       }
     }
 
@@ -798,9 +801,13 @@ export class FactorySystem extends createSystem({}) {
     return toPlant(out);
   }
 
-  private spoutPose(side: FloorSide, refs: FeedRefs, point: Vector3, normal: Vector3): void {
+  private spoutPose(side: FloorSide, refs: FeedRefs, point: Vector3, normal: Vector3, spout = 0): void {
     this.sideMid(side, point);
     normal.copy(FEED_NORMALS[side]);
+    // The pillar's local +X, in the plant: the twin stands a cell along.
+    const along = refs.spoutX[spout] ?? 0;
+    point.x += normal.z * along;
+    point.z -= normal.x * along;
     point.addScaledVector(normal, refs.mouthOffset).setY(FACTORY.spoutHeight);
   }
 
@@ -845,11 +852,13 @@ export class FactorySystem extends createSystem({}) {
           : 0.08;
       // A run's pointA rides the spout (the floor may have moved between
       // shifts; runs are born fresh each shift, but stay honest anyway).
-      const run = runForSide(side);
-      if (run && run.phase === 'pull' && !run.held) {
-        this.spoutPose(side, refs, _g, _gn);
-        run.pointA.copy(_g);
-        run.normalA.copy(_gn);
+      for (let spout = 0; spout < refs.spoutX.length; spout++) {
+        const run = runForSide(`${side}:${spout}`);
+        if (run && run.phase === 'pull' && !run.held) {
+          this.spoutPose(side, refs, _g, _gn, spout);
+          run.pointA.copy(_g);
+          run.normalA.copy(_gn);
+        }
       }
     }
   }
@@ -953,20 +962,13 @@ export class FactorySystem extends createSystem({}) {
         unit.type === 'dock' ||
         (unit.type === 'chest' && chestParts(unit.id).length < FACTORY.chestCap + chestBonus()) ||
         (unit.type === 'combiner' && (unit.ports[0] < 0 || unit.ports[1] < 0)) ||
-        (unit.type === 'belt' && !beltPart(unit.id)) ||
-        (unit.type === 'turret' && (unit.ammo?.length ?? 0) < SIEGE.turret.magazine);
+        (unit.type === 'belt' && !beltPart(unit.id));
       if (!takes) continue;
       bestD = d;
       best = unit;
     }
     if (best) {
       const unit = best;
-      // A part dropped into a gun's hopper by hand is a round like any
-      // other — the emergency reload, when the lane has been chewed.
-      if (unit.type === 'turret' && loadTurret(unit, part)) {
-        buzz(this.world, hand, 0.45, 35);
-        return true;
-      }
       if (unit.type === 'dock') {
         deliverPart(part);
         buzz(this.world, hand, 0.5, 40);
@@ -1002,7 +1004,7 @@ export class FactorySystem extends createSystem({}) {
   /* ── the runs: pull, seat, pour, retract ──────────────────────────────── */
 
   private tickRun(run: FactoryRun, delta: number): void {
-    const hw = this.runHw.get(run.side);
+    const hw = this.runHw.get(runKey(run));
     if (!hw) return;
 
     if (run.spurnT > 0) run.spurnT -= delta;
@@ -1163,7 +1165,7 @@ export class FactorySystem extends createSystem({}) {
     run.held = false;
     run.magnet = false;
     run.droop = 0;
-    if (this.driven.active && this.driven.side === run.side) this.driven.active = false;
+    if (this.driven.active && this.driven.key === runKey(run)) this.driven.active = false;
     for (const seg of hw.segments) seg.pour.visible = seg.shell.visible;
     const gland = this.unitRefs.get(run.targetUnit)?.gland;
     if (gland) {
@@ -1193,7 +1195,7 @@ export class FactorySystem extends createSystem({}) {
           run.phase = 'flowing';
           run.phaseT = 0;
           sfx.flowArrive(run.line.id);
-          sfx.startHum(`plant-${run.side}`, run.line.id, run.line.pulseHz);
+          sfx.startHum(`plant-${runKey(run)}`, run.line.id, run.line.pulseHz);
           hw.humOn = true;
           buzz(this.world, 'both', 0.5, 120);
         }
@@ -1211,9 +1213,9 @@ export class FactorySystem extends createSystem({}) {
   }
 
   private stopRunHum(run: FactoryRun): void {
-    const hw = this.runHw.get(run.side);
+    const hw = this.runHw.get(runKey(run));
     if (hw?.humOn) {
-      sfx.stopHum(`plant-${run.side}`);
+      sfx.stopHum(`plant-${runKey(run)}`);
       hw.humOn = false;
     }
     const gland = this.unitRefs.get(run.targetUnit)?.gland;
@@ -1278,7 +1280,7 @@ export class FactorySystem extends createSystem({}) {
 
   private tickRetract(run: FactoryRun, hw: RunHw, delta: number): void {
     if (hw.humOn) {
-      sfx.stopHum(`plant-${run.side}`);
+      sfx.stopHum(`plant-${runKey(run)}`);
       hw.humOn = false;
     }
     run.phaseT += delta;
@@ -1309,7 +1311,7 @@ export class FactorySystem extends createSystem({}) {
     mid: Vector3;
     aim: Vector3 | null;
   } {
-    if (this.driven.active && this.driven.side === run.side) {
+    if (this.driven.active && this.driven.key === runKey(run)) {
       _mid.copy(this.driven.pos);
       return { holding: true, rattling: false, rattleHand: 'right', mid: _mid, aim: null };
     }
@@ -1374,7 +1376,7 @@ export class FactorySystem extends createSystem({}) {
   }
 
   /** Get-or-create a run's control offset. */
-  private dodgeOf(side: FloorSide): Vector3 {
+  private dodgeOf(side: string): Vector3 {
     let v = this.dodgeLift.get(side);
     if (!v) {
       v = new Vector3();
@@ -1448,7 +1450,7 @@ export class FactorySystem extends createSystem({}) {
    *  purpose: a dramatic arc overhead beats any interpenetration. */
   private liftOverPlant(seated: FactoryRun[]): void {
     for (const run of seated) {
-      const v = this.dodgeOf(run.side);
+      const v = this.dodgeOf(runKey(run));
       for (let pass = 0; pass < 4; pass++) {
         this.sampleRun(run, v, this.dodgeA);
         let need = 0;
@@ -1507,7 +1509,7 @@ export class FactorySystem extends createSystem({}) {
     // allows a full stack (plant lift + two bores + air): tall, and
     // honestly tall, where the alternative was two tubes in one air.
     const items: DodgeItem[] = seated.map((run) => ({
-      lift: this.dodgeOf(run.side),
+      lift: this.dodgeOf(runKey(run)),
       maxUp: DODGE_MAX_UP,
       maxDown: 0,
       sample: (v, out) => this.sampleRun(run, v, out),
@@ -1559,7 +1561,7 @@ export class FactorySystem extends createSystem({}) {
     // run tugged loose or retracting keeps wearing the DRAWN one while
     // it eases back to nothing — the arc relaxes into the hands instead
     // of collapsing the instant the seal breaks.
-    const shown = this.dodgeShown.get(run.side);
+    const shown = this.dodgeShown.get(runKey(run));
     const lift = shown && shown.lengthSq() > 1e-8 ? shown : undefined;
 
     const spans = segmentSpans(ext, maxExt);
@@ -1713,13 +1715,8 @@ export class FactorySystem extends createSystem({}) {
       if (ev.kind === 'craft') {
         sfx.segmentClick(3);
       } else if (ev.kind === 'deliver') {
-        // A part into a gun's breech is a clack, not a bank's chime.
-        if (ev.unit !== undefined && unitById(ev.unit)?.type === 'turret') {
-          sfx.segmentClick(1);
-        } else {
-          sfx.sectionArrive(1);
-          this.dockFlash = 1;
-        }
+        sfx.sectionArrive(1);
+        this.dockFlash = 1;
       } else if (ev.kind === 'wreck') {
         sfx.clangWreck();
       } else if (ev.kind === 'bank') {
@@ -1738,10 +1735,10 @@ export class FactorySystem extends createSystem({}) {
         // shuts exactly once, however the seal was broken. (Ⓑ used to
         // call retractRun straight and leave a maker humming at a tube
         // that had gone home.)
-        if (ev.side) {
-          const hw = this.runHw.get(ev.side);
+        if (ev.key) {
+          const hw = this.runHw.get(ev.key);
           if (hw?.humOn) {
-            sfx.stopHum(`plant-${ev.side}`);
+            sfx.stopHum(`plant-${ev.key}`);
             hw.humOn = false;
           }
         }

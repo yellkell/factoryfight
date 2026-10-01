@@ -28,6 +28,11 @@ await page.evaluate(() => window.__tubes.wallsInfo.forceFallback());
 await page.waitForFunction(() => window.__tubes.site.wallsReady);
 await page.evaluate(() => {
   for (const el of document.querySelectorAll('*')) if (el.shadowRoot) el.style.display = 'none';
+  // The emulator's hand gizmos are on their own canvas over the app's.
+  const cs = [...document.querySelectorAll('canvas')].sort(
+    (a, b) => Number(getComputedStyle(a).zIndex || 0) - Number(getComputedStyle(b).zIndex || 0),
+  );
+  cs.slice(1).forEach((c) => (c.style.visibility = 'hidden'));
   const s = window.__tubes.scene();
   const rig = s.children.find((o) => o.children.some((c) => c.isCamera));
   rig?.traverse((c) => {
@@ -52,6 +57,9 @@ const row = [
 await page.evaluate((row) => {
   for (const [t, i] of row) window.__tubes.build.placeAt(i, -1, t, 2);
   for (let i = -3; i <= 3; i++) window.__tubes.build.placeAt(i, 1, 'belt', 1);
+  // THE ARSENAL, a row behind (paid for by a tools-only grant).
+  window.__tubes.plant.grantBank({ gear: 40, cell: 4, chip: 6, pump: 4 });
+  ['piston', 'flamer', 'tesla', 'mortar'].forEach((t, k) => window.__tubes.build.placeAt(-3 + k * 2, -4, t, 2));
   window.__tubes.build.placeAt(2, 0, 'wall', 0);
   window.__tubes.build.placeAt(3, 0, 'wall', 0);
 }, row);
@@ -74,6 +82,8 @@ await lookAt(0, 1.25, -0.55, 0, 0.35, -0.2);
 await page.screenshot({ path: 'shots/neon/lineup.png' });
 await lookAt(-0.9, 0.7, -0.75, -0.3, 0.35, -0.25);
 await page.screenshot({ path: 'shots/neon/lineup-close.png' });
+await lookAt(0.12, -0.2, -0.5, 0.12, 0.3, -0.86);
+await page.screenshot({ path: 'shots/neon/arsenal.png' });
 
 // The pictures, as baked.
 const pics = await page.evaluate(() => window.__tubes.pictures?.() ?? {});

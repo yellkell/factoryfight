@@ -14,7 +14,6 @@
 
 import { Vector3 } from 'three';
 import {
-  AMMO,
   COMBINES,
   FACTORY,
   MAKES,
@@ -200,6 +199,8 @@ export function glandPose(unit: Unit, point: Vector3, normal: Vector3, toward?: 
 export function glandReach(type: UnitType): number {
   if (type === 'maker') return 0.131;
   if (type === 'vat') return 0.156;
+  if (type === 'flamer') return 0.118;
+  if (type === 'tesla') return 0.105;
   return UNITS.crate.size / 2;
 }
 
@@ -236,16 +237,7 @@ export function canLink(into: Unit, travel: Rot): boolean {
   // A POST is scaffolding, not plant: it holds a corner for a haul to
   // route through and has no more to do with a part than the floor does.
   if (into.type === 'post') return false;
-  // A TURRET takes its ammo off a rail from any side — the breech
-  // swivels with the barrel, so there is no wrong face to feed.
-  if (
-    into.type === 'belt' ||
-    into.type === 'dock' ||
-    into.type === 'chest' ||
-    into.type === 'turret'
-  ) {
-    return true;
-  }
+  if (into.type === 'belt' || into.type === 'dock' || into.type === 'chest') return true;
   if (into.type === 'combiner') {
     const enterFrom = ((travel + 2) % 4) as Rot;
     return enterFrom === portDir(into, 0) || enterFrom === portDir(into, 1);
@@ -359,7 +351,7 @@ export function bestRot(type: UnitType, i: number, j: number, handRot: Rot): Rot
     type === 'chest' ||
     type === 'post' ||
     type === 'vat' ||
-    type === 'turret' ||
+    isWeapon(type) ||
     type === 'wall'
   ) {
     return handRot;
@@ -750,11 +742,9 @@ export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit 
     maxHp: hp,
     hurtT: 99,
   };
-  if (type === 'turret') {
-    unit.ammo = [];
-    unit.loaded = null;
-    unit.rounds = 0;
+  if (isWeapon(type)) {
     unit.cool = 0;
+    unit.firedT = 99;
     unit.yaw = Math.atan2(DIRS[rot].di, DIRS[rot].dj);
   }
   plant.units.push(unit);
@@ -791,23 +781,11 @@ export function refundUnit(unit: Unit): void {
   for (const [item, n] of Object.entries(unitCost(unit.type)) as Array<[ItemId, number]>) {
     plant.bank[item] = (plant.bank[item] ?? 0) + n;
   }
-  // …and whatever was loaded into a gun goes back in the bank too.
-  for (const item of [...(unit.ammo ?? []), ...(unit.loaded && unit.rounds ? [unit.loaded] : [])]) {
-    plant.bank[item] = (plant.bank[item] ?? 0) + 1;
-  }
 }
 
-/** A TURRET takes a part into its breech, if there is room behind it.
- *  The part stops being a part: it is rounds now. */
-export function loadTurret(turret: Unit, part: Part): boolean {
-  if (turret.type !== 'turret' || !AMMO[part.item]) return false;
-  const ammo = (turret.ammo ??= []);
-  if (ammo.length >= SIEGE.turret.magazine) return false;
-  ammo.push(part.item);
-  const at = plant.parts.indexOf(part);
-  if (at >= 0) plant.parts.splice(at, 1);
-  plant.events.push({ kind: 'deliver', unit: turret.id, item: part.item });
-  return true;
+/** The arsenal: plant that fights. */
+export function isWeapon(type: UnitType): boolean {
+  return type === 'turret' || type === 'mortar' || type === 'tesla' || type === 'flamer' || type === 'piston';
 }
 
 /** Turn any adjacent maker that is sending nowhere onto `unit`. */
@@ -863,7 +841,7 @@ export function retractRun(run: (typeof plant.runs)[number]): void {
   run.front = -1;
   // A vat that loses its line stops brewing where it stands: come back,
   // plug it in again, and the level carries on from there.
-  if (was >= 0) plant.events.push({ kind: 'unseat', unit: was, side: run.side });
+  if (was >= 0) plant.events.push({ kind: 'unseat', unit: was, side: run.side, key: `${run.side}:${run.spout}` });
 }
 
 /** One tick of progress on the live sheet, and the stamp when it fills.
@@ -1098,7 +1076,6 @@ function acceptPart(part: Part, into: Unit, travel: Rot): boolean {
     deliverPart(part);
     return true;
   }
-  if (into.type === 'turret') return loadTurret(into, part);
   if (into.type === 'chest') {
     const held = chestParts(into.id);
     if (held.length >= FACTORY.chestCap + chestBonus()) return false;

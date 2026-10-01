@@ -813,7 +813,12 @@ export type UnitType =
   | 'vat'
   /** FACTORY FIGHT's two pieces of plant: the gun and the wall. */
   | 'turret'
-  | 'wall';
+  | 'wall'
+  /** THE ARSENAL beyond the first gun. */
+  | 'mortar'
+  | 'tesla'
+  | 'flamer'
+  | 'piston';
 
 /** What a sheet counts.
  *   craft — parts STAMPED anywhere on the floor (no bank needed: this is
@@ -977,105 +982,110 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
   },
 };
 
-/** What a TURRET does with each part it is fed. One part loads several
- *  ROUNDS; each round is one trigger pull, fired its own way. */
-export type AmmoKind = 'slug' | 'frost' | 'arc' | 'hammer' | 'beam' | 'bigone';
+/* ── THE ARSENAL ───────────────────────────────────────────────────────────
+ * Weapons COST parts to build and fire for FREE. The factory's job is to
+ * fill the core's bank; the bank buys guns, and guns never run dry. Two
+ * of them burn fuel instead — the FLAMETHROWER and the TESLA COIL only
+ * fire while a feed's tube is seated in them (their fuel is free too,
+ * but it has to be PLUMBED, which is what a factory is for).
+ */
+export type WeaponId = 'turret' | 'mortar' | 'tesla' | 'flamer' | 'piston';
 
-export interface AmmoSpec {
-  kind: AmmoKind;
+export interface WeaponSpec {
+  id: WeaponId;
   name: string;
-  /** Rounds one part loads. */
-  rounds: number;
-  /** Seconds between rounds while this ammo is up. */
+  /** The catalogue's one line. */
+  docket: string;
+  /** Reach (plant m), and a dead zone a lobbed shell can't drop into. */
+  range: number;
+  minRange?: number;
+  /** Seconds between shots (the flamer ticks at this rate). */
   cycleS: number;
   damage: number;
-  /** Range multiplier over SIEGE.turret.range. */
-  reach: number;
-  /** Splash radius (0 = single target). */
-  splash: number;
-  /** Shot speed (m/s); Infinity-ish for the beam and the arc. */
-  speed: number;
-  /** COLD: a frost round slows what it splashes to this fraction of its
-   *  pace for slowS. */
-  slow?: number;
-  slowS?: number;
-  /** ARC: how many more it jumps to, and how far each jump may reach. */
+  /** Splash radius for shells; cone half-angle (rad) for the flamer. */
+  splash?: number;
+  cone?: number;
+  /** Shot flight speed (m/s); shells lob at this. */
+  speed?: number;
+  /** ARC: how many more it jumps to, and how far each jump reaches. */
   chain?: number;
   chainReach?: number;
-  /** One line on the box panel and the WAVES page. */
-  docket: string;
+  /** FIRE: damage per second while burning, and for how long; and a
+   *  patch of burning floor left where the flame lands. */
+  burn?: { dps: number; s: number };
+  /** PUNCH: how far a hit is thrown back (plant m), and stunned for. */
+  knock?: number;
+  stunS?: number;
+  /** Must have this line's tube seated and pouring to fire. */
+  fuel?: LineId;
+  /** The colour it fires in. */
+  color: number;
+  /** Muzzle height (plant m). */
+  muzzleY: number;
 }
 
-export const AMMO: Record<ItemId, AmmoSpec> = {
-  gear: {
-    kind: 'slug',
-    name: 'SLUG',
-    rounds: 4,
-    cycleS: 0.55,
-    damage: 10,
-    reach: 1,
-    splash: 0,
-    speed: 9,
-    docket: 'GEAR → SLUG. Four quick iron rounds, one target each.',
+export const WEAPONS: Record<WeaponId, WeaponSpec> = {
+  turret: {
+    id: 'turret',
+    name: 'TURRET',
+    docket: 'Rapid kinetic rounds at one target. Never runs dry.',
+    range: 2.1,
+    cycleS: 0.32,
+    damage: 7,
+    speed: 10,
+    color: 0xffb347,
+    muzzleY: 1.02,
   },
-  cell: {
-    kind: 'frost',
-    name: 'FROST',
-    rounds: 2,
-    cycleS: 1.1,
-    damage: 6,
-    reach: 0.9,
-    splash: 0.45,
-    speed: 5,
-    slow: 0.4,
-    slowS: 2.6,
-    docket: 'CELL → FROST. A cold burst: everything in it slows to a crawl.',
+  flamer: {
+    id: 'flamer',
+    name: 'FLAMETHROWER',
+    docket: 'A cone of fire that sets crawlers burning and the floor alight. Drinks the amber feed.',
+    range: 1.15,
+    cycleS: 0.1,
+    damage: 3.2,
+    cone: 0.5,
+    burn: { dps: 7, s: 2.5 },
+    fuel: 'mains',
+    color: 0xff7a1a,
+    muzzleY: 0.82,
   },
-  chip: {
-    kind: 'arc',
-    name: 'ARC',
-    rounds: 3,
-    cycleS: 0.8,
-    damage: 12,
-    reach: 0.95,
-    splash: 0,
-    speed: 60,
-    chain: 3,
-    chainReach: 0.7,
-    docket: 'CHIP → ARC. Bites one, then jumps to three more.',
+  piston: {
+    id: 'piston',
+    name: 'PISTON',
+    docket: 'A hydraulic ram that punches crawlers back the way they came.',
+    range: 0.5,
+    cycleS: 1.5,
+    damage: 22,
+    knock: 0.9,
+    stunS: 0.6,
+    color: 0xb8fff4,
+    muzzleY: 0.5,
   },
-  pump: {
-    kind: 'hammer',
-    name: 'HAMMER',
-    rounds: 2,
-    cycleS: 1.4,
-    damage: 45,
-    reach: 1.15,
-    splash: 0.55,
-    speed: 4,
-    docket: 'PUMP → HAMMER. A lobbed shell that flattens a crowd.',
+  tesla: {
+    id: 'tesla',
+    name: 'TESLA COIL',
+    docket: 'Arcs that bite one and jump through four more. Drinks the violet feed.',
+    range: 1.7,
+    cycleS: 0.85,
+    damage: 15,
+    chain: 4,
+    chainReach: 0.75,
+    fuel: 'volt',
+    color: 0xc79bff,
+    muzzleY: 1.3,
   },
-  lamp: {
-    kind: 'beam',
-    name: 'BEAM',
-    rounds: 3,
-    cycleS: 0.9,
-    damage: 34,
-    reach: 1.35,
-    splash: 0.09,
-    speed: 80,
-    docket: 'LAMP → BEAM. A lance of light through everything in line.',
-  },
-  servo: {
-    kind: 'bigone',
-    name: 'THE BIG ONE',
-    rounds: 1,
-    cycleS: 2.2,
-    damage: 240,
-    reach: 1.5,
-    splash: 0.9,
-    speed: 3.2,
-    docket: 'SERVO → THE BIG ONE. Every line on the floor, in one shell.',
+  mortar: {
+    id: 'mortar',
+    name: 'MORTAR',
+    docket: 'Lobs shells over your walls into the crowd. Long reach, close blind spot.',
+    range: 3.4,
+    minRange: 0.7,
+    cycleS: 2.3,
+    damage: 55,
+    splash: 0.6,
+    speed: 2.4,
+    color: 0xffd36a,
+    muzzleY: 0.95,
   },
 };
 
@@ -1094,29 +1104,28 @@ export const SIEGE = {
     vat: 80,
     turret: 90,
     wall: 120,
+    mortar: 100,
+    tesla: 80,
+    flamer: 90,
+    piston: 110,
   } as Record<UnitType, number>,
   /** Damaged plant knits itself back at this many hp/s once no bite has
    *  landed on it for repairDelayS — a wall that held is a wall again by
    *  the next wave, without a repair verb to learn. */
   repairPerS: 6,
   repairDelayS: 4,
-  turret: {
-    /** Base range (plant m) — about a metre in the room. */
-    range: 2.1,
-    /** How many PARTS a turret can hold loaded (each part is several
-     *  rounds). */
-    magazine: 4,
-    /** Barrel slew, radians per second. */
-    slew: 7,
-    /** Muzzle height (plant m) — where shots leave from. */
-    muzzleY: 1.02,
-  },
+  /** How fast a gun's head slews onto a target, radians per second. */
+  slew: 7,
   /** What standing a defence costs, out of the bank. The factory itself
    *  is free (never charge for trying); the fight is not. Unbolting
    *  refunds the bill in full — a wrong wall is not a tax. */
   cost: {
     turret: { gear: 3 },
     wall: { gear: 1 },
+    flamer: { gear: 5 },
+    piston: { gear: 4, cell: 2 },
+    tesla: { gear: 4, chip: 3 },
+    mortar: { gear: 6, pump: 2 },
   } as Partial<Record<UnitType, Partial<Record<ItemId, number>>>>,
   /** The bank a siege opens with: enough for the first gun and a stub of
    *  wall, so the first build phase is about plumbing, not saving. */
@@ -1173,7 +1182,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'first-watch',
     name: 'FIRST WATCH',
-    tip: 'Pull the amber feed into a MAKER. Rail its GEARS into a TURRET.',
+    tip: 'Haul amber into a MAKER, rail its GEARS to the CORE, spend them on TURRETS.',
     breaches: 1,
     buildS: 100,
     spawns: [s('skitter', 5, 2.4)],
@@ -1182,25 +1191,25 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'two-doors',
     name: 'TWO DOORS',
-    tip: 'WALLS cost 1 GEAR. Rail spare GEARS into the CORE to pay for them.',
+    tip: 'WALLS cost 1 GEAR. Funnel them past your guns.',
     breaches: 2,
     buildS: 55,
     spawns: [s('skitter', 5, 2, 0, 0), s('skitter', 5, 2, 3, 1)],
     wakes: { units: ['wall'] },
   },
   {
-    id: 'cold-front',
-    name: 'COLD FRONT',
-    tip: 'Cyan wakes. A turret fed CELLS fires FROST that slows a crowd.',
+    id: 'hot-work',
+    name: 'HOT WORK',
+    tip: 'FLAMETHROWERS drink amber: haul the feed\'s second spout into one.',
     breaches: 2,
     buildS: 55,
     spawns: [s('skitter', 8, 1.6, 0, 0), s('grub', 2, 6, 4, 1), s('skitter', 4, 1.2, 10, 1)],
-    wakes: { feeds: ['coolant'] },
+    wakes: { feeds: ['coolant'], units: ['flamer'] },
   },
   {
     id: 'sappers',
     name: 'SAPPERS',
-    tip: 'Sappers blow up the first thing they reach. Kill them at range.',
+    tip: 'PISTONS punch crawlers back the way they came. Sappers too.',
     breaches: 2,
     buildS: 50,
     spawns: [
@@ -1208,12 +1217,12 @@ export const WAVES: WaveSpec[] = [
       s('sapper', 4, 3, 3, 1),
       s('grub', 2, 5, 8, 0),
     ],
-    wakes: { units: ['combiner', 'chest'] },
+    wakes: { units: ['combiner', 'chest', 'piston'] },
   },
   {
     id: 'live-wire',
     name: 'LIVE WIRE',
-    tip: 'Violet wakes. CHIPS fire ARCS that jump between enemies.',
+    tip: 'TESLA COILS drink violet and arc through a whole crowd.',
     breaches: 3,
     buildS: 55,
     spawns: [
@@ -1221,25 +1230,25 @@ export const WAVES: WaveSpec[] = [
       s('grub', 3, 4, 3, 1),
       s('sapper', 3, 2.5, 6, 2),
     ],
-    wakes: { feeds: ['volt'] },
+    wakes: { feeds: ['volt'], units: ['tesla'] },
   },
   {
     id: 'heavy-metal',
     name: 'HEAVY METAL',
-    tip: 'GEAR + CELL in a COMBINER makes a PUMP. It fires a HAMMER shell.',
+    tip: 'MORTARS lob shells over your walls. They cost PUMPS: GEAR + CELL.',
     breaches: 3,
-    buildS: 55,
+    buildS: 60,
     spawns: [
       s('grub', 6, 3, 0, 0),
       s('skitter', 10, 1, 2, 1),
       s('sapper', 4, 2.2, 6, 2),
     ],
-    wakes: {},
+    wakes: { units: ['mortar'] },
   },
   {
     id: 'the-brute',
     name: 'THE BRUTE',
-    tip: 'CELL + CHIP makes a LAMP. It fires a BEAM through the whole line.',
+    tip: 'One brute. Burn it, shock it, shell it — and keep it off the core.',
     breaches: 2,
     buildS: 60,
     spawns: [s('skitter', 10, 1, 0, 0), s('brute', 1, 1, 6, 1), s('grub', 3, 3, 10, 0)],
@@ -1248,7 +1257,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'swarm',
     name: 'SWARM',
-    tip: 'Thirty of them. Frost the doorway and let the arcs do the rest.',
+    tip: 'Thirty of them. Flame the doorway and let the coils do the rest.',
     breaches: 3,
     buildS: 55,
     spawns: [
@@ -1261,7 +1270,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'siege-engine',
     name: 'SIEGE ENGINE',
-    tip: 'Two brutes behind a wall of grubs. Feed the hammers.',
+    tip: 'Two brutes behind a wall of grubs. Pistons keep them off your plate.',
     breaches: 3,
     buildS: 60,
     spawns: [
@@ -1275,7 +1284,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'last-shift',
     name: 'THE LAST SHIFT',
-    tip: 'PUMP + LAMP makes a SERVO. It fires THE BIG ONE.',
+    tip: 'Everything you have, everywhere at once.',
     breaches: 4,
     buildS: 70,
     spawns: [

@@ -128,12 +128,32 @@ const BELT = {
 /** THE CORE's touchable body (room metres): a drum on a leg. */
 const CORE_TOUCH = { r: 0.12, y0: 0.28, y1: 0.66 };
 
-const TOOL_ORDER: BuildTool[] = ['dock', 'maker', 'belt', 'turret', 'wall', 'combiner', 'chest', 'post', 'delete'];
+// Factory first, then the defences, closest-in to farthest-out: a row
+// of plant and a row (or two) of guns, so the palm reads as two trades.
+const TOOL_ORDER: BuildTool[] = [
+  'dock',
+  'maker',
+  'belt',
+  'combiner',
+  'chest',
+  'post',
+  'wall',
+  'piston',
+  'flamer',
+  'turret',
+  'tesla',
+  'mortar',
+  'delete',
+];
 const TOOL_NAME: Record<string, string> = {
   dock: 'CORE',
   maker: 'MAKER',
   belt: 'RAIL',
   turret: 'TURRET',
+  flamer: 'FLAMER',
+  piston: 'PISTON',
+  tesla: 'TESLA',
+  mortar: 'MORTAR',
   wall: 'WALL',
   combiner: 'COMBINER',
   chest: 'CHEST',

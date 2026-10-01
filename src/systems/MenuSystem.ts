@@ -62,7 +62,8 @@ import {
   UNITS,
   UPGRADES,
   WAVES,
-  AMMO,
+  WEAPONS,
+  type WeaponId,
   ENEMIES,
   type WaveSpec,
   type ItemId,
@@ -104,7 +105,13 @@ import {
   takesTube,
   unitById,
 } from '../factory/state.js';
-import { canAfford, refundUnit, removeUnit } from '../factory/sim.js';
+import { canAfford, isWeapon, refundUnit, removeUnit, unitCost } from '../factory/sim.js';
+
+/** "4 GEAR + 2 CELL" — what a machine costs out of the core's bank. */
+function costText(type: UnitType): string {
+  const parts = Object.entries(unitCost(type)).map(([item, n]) => `${n} ${item.toUpperCase()}`);
+  return parts.length ? parts.join(' + ') : 'free';
+}
 import { coreHealth, soundHorn, waveSpec } from '../factory/siege.js';
 import { buildView, typeAvailable, type BuildTool } from './BuildSystem.js';
 import { factoryView } from './FactorySystem.js';
@@ -144,6 +151,10 @@ export const UNIT_NAME: Record<UnitType, string> = {
   vat: 'VAT',
   turret: 'TURRET',
   wall: 'WALL',
+  mortar: 'MORTAR',
+  tesla: 'TESLA COIL',
+  flamer: 'FLAMETHROWER',
+  piston: 'PISTON',
 };
 
 /** One line on what each piece of plant is FOR — the box panel's
@@ -156,7 +167,11 @@ const UNIT_DOCKET: Record<UnitType, string> = {
   chest: 'Stores parts from rails. Grip a part to take it out.',
   post: 'Guides a rail route. Place where you want it to bend.',
   vat: 'Takes the green feed. Fill it to complete the final goal.',
-  turret: 'Fires whatever a rail feeds it. Each part fires its own way.',
+  turret: 'Rapid rounds at one target. Costs 3 GEAR; never runs dry.',
+  mortar: 'Lobs shells over your walls. Long reach, blind up close.',
+  tesla: 'Arcs through a crowd. Haul the VIOLET feed into it.',
+  flamer: 'A cone of fire; crawlers burn. Haul the AMBER feed into it.',
+  piston: 'Punches crawlers back the way they came.',
   wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
 };
 
@@ -1396,7 +1411,7 @@ export class MenuSystem extends createSystem({}) {
         28 *
           wrapText(
             g,
-            'Something lives behind your walls, and it heard the works start. Between waves, haul feeds into MAKERS and rail their parts into TURRETS — whatever a gun is fed is what it fires. WALLS and guns cost GEARS from the CORE. When the horn goes, they crack the plaster and come for it.',
+            'Something lives behind your walls, and it heard the works start. Between waves, haul feeds into MAKERS and rail their parts to the CORE. The bank buys guns, walls and traps — and guns never run dry. When the horn goes, they crack the plaster and come for it.',
             SHEET_X + 26,
             y,
             SHEET_W - 52,
@@ -1405,18 +1420,18 @@ export class MenuSystem extends createSystem({}) {
             UI.dim,
           ) +
         16;
-      // THE ROUNDS — what each part fires, at a glance.
+      // THE ARSENAL — every weapon the siege will hand you, at a glance.
       g.font = font(500, 21);
       g.fillStyle = UI.faint;
-      g.fillText('ROUNDS', SHEET_X + 26, y);
+      g.fillText('THE ARSENAL', SHEET_X + 26, y);
       y += 30;
-      (['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'] as ItemId[]).forEach((item, k) => {
+      (['turret', 'flamer', 'piston', 'tesla', 'mortar'] as WeaponId[]).forEach((w, k) => {
         const cx = SHEET_X + 26 + (k % 2) * ((SHEET_W - 52) / 2);
         const cy = y + Math.floor(k / 2) * 44;
-        itemGlyph(g, item, cx, cy - 16, 32);
+        unitGlyph(g, w, cx, cy - 18, 36);
         g.font = font(600, 21);
         g.fillStyle = UI.text;
-        g.fillText(AMMO[item].name, cx + 40, cy);
+        g.fillText(WEAPONS[w].name, cx + 44, cy);
       });
 
       if (!site.wallsReady) {
@@ -2063,8 +2078,12 @@ export class MenuSystem extends createSystem({}) {
         { tool: 'dock', label: 'CORE' },
         { tool: 'maker', label: 'MAKER' },
         { tool: 'belt', label: 'RAIL' },
-        { tool: 'turret', label: 'TURRET' },
         { tool: 'wall', label: 'WALL' },
+        { tool: 'piston', label: 'PISTON' },
+        { tool: 'flamer', label: 'FLAMER' },
+        { tool: 'turret', label: 'TURRET' },
+        { tool: 'tesla', label: 'TESLA' },
+        { tool: 'mortar', label: 'MORTAR' },
         { tool: 'combiner', label: 'COMBINER' },
         { tool: 'chest', label: 'CHEST' },
         { tool: 'post', label: 'POST' },
@@ -2183,8 +2202,11 @@ export class MenuSystem extends createSystem({}) {
                 ? say('Place a rail; hold trigger and drag to extend', 'Pinch to place a rail; keep pinching and drag to extend')
                 : armed === 'wall'
                   ? say('Place a wall; hold trigger and drag a run (1 GEAR each)', 'Pinch a wall down; keep pinching and drag a run (1 GEAR each)')
-                  : armed === 'turret'
-                    ? say('Place a turret (3 GEAR); rail parts into it as ammo', 'Pinch to place a turret (3 GEAR); rail parts into it as ammo')
+                  : armed && isWeapon(armed as UnitType)
+                    ? say(
+                        `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) · it fires on its own`,
+                        `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) · it fires on its own`,
+                      ) + (WEAPONS[armed as WeaponId].fuel ? say(' · tube its feed in', ' · tube its feed in') : '')
                 : armed === 'post'
                   ? say('Place a post where the rail should bend', 'Pinch a post down where the rail should bend')
                     : armed

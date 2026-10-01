@@ -859,3 +859,26 @@ export function coreFall(): void {
   whooshNoise(1.6, 0.2, 1400, 60);
   tone({ freq: 440, to: 55, type: 'sawtooth', dur: 2, gain: 0.06, delay: 0.1 });
 }
+
+/** The flamethrower: a rushing roar, gated so a held cone is one sound. */
+export function flameRoar(): void {
+  if (!gate('flame', 0.16)) return;
+  whooshNoise(0.24, 0.09, 900, 320);
+  whooshNoise(0.18, 0.05, 2600, 1200, 0.03);
+}
+
+/** The piston: a hiss of hydraulics and a steel slam. */
+export function pistonSlam(): void {
+  if (!gate('piston', 0.12)) return;
+  whooshNoise(0.12, 0.08, 4200, 1800);
+  clank(130, 0.2, 0.3, 0.05);
+  subSwell(90, 40, 0.25, 0.18, 0.05, 0.004);
+}
+
+/** A mortar shell lands: deep, and it shakes the floor. */
+export function mortarBoom(): void {
+  if (!gate('mortar', 0.1)) return;
+  subSwell(60, 24, 0.9, 0.34, 0, 0.004);
+  whooshNoise(0.6, 0.18, 1600, 90);
+  clank(70, 0.12, 0.5, 0.02);
+}

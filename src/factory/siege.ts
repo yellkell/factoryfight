@@ -24,16 +24,17 @@
  */
 
 import {
-  AMMO,
   ENEMIES,
   FACTORY,
   LINES,
   SIEGE,
   WAVES,
   type EnemyId,
+  WEAPONS,
   type ItemId,
   type LineId,
   type WaveSpec,
+  type WeaponId,
 } from '../config.js';
 import { CELL, cellCenter, cellInFloor, worldToCell } from '../floor/grid.js';
 import { floorLayout, type FloorSide } from '../floor/plan.js';
@@ -41,9 +42,10 @@ import { cycleFactor, rangeFactor } from '../game/progress.js';
 import { mulberry32 } from '../game/rng.js';
 import type { Wall } from '../room/walls.js';
 import { PLANT_SCALE } from './frame.js';
-import { dockUnit, placeUnit, removeUnit } from './sim.js';
+import { dockUnit, isWeapon, placeUnit, removeUnit } from './sim.js';
 import {
   plant,
+  runSeatedAt,
   unitAtCell,
   unitById,
   type Breach,
@@ -450,8 +452,9 @@ export function siegeTick(dt: number): void {
 
   tickEnemies(dt);
   if (plant.siege.phase === 'fallen') return;
-  tickTurrets(dt);
+  tickWeapons(dt);
   tickShots(dt);
+  tickFires(dt);
 
   if (sg.phase === 'wave' && sg.queue.length === 0 && sg.enemies.length === 0) {
     waveCleared();
@@ -500,6 +503,12 @@ function spawn(kind: EnemyId, breachIdx: number): void {
     lane: (Math.random() - 0.5) * 0.12,
     flash: 0,
     stride: Math.random() * 10,
+    kvx: 0,
+    kvz: 0,
+    kT: 0,
+    stunT: 0,
+    burnT: 0,
+    burnDps: 0,
   });
 }
 
@@ -531,6 +540,24 @@ function tickEnemies(dt: number): void {
     }
     const pace = spec.speed * e.slowF;
     e.phaseT += dt;
+
+    // ON FIRE: it burns where it stands, and it still comes.
+    if (e.burnT > 0) {
+      e.burnT -= dt;
+      damageEnemy(e, e.burnDps * dt, 'flamer', false);
+      if (!sg.enemies.includes(e)) continue;
+    }
+    // PUNCHED: thrown back, then reeling.
+    if (e.kT > 0) {
+      e.kT -= dt;
+      e.x += e.kvx * dt;
+      e.z += e.kvz * dt;
+      continue;
+    }
+    if (e.stunT > 0) {
+      e.stunT -= dt;
+      continue;
+    }
 
     if (e.phase === 'emerge') {
       // Out of the plaster, along the wall's normal, for emergeDepth.
@@ -673,24 +700,24 @@ function fall(): void {
   fx({ kind: 'fallen', x: _c.x, y: 0, z: _c.z });
 }
 
-/* ── THE GUNS ───────────────────────────────────────────────────────────── */
+/* ── THE ARSENAL ────────────────────────────────────────────────────────── */
 
 const SHOT_Y = 0.12; // where a shot lands on a body (plant m up)
 
-function turretRange(item: ItemId | null): number {
-  const reach = item ? AMMO[item].reach : 1;
-  return SIEGE.turret.range * reach * rangeFactor();
+function rangeOf(w: WeaponId): number {
+  return WEAPONS[w].range * rangeFactor();
 }
 
-/** The enemy a gun at (x, z) should shoot: the one in range nearest the
- *  core along the FIELD (not as the crow flies — the one about to arrive
- *  is the one that matters). */
-function pickTarget(x: number, z: number, range: number): Enemy | null {
+/** The enemy a weapon at (x, z) should engage: in range (and outside any
+ *  blind spot), nearest the core along the FIELD — the one about to
+ *  arrive is the one that matters. */
+function pickTarget(x: number, z: number, range: number, minRange = 0): Enemy | null {
   let best: Enemy | null = null;
   let bestD = Infinity;
   for (const e of plant.siege.enemies) {
+    if (e.phase === 'emerge' && e.phaseT < 0.3) continue;
     const d = Math.hypot(e.x - x, e.z - z);
-    if (d > range) continue;
+    if (d > range || d < minRange) continue;
     const c = worldToCell(e.x, e.z);
     let f = fieldAt(c.i, c.j);
     if (!Number.isFinite(f)) f = 1e4 + d;
@@ -702,148 +729,207 @@ function pickTarget(x: number, z: number, range: number): Enemy | null {
   return best;
 }
 
-function tickTurrets(dt: number): void {
+/** Is a fuel-burning weapon plumbed: its line's tube seated and pouring? */
+function fuelled(u: Unit): boolean {
+  const need = WEAPONS[u.type as WeaponId].fuel;
+  if (!need) return true;
+  const run = runSeatedAt(u.id);
+  return Boolean(run && run.phase === 'flowing' && run.line.id === need);
+}
+
+/** Slew a weapon's head toward a yaw; true once it is near enough to fire. */
+function slew(u: Unit, want: number, dt: number, tolerance = 0.3): boolean {
+  const yaw = u.yaw ?? 0;
+  const d = Math.atan2(Math.sin(want - yaw), Math.cos(want - yaw));
+  const turn = SIEGE.slew * dt;
+  u.yaw = yaw + Math.max(-turn, Math.min(turn, d));
+  return Math.abs(d) <= tolerance;
+}
+
+function tickWeapons(dt: number): void {
   for (const u of plant.units) {
-    if (u.type !== 'turret') continue;
+    if (!isWeapon(u.type)) continue;
+    const w = u.type as WeaponId;
+    const spec = WEAPONS[w];
     u.cool = Math.max(0, (u.cool ?? 0) - dt);
-    // Chamber the next part when the last is spent.
-    if (!u.rounds && u.ammo && u.ammo.length > 0) {
-      u.loaded = u.ammo.shift()!;
-      u.rounds = AMMO[u.loaded].rounds;
-    }
-    if (!u.rounds || !u.loaded) continue;
+    u.firedT = (u.firedT ?? 99) + dt;
+    if (!fuelled(u)) continue;
     cellCenter(u.i, u.j, _c);
-    const spec = AMMO[u.loaded];
-    const target = pickTarget(_c.x, _c.z, turretRange(u.loaded));
+    const target = pickTarget(_c.x, _c.z, rangeOf(w), spec.minRange ?? 0);
     if (!target) continue;
     const want = Math.atan2(target.x - _c.x, target.z - _c.z);
-    const yaw = u.yaw ?? 0;
-    const d = Math.atan2(Math.sin(want - yaw), Math.cos(want - yaw));
-    const turn = SIEGE.turret.slew * dt;
-    u.yaw = yaw + Math.max(-turn, Math.min(turn, d));
-    if (Math.abs(d) > 0.3 || u.cool > 0) continue;
-    // FIRE.
+    const aimed = slew(u, want, dt, w === 'flamer' ? 0.5 : 0.3);
+    if (!aimed || u.cool > 0) continue;
     u.cool = spec.cycleS * cycleFactor();
-    u.rounds--;
-    const item = u.loaded;
-    if (!u.rounds) u.loaded = null;
-    const mx = _c.x + Math.sin(u.yaw) * 0.16;
-    const mz = _c.z + Math.cos(u.yaw) * 0.16;
-    const my = SIEGE.turret.muzzleY;
-    fx({ kind: 'fire', x: mx, y: my, z: mz, ammo: item, unit: u.id });
-    fire(item, mx, my, mz, target, u.loaded === null ? 0 : u.rounds);
+    u.firedT = 0;
+    const yaw = u.yaw ?? want;
+    const reach = w === 'mortar' ? 0.22 : w === 'piston' ? 0.12 : 0.18;
+    const mx = _c.x + Math.sin(yaw) * reach;
+    const mz = _c.z + Math.cos(yaw) * reach;
+    const my = spec.muzzleY;
+    if (w === 'flamer') {
+      flame(u, mx, my, mz, yaw);
+      continue;
+    }
+    fx({ kind: 'fire', x: mx, y: my, z: mz, weapon: w, unit: u.id, yaw });
+    if (w === 'tesla') arc(target, mx, my, mz);
+    else if (w === 'piston') punch(u, target, yaw);
+    else shoot(w, mx, my, mz, target);
   }
 }
 
-function fire(item: ItemId, x: number, y: number, z: number, target: Enemy, _left: number): void {
-  void _left;
-  const spec = AMMO[item];
+/** A round in flight (turret slugs, mortar shells). */
+function shoot(w: WeaponId, x: number, y: number, z: number, target: Enemy): void {
+  const spec = WEAPONS[w];
   const sg = plant.siege;
-  if (spec.kind === 'arc') {
-    // ARC: no flight — it bites now and jumps.
-    const hit = new Set<number>();
-    const path: number[] = [x, y, z];
-    let cur: Enemy | null = target;
-    let dmg = spec.damage;
-    for (let hop = 0; cur && hop <= (spec.chain ?? 0); hop++) {
-      hit.add(cur.id);
-      path.push(cur.x, SHOT_Y, cur.z);
-      damageEnemy(cur, dmg, item);
-      dmg *= 0.85;
-      let next: Enemy | null = null;
-      let nd = spec.chainReach ?? 0.6;
-      for (const e of sg.enemies) {
-        if (hit.has(e.id)) continue;
-        const d = Math.hypot(e.x - cur.x, e.z - cur.z);
-        if (d < nd) {
-          nd = d;
-          next = e;
-        }
-      }
-      cur = next;
-    }
-    fx({ kind: 'arc', x, y, z, ammo: item, path });
-    return;
-  }
-  if (spec.kind === 'beam') {
-    // BEAM: a lance to the end of the range, through everything on it.
-    const dx = target.x - x;
-    const dz = target.z - z;
-    const len = Math.hypot(dx, dz) || 1;
-    const ux = dx / len;
-    const uz = dz / len;
-    const reach = turretRange(item) + 0.3;
-    const ex = x + ux * reach;
-    const ez = z + uz * reach;
-    for (const e of [...sg.enemies]) {
-      const t = (e.x - x) * ux + (e.z - z) * uz;
-      if (t < 0 || t > reach) continue;
-      const off = Math.abs((e.x - x) * uz - (e.z - z) * ux);
-      if (off <= spec.splash + ENEMIES[e.kind].radius) damageEnemy(e, spec.damage, item);
-    }
-    fx({ kind: 'beam', x, y, z, ammo: item, path: [x, y, z, ex, SHOT_Y, ez] });
-    return;
-  }
   const d = Math.hypot(target.x - x, target.z - z);
+  // A shell leads its target: it lands where the crawler WILL be.
+  const lead = w === 'mortar' ? d / (spec.speed ?? 3) : 0;
+  const hd = target.heading;
+  const pace = ENEMIES[target.kind].speed * target.slowF;
   sg.shots.push({
     id: sg.nextShot++,
-    ammo: item,
+    weapon: w,
     x0: x,
     y0: y,
     z0: z,
-    x1: target.x,
+    x1: target.x + Math.sin(hd) * pace * lead,
     y1: SHOT_Y,
-    z1: target.z,
-    target: target.id,
+    z1: target.z + Math.cos(hd) * pace * lead,
+    target: w === 'mortar' ? -1 : target.id,
     t: 0,
-    dur: Math.max(0.05, d / spec.speed),
+    dur: Math.max(0.05, d / (spec.speed ?? 10)) * (w === 'mortar' ? 1.6 : 1),
   });
+}
+
+/** TESLA: bites one, jumps to the next nearest, and on. */
+function arc(target: Enemy, x: number, y: number, z: number): void {
+  const spec = WEAPONS.tesla;
+  const hit = new Set<number>();
+  const path: number[] = [x, y, z];
+  let cur: Enemy | null = target;
+  let dmg = spec.damage;
+  for (let hop = 0; cur && hop <= (spec.chain ?? 0); hop++) {
+    hit.add(cur.id);
+    path.push(cur.x, SHOT_Y + 0.05, cur.z);
+    const was: Enemy = cur;
+    damageEnemy(was, dmg, 'tesla');
+    was.stunT = Math.max(was.stunT, 0.15);
+    dmg *= 0.85;
+    let next: Enemy | null = null;
+    let nd = spec.chainReach ?? 0.6;
+    for (const e of plant.siege.enemies) {
+      if (hit.has(e.id)) continue;
+      const d = Math.hypot(e.x - was.x, e.z - was.z);
+      if (d < nd) {
+        nd = d;
+        next = e;
+      }
+    }
+    cur = next;
+  }
+  fx({ kind: 'arc', x, y, z, weapon: 'tesla', path });
+}
+
+/** PISTON: the ram drives out and throws it back the way it came. */
+function punch(u: Unit, target: Enemy, yaw: number): void {
+  const spec = WEAPONS.piston;
+  cellCenter(u.i, u.j, _c);
+  damageEnemy(target, spec.damage, 'piston');
+  if (!plant.siege.enemies.includes(target)) return;
+  // Brutes are heavy: a third of the throw.
+  const mass = target.kind === 'brute' ? 0.35 : target.kind === 'grub' ? 0.7 : 1;
+  const dist = (spec.knock ?? 0.8) * mass;
+  const kt = 0.22;
+  target.kvx = (Math.sin(yaw) * dist) / kt;
+  target.kvz = (Math.cos(yaw) * dist) / kt;
+  target.kT = kt;
+  target.stunT = (spec.stunS ?? 0.5) * mass;
+  target.phase = 'walk';
+  target.target = -1;
+  fx({ kind: 'punch', x: target.x, y: 0.2, z: target.z, weapon: 'piston', unit: u.id, yaw });
+}
+
+/** FLAMER: one tick of the cone — everything inside it scorches and
+ *  catches, and now and then the floor where it lands goes up too. */
+function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
+  const spec = WEAPONS.flamer;
+  const reach = rangeOf('flamer');
+  const cone = spec.cone ?? 0.5;
+  let hits = 0;
+  for (const e of [...plant.siege.enemies]) {
+    const dx = e.x - x;
+    const dz = e.z - z;
+    const d = Math.hypot(dx, dz);
+    if (d > reach + ENEMIES[e.kind].radius) continue;
+    const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw), Math.cos(Math.atan2(dx, dz) - yaw)));
+    if (off > cone && d > 0.15) continue;
+    hits++;
+    e.burnT = Math.max(e.burnT, spec.burn?.s ?? 2);
+    e.burnDps = Math.max(e.burnDps, spec.burn?.dps ?? 5);
+    damageEnemy(e, spec.damage, 'flamer');
+  }
+  fx({ kind: 'flame', x, y, z, weapon: 'flamer', unit: u.id, yaw, reach });
+  // Every so often the flame sets the floor alight where it lands.
+  if (hits > 0 && Math.random() < 0.18) {
+    const fl = plant.siege.fires;
+    if (fl.length < 24) {
+      const d = reach * (0.55 + Math.random() * 0.4);
+      fl.push({ x: x + Math.sin(yaw) * d, z: z + Math.cos(yaw) * d, r: 0.22, t: 0, life: 3 });
+    }
+  }
+}
+
+/** Burning floor: anything standing in it catches. */
+function tickFires(dt: number): void {
+  const sg = plant.siege;
+  for (const f of [...sg.fires]) {
+    f.t += dt;
+    if (f.t >= f.life) {
+      sg.fires.splice(sg.fires.indexOf(f), 1);
+      continue;
+    }
+    for (const e of sg.enemies) {
+      if (Math.hypot(e.x - f.x, e.z - f.z) > f.r + ENEMIES[e.kind].radius) continue;
+      e.burnT = Math.max(e.burnT, 1.2);
+      e.burnDps = Math.max(e.burnDps, 6);
+    }
+  }
 }
 
 function tickShots(dt: number): void {
   const sg = plant.siege;
   for (const s of [...sg.shots]) {
     s.t += dt;
-    // Shells home on a live target (a lob that misses a walking grub is
-    // a lob nobody believes); a dead one's spot is still a spot.
-    const tgt = sg.enemies.find((e) => e.id === s.target);
+    // Slugs home on a live target (a round that misses a walking skitter
+    // is a round nobody believes); shells fall where they were aimed.
+    const tgt = s.target >= 0 ? sg.enemies.find((e) => e.id === s.target) : undefined;
     if (tgt) {
       s.x1 = tgt.x;
       s.z1 = tgt.z;
     }
     if (s.t < s.dur) continue;
     sg.shots.splice(sg.shots.indexOf(s), 1);
-    const spec = AMMO[s.ammo];
-    if (spec.splash > 0) {
+    const spec = WEAPONS[s.weapon];
+    if (spec.splash) {
       for (const e of [...sg.enemies]) {
         const d = Math.hypot(e.x - s.x1, e.z - s.z1);
         if (d > spec.splash + ENEMIES[e.kind].radius) continue;
-        damageEnemy(e, spec.damage * (d < spec.splash * 0.5 ? 1 : 0.6), s.ammo);
-        if (spec.slow) {
-          e.slowF = Math.min(e.slowF, spec.slow);
-          e.slowT = Math.max(e.slowT, spec.slowS ?? 2);
-        }
+        damageEnemy(e, spec.damage * (d < spec.splash * 0.5 ? 1 : 0.55), s.weapon);
       }
-      fx({
-        kind: spec.kind === 'frost' ? 'frost' : 'blast',
-        x: s.x1,
-        y: s.y1,
-        z: s.z1,
-        ammo: s.ammo,
-        radius: spec.splash,
-      });
+      fx({ kind: 'shell', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon, radius: spec.splash });
     } else if (tgt) {
-      damageEnemy(tgt, spec.damage, s.ammo);
-      fx({ kind: 'hit', x: s.x1, y: s.y1, z: s.z1, ammo: s.ammo });
+      damageEnemy(tgt, spec.damage, s.weapon);
+      fx({ kind: 'hit', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon });
     }
   }
 }
 
-function damageEnemy(e: Enemy, dmg: number, item: ItemId): void {
+function damageEnemy(e: Enemy, dmg: number, by: WeaponId, flash = true): void {
   if (!plant.siege.enemies.includes(e)) return;
   e.hp -= dmg;
-  e.flash = 0.12;
-  void item;
+  if (flash) e.flash = 0.12;
+  void by;
   if (e.hp <= 0) killEnemy(e, true);
 }
 
@@ -872,6 +958,7 @@ export function standDown(): void {
   sg.queue = [];
   sg.enemies = [];
   sg.shots = [];
+  sg.fires = [];
   sg.breaches = [];
   const core = dockUnit();
   if (core) removeUnit(core);
@@ -915,6 +1002,32 @@ export function debugPlace(kind: EnemyId, x: number, z: number, heading = 0): vo
   e.heading = heading;
   e.phase = 'walk';
   e.phaseT = 0;
+}
+
+/** Headless: everything every wave switches on, on now — every feed
+ *  awake, every machine and weapon in the catalogue. */
+export function debugWakeAll(): void {
+  applyWakes(WAVES.length - 1);
+  plant.generation++;
+}
+
+/** Headless: a clean floor for a portrait — every crawler, round and
+ *  fire gone, and the build clock held so no horn interrupts. */
+export function debugClear(): void {
+  const sg = plant.siege;
+  sg.enemies.length = 0;
+  sg.shots.length = 0;
+  sg.fires.length = 0;
+  if (sg.phase === 'build') sg.buildT = 9999;
+}
+
+/** Headless: every crawler on the floor this many times as hard to
+ *  kill — so a portrait can wait for the shot without the sitter dying. */
+export function debugTough(mult: number): void {
+  for (const e of plant.siege.enemies) {
+    e.hp *= mult;
+    e.maxHp *= mult;
+  }
 }
 
 /** Headless: drop an enemy at a breach right now. */
