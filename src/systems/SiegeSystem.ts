@@ -49,9 +49,7 @@ import {
   RingGeometry,
   SphereGeometry,
   SRGBColorSpace,
-  TorusGeometry,
   Vector3,
-  type Material,
 } from 'three';
 import { AMMO, ENEMIES, LINES, SIEGE, type EnemyId, type ItemId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
@@ -72,10 +70,11 @@ import {
   waveSpec,
 } from '../factory/siege.js';
 import { dockUnit } from '../factory/sim.js';
-import { plant, type Enemy, type SiegeFx } from '../factory/state.js';
+import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
 import { liveUnitRefs } from './FactorySystem.js';
+import { BAR_HEIGHT, CAP, makeKit, type Comp } from './crawlers.js';
 import { walls } from './WallSystem.js';
 
 /** Headless hooks (wired into __tubes.siege in main.ts). */
@@ -118,20 +117,6 @@ export const AMMO_COLOR: Record<ItemId, number> = {
 
 /* ── THE CRAWLERS: one kit per kind ─────────────────────────────────────── */
 
-interface Comp {
-  mesh: InstancedMesh;
-  /** Instances per enemy (legs are six of one component). */
-  per: number;
-  /** Takes the hit flash / frost tint. */
-  flashable: boolean;
-  base: Color;
-  /** Local pose of instance k of this component on enemy e at time t,
-   *  in BODY units (1 = the enemy's radius). */
-  pose: (e: Enemy, k: number, t: number, out: Matrix4) => void;
-}
-
-const CAP: Record<EnemyId, number> = { skitter: 140, grub: 48, sapper: 48, brute: 10 };
-
 const _m = new Matrix4();
 const _m2 = new Matrix4();
 const _q = new Quaternion();
@@ -142,19 +127,12 @@ const _cam = new Vector3();
 const _c = { x: 0, z: 0 };
 const Y = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
-const _qa = new Quaternion();
-const _lp = new Vector3();
-const _ls = new Vector3();
-const _qb = new Quaternion();
 
 let _sphere: SphereGeometry | null = null;
 const sphereGeo = (): SphereGeometry => (_sphere ??= new SphereGeometry(1, 14, 10));
 let _box: BoxGeometry | null = null;
 const boxGeo = (): BoxGeometry => (_box ??= new BoxGeometry(1, 1, 1));
 
-function metal(color: number, rough = 0.45, metalness = 0.75): MeshStandardMaterial {
-  return new MeshStandardMaterial({ color, roughness: rough, metalness });
-}
 function glow(color: number): MeshBasicMaterial {
   return new MeshBasicMaterial({
     color,
@@ -176,142 +154,6 @@ function trs(
   sz: number,
 ): Matrix4 {
   return out.compose(_v.set(x, y, z), q, _s.set(sx, sy, sz));
-}
-const IDQ = new Quaternion();
-
-/** A leg: hip at (side·hx, hy, hz), angled out and down by `splay`,
- *  swinging fore and aft by `swing`, `len` long, `th` thick. */
-function leg(
-  out: Matrix4,
-  side: number,
-  hx: number,
-  hy: number,
-  hz: number,
-  splay: number,
-  swing: number,
-  len: number,
-  th: number,
-): Matrix4 {
-  _qa.setFromAxisAngle(Y, swing * side);
-  _qb.setFromAxisAngle(Z, -side * splay);
-  _q.multiplyQuaternions(_qa, _qb);
-  // The box is long along X; offset its centre half a length out.
-  _v.set(side * len * 0.5, 0, 0).applyQuaternion(_q);
-  return out.compose(_lp.set(side * hx + _v.x, hy + _v.y, hz + _v.z), _q, _ls.set(len, th, th));
-}
-
-function makeKit(kind: EnemyId, parent: Group): Comp[] {
-  const cap = CAP[kind];
-  const comps: Comp[] = [];
-  const add = (
-    geo: BufferGeometry,
-    mat: Material,
-    per: number,
-    flashable: boolean,
-    base: number,
-    pose: Comp['pose'],
-  ): void => {
-    const mesh = new InstancedMesh(geo, mat, cap * per);
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    mesh.count = 0;
-    mesh.frustumCulled = false;
-    if (flashable) {
-      for (let k = 0; k < cap * per; k++) mesh.setColorAt(k, _col.set(base));
-    }
-    parent.add(mesh);
-    comps.push({ mesh, per, flashable, base: new Color(base), pose });
-  };
-  const gait = (e: Enemy, k: number, rate: number): number =>
-    Math.sin(e.stride * rate + (k % 2 === 0 ? 0 : Math.PI) + Math.floor(k / 2) * 2.1);
-
-  if (kind === 'skitter' || kind === 'sapper') {
-    const shell = kind === 'skitter' ? 0x7a4026 : 0x4b5640;
-    const eye = kind === 'skitter' ? 0xff5a1e : 0xffe14a;
-    const legs = kind === 'skitter' ? 6 : 4;
-    // The body: a squat tick on a lifted hip line, bobbing with its gait.
-    add(sphereGeo(), metal(0xffffff, 0.42, 0.7), 1, true, shell, (e, _k, t, out) => {
-      const bob = Math.abs(Math.sin(e.stride * 22)) * 0.08 + (e.phase === 'bite' ? Math.sin(t * 18) * 0.06 : 0);
-      return trs(out, 0, 0.95 + bob, 0, IDQ, 0.9, 0.55, 1.15);
-    });
-    // The back plate — dark iron, hex, the scrap it is made of.
-    add(new CylinderGeometry(1, 1, 1, 6), metal(0x262120, 0.5, 0.85), 1, false, 0x262120, (_e, _k, _t, out) =>
-      trs(out, 0, 1.32, -0.05, IDQ, 0.68, 0.16, 0.8),
-    );
-    // Legs.
-    add(boxGeo(), metal(0x1d1a18, 0.5, 0.8), legs, false, 0x1d1a18, (e, k, _t, out) => {
-      const side = k % 2 === 0 ? -1 : 1;
-      const row = Math.floor(k / 2);
-      const rows = legs / 2;
-      const hz = rows === 3 ? (row - 1) * 0.55 : (row - 0.5) * 0.8;
-      const swing = 0.15 * (rows === 3 ? row - 1 : row - 0.5) + gait(e, k, 24) * 0.42;
-      return leg(out, side, 0.55, 0.95, hz, 0.75, swing, 1.25, 0.13);
-    });
-    // Eyes.
-    add(sphereGeo(), glow(eye), 2, false, eye, (_e, k, _t, out) =>
-      trs(out, k === 0 ? -0.3 : 0.3, 1.05, 1.0, IDQ, 0.17, 0.17, 0.17),
-    );
-    if (kind === 'sapper') {
-      // THE CHARGE on its back — and it beats faster the closer it is.
-      add(sphereGeo(), glow(0xff2a12), 1, false, 0xff2a12, (e, _k, t, out) => {
-        const rate = e.phase === 'bite' ? 30 : 8;
-        const p = 0.5 + 0.5 * Math.sin(t * rate + e.id);
-        const r = 0.5 + p * 0.12;
-        return trs(out, 0, 1.6, -0.25, IDQ, r, r, r);
-      });
-      add(new CylinderGeometry(1, 1, 1, 8), metal(0x8b8f7a, 0.4, 0.8), 1, false, 0x8b8f7a, (_e, _k, _t, out) =>
-        trs(out, 0, 1.28, -0.25, IDQ, 0.42, 0.12, 0.42),
-      );
-    }
-  } else if (kind === 'grub') {
-    const hide = 0x8b7a52;
-    // Three segments, peristaltic: each one swells in turn.
-    add(sphereGeo(), metal(0xffffff, 0.7, 0.25), 3, true, hide, (e, k, _t, out) => {
-      const z = [0.55, -0.45, -1.35][k];
-      const r = [1, 0.88, 0.72][k];
-      const sw = 1 + 0.12 * Math.sin(e.stride * 14 - k * 1.6);
-      return trs(out, 0, r * 0.78, z, IDQ, r * sw * 0.95, r * 0.75, r / sw);
-    });
-    // The glowing seams between them — it is full of the works' light.
-    add(new TorusGeometry(1, 0.16, 8, 20), glow(0xc8ff3a), 2, false, 0xc8ff3a, (e, k, _t, out) => {
-      const z = [0.05, -0.92][k];
-      const r = [0.86, 0.74][k];
-      const sw = 1 + 0.1 * Math.sin(e.stride * 14 - k * 1.6 - 0.8);
-      return trs(out, 0, r * 0.7, z, IDQ, r * sw, r * 0.72 * sw, 1);
-    });
-    add(sphereGeo(), glow(0xffe14a), 2, false, 0xffe14a, (_e, k, _t, out) =>
-      trs(out, k === 0 ? -0.35 : 0.35, 0.95, 1.38, IDQ, 0.13, 0.13, 0.13),
-    );
-    // Mandibles that work while it chews.
-    add(boxGeo(), metal(0x221d18, 0.5, 0.7), 2, false, 0x221d18, (e, k, t, out) => {
-      const side = k === 0 ? -1 : 1;
-      const open = e.phase === 'bite' ? 0.35 + 0.35 * Math.sin(t * 14) : 0.2;
-      _q.setFromAxisAngle(Y, side * open);
-      return trs(out, side * 0.28, 0.45, 1.45, _q, 0.12, 0.12, 0.55);
-    });
-  } else {
-    // THE BRUTE: a plated hulk on four thick legs, one red slit of an eye.
-    add(sphereGeo(), metal(0xffffff, 0.5, 0.8), 1, true, 0x5a2a20, (e, _k, t, out) => {
-      const bob = Math.abs(Math.sin(e.stride * 9)) * 0.06 + (e.phase === 'bite' ? Math.sin(t * 6) * 0.08 : 0);
-      return trs(out, 0, 1.15 + bob, 0, IDQ, 1.05, 0.78, 1.2);
-    });
-    add(boxGeo(), metal(0x2b2827, 0.45, 0.9), 3, false, 0x2b2827, (e, k, t, out) => {
-      const bob = Math.abs(Math.sin(e.stride * 9)) * 0.06 + (e.phase === 'bite' ? Math.sin(t * 6) * 0.08 : 0);
-      if (k === 0) return trs(out, 0, 1.75 + bob, -0.1, IDQ, 1.5, 0.22, 1.45);
-      const side = k === 1 ? -1 : 1;
-      _q.setFromAxisAngle(Z, side * -0.35);
-      return trs(out, side * 0.95, 1.45 + bob, 0.15, _q, 0.55, 0.5, 0.8);
-    });
-    add(boxGeo(), metal(0x1a1716, 0.5, 0.8), 4, false, 0x1a1716, (e, k, _t, out) => {
-      const side = k % 2 === 0 ? -1 : 1;
-      const hz = Math.floor(k / 2) === 0 ? 0.55 : -0.55;
-      return leg(out, side, 0.7, 1.0, hz, 0.95, gait(e, k, 9) * 0.35, 1.2, 0.32);
-    });
-    add(boxGeo(), glow(0xff3020), 1, false, 0xff3020, (e, _k, t, out) => {
-      const bob = Math.abs(Math.sin(e.stride * 9)) * 0.06 + (e.phase === 'bite' ? Math.sin(t * 6) * 0.08 : 0);
-      return trs(out, 0, 1.25 + bob, 1.18, IDQ, 0.75, 0.1, 0.08);
-    });
-  }
-  return comps;
 }
 
 /* ── THE BREACH ─────────────────────────────────────────────────────────── */
@@ -996,7 +838,7 @@ export class SiegeSystem extends createSystem({}) {
     for (const e of plant.siege.enemies) {
       if (e.hp >= e.maxHp) continue;
       const r = ENEMIES[e.kind].radius;
-      put(e.x, r * 2.3 + 0.06, e.z, Math.max(0, e.hp / e.maxHp), Math.max(0.12, r * 1.6), 0xff5a3a);
+      put(e.x, r * BAR_HEIGHT[e.kind] + 0.06, e.z, Math.max(0, e.hp / e.maxHp), Math.max(0.12, r * 1.6), 0xff5a3a);
     }
     for (const u of plant.units) {
       if (u.hp >= u.maxHp - 0.01 || u.type === 'dock') continue;

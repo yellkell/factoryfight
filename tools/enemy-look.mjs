@@ -53,7 +53,7 @@ await page.evaluate(
     const t = window.__tubes;
     t.siege.core();
     t.siege.freeze(true);
-    kinds.forEach((k, n) => t.siege.place(k, xs[n], Z, Math.PI - 0.5));
+    kinds.forEach((k, n) => t.siege.place(k, xs[n], Z, -0.35));
   },
   { kinds, xs, Z },
 );
