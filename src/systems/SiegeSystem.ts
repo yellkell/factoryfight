@@ -4,11 +4,11 @@
  * The sim (factory/siege.ts) decides everything; this system owns only
  * what it looks and sounds like, the TUBES split exactly:
  *
- *   THE CRAWLERS   instanced, one pool per body part per kind — a floor
- *                  of forty skitters is a dozen draw calls. Legs walk on
- *                  the sim's own stride counter, so a slowed one visibly
- *                  wades, and a bitten-into wall is chewed by something
- *                  whose head is going.
+ *   THE SWARM      every crawler in one draw call (systems/swarm.ts):
+ *                  thousands of neon mites whose legs walk on the sim's
+ *                  own stride counter, on the GPU. When they die they
+ *                  come apart — shards that bounce, splats that glow on
+ *                  the floor, and a pop for every handful.
  *   THE BREACHES   a crack of light at the foot of a REAL wall, chosen
  *                  during the build phase so the room tells you where to
  *                  wall before the horn goes — and when it goes, the
@@ -52,7 +52,7 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { ENEMIES, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
+import { ENEMIES, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { site } from '../game/state.js';
@@ -67,9 +67,15 @@ import {
   debugWakeAll,
   debugClear,
   debugTough,
+  debugBreaches,
+  debugJump,
+  debugFlood,
   debugPlace,
   debugSpawn,
+  siegeLeft,
+  simMs,
   soundHorn,
+  WEAPON_ORDER,
   standCore,
   waveSpec,
 } from '../factory/siege.js';
@@ -87,7 +93,7 @@ import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
 import { liveUnitRefs } from './FactorySystem.js';
-import { BAR_HEIGHT, CAP, makeKit, type Comp } from './crawlers.js';
+import { Shards, Splats, SwarmMesh } from './swarm.js';
 import { walls } from './WallSystem.js';
 
 /** Headless hooks (wired into __tubes.siege in main.ts). */
@@ -109,7 +115,15 @@ export const siegeView: {
   horn?: () => void;
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
-  spawn?: (kind: EnemyId, breach?: number) => void;
+  spawn?: (kind: EnemyId, breach?: number, count?: number) => void;
+  /** TOOLS ONLY: a whole tide at once, already out of the walls. */
+  flood?: (kind: EnemyId, count: number) => void;
+  /** TOOLS ONLY: crack n breaches right now. */
+  breaches?: (n: number) => void;
+  /** TOOLS ONLY: jump the ladder to wave n's build phase. */
+  jump?: (n: number) => void;
+  /** TOOLS ONLY: how long the last frames took (ms) — sim and draw. */
+  perf?: () => { sim: number; draw: number; alive: number; shards: number };
   /** TOOLS ONLY: stand a crawler at plant (x, z), and freeze the fight. */
   place?: (kind: EnemyId, x: number, z: number, heading?: number) => void;
   freeze?: (on: boolean) => void;
@@ -139,7 +153,6 @@ export const ITEM_COLOR: Record<ItemId, number> = {
 /* ── THE CRAWLERS: one kit per kind ─────────────────────────────────────── */
 
 const _m = new Matrix4();
-const _m2 = new Matrix4();
 const _q = new Quaternion();
 const _v = new Vector3();
 const _s = new Vector3();
@@ -395,7 +408,11 @@ interface ArcHw {
 
 export class SiegeSystem extends createSystem({}) {
   private root!: Group;
-  private kits = new Map<EnemyId, Comp[]>();
+  private swarm!: SwarmMesh;
+  private shards!: Shards;
+  private splats!: Splats;
+  /** Smoothed milliseconds spent drawing the swarm (tools read it). */
+  private drawMs = 0;
   private shotsMesh!: InstancedMesh;
   private bars!: InstancedMesh;
   private barBacks!: InstancedMesh;
@@ -420,6 +437,7 @@ export class SiegeSystem extends createSystem({}) {
   private plateCtx!: CanvasRenderingContext2D;
   private plateTex!: CanvasTexture;
   private plateKey = '';
+  private platePainted = -1;
   private lastPhase = '';
   private fireClock = 0;
   /** Seconds since the core went — the fall plays before the card. */
@@ -431,7 +449,9 @@ export class SiegeSystem extends createSystem({}) {
     ensurePlantRoot(this.scene).add(this.root);
     bindRoom(walls);
 
-    for (const kind of Object.keys(CAP) as EnemyId[]) this.kits.set(kind, makeKit(kind, this.root));
+    this.swarm = new SwarmMesh(this.root);
+    this.shards = new Shards(this.root);
+    this.splats = new Splats(this.root);
 
     this.shotsMesh = new InstancedMesh(
       sphereGeo(),
@@ -551,8 +571,8 @@ export class SiegeSystem extends createSystem({}) {
         name: waveSpec(sg.wave).name,
         buildT: sg.buildT,
         waveT: sg.waveT,
-        queued: sg.queue.length,
-        enemies: sg.enemies.length,
+        queued: siegeLeft() - sg.horde.n,
+        enemies: sg.horde.n,
         kills: sg.kills,
         core: coreHealth(),
         won: sg.won,
@@ -562,14 +582,32 @@ export class SiegeSystem extends createSystem({}) {
     };
     siegeView.horn = () => soundHorn();
     siegeView.core = () => standCore();
-    siegeView.spawn = (kind, breach = 0) => debugSpawn(kind, breach);
+    siegeView.spawn = (kind, breach = 0, count = 1) => debugSpawn(kind, breach, count);
+    siegeView.flood = (kind, count) => debugFlood(kind, count);
+    siegeView.breaches = (n) => debugBreaches(n);
+    siegeView.jump = (n) => debugJump(n);
+    siegeView.perf = () => ({ sim: simMs(), draw: this.drawMs, alive: plant.siege.horde.n, shards: this.shards.live });
     siegeView.place = (kind, x, z, heading = 0) => debugPlace(kind, x, z, heading);
     siegeView.freeze = (on) => debugFreeze(on);
     siegeView.wakeAll = () => debugWakeAll();
     siegeView.clear = () => debugClear();
     siegeView.tough = (m) => debugTough(m);
-    siegeView.enemies = () =>
-      plant.siege.enemies.map((e) => ({ id: e.id, kind: e.kind, x: e.x, z: e.z, hp: e.hp, phase: e.phase }));
+    siegeView.enemies = () => {
+      const h = plant.siege.horde;
+      const out = [];
+      for (let i = 0; i < h.n; i++) {
+        if (h.dead[i]) continue;
+        out.push({
+          id: h.uid[i],
+          kind: HORDE_KINDS[h.kind[i]],
+          x: h.x[i],
+          z: h.z[i],
+          hp: h.hp[i],
+          phase: ['emerge', 'walk', 'bite'][h.phase[i]],
+        });
+      }
+      return out;
+    };
     siegeView.turrets = () =>
       plant.units
         .filter((u) => isWeapon(u.type))
@@ -609,7 +647,12 @@ export class SiegeSystem extends createSystem({}) {
     this.drainFx();
     this.syncBreaches(false);
     this.tickBreaches(delta);
+    const t0 = performance.now();
     this.drawEnemies();
+    this.drainDeaths();
+    this.shards.tick(dt);
+    this.splats.tick(dt);
+    this.drawMs = this.drawMs * 0.9 + (performance.now() - t0) * 0.1;
     this.drawShots();
     this.drawFire(dt);
     this.drawBars();
@@ -686,14 +729,6 @@ export class SiegeSystem extends createSystem({}) {
       case 'hit':
         this.sparks.burst(f.x, f.y, f.z, 7, color, 1.2, 0.3, 4, 0.8);
         break;
-      case 'kill': {
-        const big = f.enemy === 'brute' || f.enemy === 'grub';
-        this.sparks.burst(f.x, f.y + 0.05, f.z, big ? 40 : 16, 0xff7a3a, big ? 1.8 : 1.3, 0.7, 5, big ? 1.6 : 1);
-        this.sparks.burst(f.x, f.y + 0.05, f.z, big ? 14 : 6, 0x8a8a8a, 1.1, 0.9, 6, 1.4);
-        this.flash(f.x, f.y + 0.06, f.z, 0xffa860, big ? 0.22 : 0.1, 0.18);
-        sfx.scrapCrunch(big);
-        break;
-      }
       case 'blast': {
         // A sapper's charge, or plant chewed to scrap.
         const r = f.radius ?? 0.3;
@@ -874,46 +909,58 @@ export class SiegeSystem extends createSystem({}) {
   /* ── the crawlers ───────────────────────────────────────────────────── */
 
   private drawEnemies(): void {
-    const counts = new Map<EnemyId, number>();
-    for (const e of plant.siege.enemies) {
-      const kit = this.kits.get(e.kind);
-      if (!kit) continue;
-      const idx = counts.get(e.kind) ?? 0;
-      if (idx >= CAP[e.kind]) continue;
-      counts.set(e.kind, idx + 1);
-      const r = ENEMIES[e.kind].radius;
-      // Climbing out of the plaster: it rises as it emerges.
-      const sink = e.phase === 'emerge' ? Math.max(0, 1 - e.phaseT * 1.6) * r * 0.8 : 0;
-      _q.setFromAxisAngle(Y, e.heading);
-      const base = trs(_m2, e.x, -sink, e.z, _q, r, r, r);
-      // Hit flash to white; frost tints toward ice.
-      const flash = e.flash > 0 ? e.flash / 0.12 : 0;
-      const frost = e.slowT > 0 ? 0.55 : 0;
-      for (const comp of kit) {
-        for (let k = 0; k < comp.per; k++) {
-          comp.pose(e, k, this.clock, _m);
-          _m.premultiply(base);
-          comp.mesh.setMatrixAt(idx * comp.per + k, _m);
-          if (comp.flashable) {
-            _col.copy(comp.base);
-            if (frost) _col.lerp(_tmpIce, frost);
-            if (flash) _col.lerp(_tmpWhite, flash);
-            comp.mesh.setColorAt(idx * comp.per + k, _col);
-          }
-        }
+    this.swarm.update(plant.siege.horde, this.clock);
+  }
+
+  /**
+   * THE AFTERMATH. Every death the sim logged since last frame comes
+   * apart here: shards out of it, a splat where it stood, sparks for the
+   * big ones — and ONE sound for the lot, sized by how many went.
+   */
+  private drainDeaths(): void {
+    const h = plant.siege.horde;
+    const n = h.deathN;
+    h.deathN = 0;
+    if (n === 0) return;
+    // In a flood the per-death budget shrinks, so a mortar into a carpet
+    // of three hundred is still one frame.
+    const thin = n > 60 ? 0.35 : n > 20 ? 0.6 : 1;
+    let mites = 0;
+    let big = 0;
+    for (let k = 0; k < n; k++) {
+      const o = k * 4;
+      const x = h.deaths[o];
+      const z = h.deaths[o + 1];
+      const kind = HORDE_KINDS[h.deaths[o + 2]];
+      const cause = WEAPON_ORDER[h.deaths[o + 3]] as WeaponId | undefined;
+      const spec = ENEMIES[kind];
+      const r = spec.radius;
+      const neon = spec.neon;
+      // Fire leaves them charred: shards come out ember-orange.
+      const hue = cause === 'flamer' ? (Math.random() < 0.5 ? 0xff7a1a : neon) : cause === 'tesla' ? (Math.random() < 0.4 ? 0xe6d4ff : neon) : neon;
+      if (kind === 'mite') {
+        mites++;
+        this.shards.burst(x, r * 0.7, z, Math.max(2, Math.round(5 * thin)), hue, r * 0.32, 0.9, 1.4);
+        this.splats.add(x, z, r * 3.2, neon);
+      } else if (kind === 'beetle') {
+        big++;
+        this.shards.burst(x, r * 0.7, z, Math.max(4, Math.round(12 * thin)), hue, r * 0.3, 1.1, 1.7);
+        this.splats.add(x, z, r * 3.4, neon);
+        this.sparks.burst(x, r, z, 10, neon, 1.2, 0.4, 4, 1);
+      } else {
+        big += 4;
+        this.shards.burst(x, r * 0.8, z, 48, hue, r * 0.22, 1.6, 2.4);
+        this.shards.burst(x, r * 0.8, z, 16, 0x2a2430, r * 0.3, 1.2, 2);
+        this.splats.add(x, z, r * 3.6, neon);
+        this.ring(x, z, neon, r * 4, 0.6);
+        this.flash(x, r, z, 0xffd0a0, r * 1.4, 0.3);
+        this.sparks.burst(x, r, z, 60, neon, 2.2, 0.7, 4, 1.5);
+        sfx.scrapCrunch(true);
+        buzz(this.world, 'both', 0.4, 90);
       }
     }
-    for (const [kind, kit] of this.kits) {
-      const n = counts.get(kind) ?? 0;
-      for (const comp of kit) {
-        comp.mesh.count = n * comp.per;
-        // An empty pool is not drawn at all — a zero-count instanced mesh
-        // still costs a draw call, and there are thirty of these.
-        comp.mesh.visible = n > 0;
-        comp.mesh.instanceMatrix.needsUpdate = true;
-        if (comp.flashable && comp.mesh.instanceColor) comp.mesh.instanceColor.needsUpdate = true;
-      }
-    }
+    sfx.swarmPop(mites + big);
+    if (n >= 10 || big >= 4) sfx.swarmCrunch(n);
   }
 
   private drawShots(): void {
@@ -954,10 +1001,19 @@ export class SiegeSystem extends createSystem({}) {
     if (this.fireClock < 0.05) return;
     this.fireClock = 0;
     const cols = [0xffb347, 0xff7a1a, 0xff4d1a];
-    for (const e of plant.siege.enemies) {
-      if (e.burnT <= 0) continue;
-      const r = ENEMIES[e.kind].radius;
-      this.flames.jet(e.x + (Math.random() - 0.5) * r, r * 1.2, e.z + (Math.random() - 0.5) * r, 0, 0, 2, 0.15, Math.PI, cols, 0.45, 2.4);
+    // Everything on fire smokes and flickers as it comes — up to a
+    // budget a tick, so a burning carpet costs the same as a burning row.
+    const h = plant.siege.horde;
+    const radii = HORDE_KINDS.map((k) => ENEMIES[k].radius);
+    let burning = 0;
+    for (let i = 0; i < h.n; i++) if (h.burnT[i] > 0 && !h.dead[i]) burning++;
+    const every = Math.max(1, Math.ceil(burning / 40));
+    let seen = 0;
+    for (let i = 0; i < h.n; i++) {
+      if (h.burnT[i] <= 0 || h.dead[i]) continue;
+      if (seen++ % every !== 0) continue;
+      const r = radii[h.kind[i]];
+      this.flames.jet(h.x[i] + (Math.random() - 0.5) * r, r * 1.2, h.z[i] + (Math.random() - 0.5) * r, 0, 0, 1, 0.15, Math.PI, cols, 0.4, 1.4 + r * 6);
     }
     for (const f of plant.siege.fires) {
       const fade = Math.min(1, (f.life - f.t) / 0.8);
@@ -989,10 +1045,13 @@ export class SiegeSystem extends createSystem({}) {
       this.bars.setColorAt(n, _col.set(color));
       n++;
     };
-    for (const e of plant.siege.enemies) {
-      if (e.hp >= e.maxHp) continue;
-      const r = ENEMIES[e.kind].radius;
-      put(e.x, r * BAR_HEIGHT[e.kind] + 0.06, e.z, Math.max(0, e.hp / e.maxHp), Math.max(0.12, r * 1.6), 0xff5a3a);
+    // Only the big ones carry a bar: a mite is one hit, and a bar over
+    // each of three thousand would be a second carpet.
+    const h = plant.siege.horde;
+    for (let i = 0; i < h.n; i++) {
+      if (h.kind[i] === 0 || h.dead[i] || h.hp[i] >= h.maxHp[i]) continue;
+      const r = ENEMIES[HORDE_KINDS[h.kind[i]]].radius;
+      put(h.x[i], r * 2.2 + 0.06, h.z[i], Math.max(0, h.hp[i] / h.maxHp[i]), Math.max(0.12, r * 1.6), 0xff5a3a);
     }
     for (const u of plant.units) {
       if (u.hp >= u.maxHp - 0.01 || u.type === 'dock') continue;
@@ -1170,10 +1229,14 @@ export class SiegeSystem extends createSystem({}) {
     const sg = plant.siege;
     const spec = waveSpec(sg.wave);
     const secs = sg.phase === 'build' ? Math.ceil(sg.buildT) : Math.floor(sg.waveT);
-    const left = sg.queue.length + sg.enemies.length;
+    const left = siegeLeft();
     const bank = plant.bank;
-    const key = `${sg.phase}|${sg.wave}|${secs}|${left}|${Math.round(coreHealth() * 100)}|${JSON.stringify(bank)}`;
+    const key = `${sg.phase}|${sg.wave}|${secs}|${left}|${sg.kills}|${Math.round(coreHealth() * 100)}|${JSON.stringify(bank)}`;
     if (key === this.plateKey) return;
+    // In a tide the counts change every frame: repaint (and re-upload)
+    // the plate at most four times a second.
+    if (this.clock - this.platePainted < 0.25 && this.plateKey !== '') return;
+    this.platePainted = this.clock;
     this.plateKey = key;
     const g = this.plateCtx;
     const W = 640;
@@ -1228,11 +1291,14 @@ export class SiegeSystem extends createSystem({}) {
     g.fillText('CORE', 36, 136);
     // THE BANK — what you have to build with.
     let x = 28;
-    g.font = font(700, 30);
+    g.font = font(700, 26);
     const items: ItemId[] = ['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'];
+    // The body count owns the right-hand end of the row.
+    const maxX = sg.kills > 0 ? W - 150 : W - 28;
     for (const item of items) {
       const n = bank[item] ?? 0;
       if (n <= 0 && item !== 'gear') continue;
+      if (x + 26 + g.measureText(`${item.toUpperCase()} ${n}`).width > maxX) break;
       g.fillStyle = `#${ITEM_COLOR[item].toString(16).padStart(6, '0')}`;
       g.beginPath();
       g.arc(x + 10, 186, 9, 0, Math.PI * 2);
@@ -1240,11 +1306,21 @@ export class SiegeSystem extends createSystem({}) {
       g.fillStyle = '#fdf6ec';
       const label = `${item.toUpperCase()} ${n}`;
       g.fillText(label, x + 26, 197);
-      x += 40 + g.measureText(label).width;
+      x += 34 + g.measureText(label).width;
+    }
+    // THE BODY COUNT, bottom right — the number a tide is measured in.
+    if (sg.kills > 0) {
+      g.textAlign = 'right';
+      g.fillStyle = '#ff2bd6';
+      g.font = font(700, 30);
+      g.fillText(`${sg.kills.toLocaleString('en-US')}`, W - 28, 197);
+      g.font = font(600, 16);
+      g.fillStyle = 'rgba(255,255,255,0.55)';
+      g.fillText('KILLED', W - 28, 218);
+      g.textAlign = 'left';
     }
     this.plateTex.needsUpdate = true;
   }
 }
 
 const _tmpWhite = new Color(0xffffff);
-const _tmpIce = new Color(0xa8eeff);

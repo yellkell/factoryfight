@@ -54,7 +54,7 @@ import { site } from '../game/state.js';
 import { cellCenter } from '../floor/grid.js';
 import { PLANT_SCALE } from '../factory/frame.js';
 import { plant } from '../factory/state.js';
-import { soundHorn, waveSpec } from '../factory/siege.js';
+import { siegeLeft, soundHorn, waveSpec } from '../factory/siege.js';
 import { canAfford, dockUnit, unitCost } from '../factory/sim.js';
 import { font } from '../ui/fonts.js';
 import { GLYPH_DEAD, GLYPH_LIVE, unitGlyph, type GlyphId } from '../ui/icons.js';
@@ -615,7 +615,7 @@ export class HandSystem extends createSystem({}) {
         const s = Math.ceil(sg.buildT);
         big = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
       } else if (sg.phase === 'wave') {
-        big = `${sg.queue.length + sg.enemies.length} LEFT`;
+        big = `${siegeLeft()} LEFT`;
         tone = UI.danger;
       } else {
         big = 'FALLEN';

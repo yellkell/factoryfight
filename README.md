@@ -18,10 +18,10 @@ there. Something else lives in the plaster, and it has heard the hum.
 
   | Weapon | Costs | What it does |
   | --- | --- | --- |
-  | TURRET | 3 GEAR | quick tracer slugs, one target at a time |
+  | TURRET | 3 GEAR | rapid tracer slugs, a mite a shot |
   | FLAMER | 5 GEAR | a roaring cone of fire that sets crawlers and the floor alight. **Fuelled by the amber feed:** tube it in |
-  | PISTON | 4 GEAR + 2 CELL | a floor trap that drives a steel ram out, knocking back whatever reaches it and stunning it |
-  | TESLA COIL | 4 GEAR + 3 CHIP | a bolt off its crown that chains through four crawlers. **Fuelled by the volt feed:** tube it in |
+  | PISTON | 4 GEAR + 2 CELL | a floor trap that drives a steel ram out, shoving the whole front rank of the tide back and stunning it |
+  | TESLA COIL | 4 GEAR + 3 CHIP | a bolt off its crown that chains through ten crawlers. **Fuelled by the volt feed:** tube it in |
   | MORTAR | 6 GEAR + 2 PUMP | lobs a shell high over your walls; the landing is a shockwave that flattens a crowd (it can't hit anything too close) |
 
 - **Every feed has two spouts.** Each pillar carries a twin boss a cell along,
@@ -33,19 +33,30 @@ there. Something else lives in the plaster, and it has heard the hum.
 - **Hold the CORE.** You place it first, anywhere on your floor, and it banks
   every part railed into it. That bank pays for guns, walls and upgrades. Lose
   the core and the siege is over.
-- **They come out of YOUR walls.** During the build phase, a glowing crack
-  appears at the foot of a real wall, so you know which side to defend. When
-  the horn goes, the plaster opens and they climb out:
-  - **SKITTER:** fast scrap ticks.
-  - **GRUB:** slow and fat, and it chews through rail.
-  - **SAPPER:** blows up the first thing it reaches.
-  - **BRUTE:** plate and fury.
-- **They path, and they chew.** Enemies follow a flow field to the core. A wall
-  with a gap gets walked around. A closed ring gets chewed through at its
-  thinnest point.
-- **Ten waves,** each bringing one new thing: walls, the flamer, sappers and
-  the piston, the tesla coil, the mortar, brutes, swarms. After that comes
-  OVERTIME, which never ends.
+- **They come out of YOUR walls, in TIDES.** During the build phase, a glowing
+  crack appears at the foot of a real wall, so you know which side to defend.
+  When the horn goes, the plaster opens and they pour out: a hundred in the
+  first wave, thousands by the end, streaming across your floor like ants.
+  There are three kinds, all the same neon-legged body:
+  - **MITE:** the tide itself. Tiny, quick, and one hit kills it.
+  - **BEETLE:** a lime-green shell that shrugs off a slug and chews through
+    rail.
+  - **HULK:** a big orange bruiser walking in the middle of the tide.
+- **Killing them pays.** Every mite killed is a sliver of a GEAR banked in the
+  core (twenty mites make one), and a hulk drops whole parts. The tide pays
+  for the guns that kill it.
+- **They come apart.** Each death bursts into neon shards that bounce and
+  skid across the floor, leaves a glowing stain where it fell, and pops. A
+  shell landing in a carpet of them is one big wet crunch. The core's plate
+  keeps the body count.
+- **They path, and they chew.** The tide follows a flow field to the core. A
+  wall with a gap gets walked around; a closed ring gets chewed through at
+  its thinnest point. The crowd shoves itself apart, so it spreads into a
+  carpet instead of a queue.
+- **Ten waves,** each bringing one new way to kill in bulk: walls, the
+  flamer, the piston, the tesla coil, the mortar, then hulks, a 2,600-strong
+  SWARM and THE LAST SHIFT (3,600 mites, 200 beetles, 6 hulks). After that
+  comes OVERTIME, which never ends.
 
 ## Neon
 
@@ -126,6 +137,8 @@ npm run typecheck
 npm run dev &
 node tools/siege-walk.mjs   # the fight end to end: gears to the core, wave 1, walls, the chew, the arsenal, the fall
 node tools/weapons-look.mjs # each weapon photographed firing (shots/weapons/)
+node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 2,600-mite wave vs a ring of guns
+node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
 node tools/hand-walk.mjs    # bare hands: pinch, the fist detector, the cuff and its pokes, a two-fist haul
 node tools/floor-walk.mjs   # the hazard-tape floor
 node tools/lines-look.mjs   # tube clearance over plant
@@ -136,9 +149,13 @@ node tools/craft-look.mjs   # every part's making, frame by frame
 
 ```
 src/factory/frame.ts      THE PLANT FRAME: the whole factory at 0.7 scale, one group
-src/factory/siege.ts      the fight's sim: waves, breaches, flow field, crawlers, the five
-                          weapons, shells, bolts, burning
-src/systems/SiegeSystem.ts  the fight drawn and voiced: instanced crawlers, tracers,
+src/factory/horde.ts      THE HORDE: every crawler as typed-array columns (cap 4,096), a
+                          spatial hash, and the crowd's shove
+src/factory/siege.ts      the fight's sim: waves (streams), breaches, flow field, the
+                          five weapons, shells, bolts, burning
+src/systems/swarm.ts      the horde drawn: every crawler in ONE instanced draw call with
+                          its legs animated on the GPU; shards and floor splats
+src/systems/SiegeSystem.ts  the fight drawn and voiced: the swarm, deaths, tracers,
                           lobbed shells, bolts, fire, the ram, cracks in your walls,
                           the core's plate
 src/input/intents.ts      what the hands MEAN this frame (point, grab, menu, turn, stow)

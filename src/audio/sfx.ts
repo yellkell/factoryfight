@@ -882,3 +882,61 @@ export function mortarBoom(): void {
   whooshNoise(0.6, 0.18, 1600, 90);
   clank(70, 0.12, 0.5, 0.02);
 }
+
+/* ── THE SWARM: deaths by the dozen ──────────────────────────────────── */
+
+let _popBuf: AudioBuffer | null = null;
+/** One short decaying burst of noise, made once and replayed at random
+ *  rates — a pop a frame must not cost a fresh buffer a frame. */
+function popBuffer(c: AudioContext): AudioBuffer {
+  if (_popBuf && _popBuf.sampleRate === c.sampleRate) return _popBuf;
+  const frames = Math.floor(c.sampleRate * 0.09);
+  const buf = c.createBuffer(1, frames, c.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < frames; i++) {
+    const p = i / frames;
+    data[i] = (Math.random() * 2 - 1) * (1 - p) ** 2.2;
+  }
+  _popBuf = buf;
+  return buf;
+}
+
+function popNoise(gain: number, hz: number, rate: number, delay = 0): void {
+  const c = ready();
+  if (!c) return;
+  const t0 = c.currentTime + delay;
+  const src = c.createBufferSource();
+  src.buffer = popBuffer(c);
+  src.playbackRate.value = rate;
+  const bp = c.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = hz;
+  bp.Q.value = 1.4;
+  const g = c.createGain();
+  g.gain.value = gain;
+  src.connect(bp).connect(g).connect(c._master!);
+  src.start(t0);
+}
+
+/** Mites popping — `n` of them this frame. One voice however many die,
+ *  louder and fatter the more there are, so a carpet going up sounds
+ *  like a carpet and not like a stuck key. */
+export function swarmPop(n: number): void {
+  if (n <= 0 || !gate('pop', 0.035)) return;
+  const k = Math.log2(1 + n);
+  const g = Math.min(0.2, 0.05 + k * 0.03);
+  tone({ freq: 1100 + Math.random() * 900, to: 160 + Math.random() * 80, type: 'triangle', dur: 0.05, gain: g * 0.55 });
+  popNoise(g, 1800 + Math.random() * 1600, 0.8 + Math.random() * 0.6);
+  if (n > 3) popNoise(g * 0.7, 900 + Math.random() * 600, 0.6 + Math.random() * 0.3, 0.012);
+}
+
+/** A whole patch of them goes at once (a shell, a bolt through ten): a
+ *  wet, crunching thump under the pops. */
+export function swarmCrunch(n: number): void {
+  if (!gate('swarm-crunch', 0.1)) return;
+  const g = Math.min(0.26, 0.08 + Math.log2(1 + n) * 0.025);
+  subSwell(150, 45, 0.3, g, 0, 0.004);
+  popNoise(g * 1.2, 700, 0.5);
+  popNoise(g, 2600, 0.9, 0.02);
+  clank(240 + Math.random() * 60, g * 0.5, 0.18, 0.01);
+}

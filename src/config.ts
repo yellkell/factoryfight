@@ -912,7 +912,13 @@ export const CEREMONY_S = 4.2;
  * the room). Times are seconds.
  */
 
-export type EnemyId = 'skitter' | 'grub' | 'sapper' | 'brute';
+/**
+ * THE HORDE. Three kinds, one body: a neon-legged mite, drawn thousands at
+ * a time in a single draw call (systems/swarm.ts). They differ in size,
+ * colour, and how much it takes to put them down — the MITE is the tide,
+ * the BEETLE the stiffening in it, the HULK the thing it is carrying.
+ */
+export type EnemyId = 'mite' | 'beetle' | 'hulk';
 
 export interface EnemySpec {
   id: EnemyId;
@@ -923,64 +929,69 @@ export interface EnemySpec {
   /** One bite: damage dealt, and seconds between bites. */
   bite: number;
   biteS: number;
-  /** Body radius — the hit sphere and the mesh's scale. */
+  /** Body radius — the hit circle, the crowd spacing, the mesh's scale. */
   radius: number;
-  /** A SAPPER doesn't bite: it reaches plant and goes off, hurting
-   *  everything within this radius (and itself, permanently). */
-  blast?: { damage: number; radius: number };
-  /** Parts dropped into the bank when it dies — killing pays. */
+  /** How far a piston's punch throws it (1 = all the way). */
+  give: number;
+  /** GEARS banked per kill — fractional; the core keeps the change, so
+   *  every twenty-odd mites killed is a gear. The swarm pays for the
+   *  guns that kill it. */
+  scrap: number;
+  /** Whole parts dropped into the bank when it dies. */
   bounty: Partial<Record<ItemId, number>>;
+  /** Its neon. */
+  neon: number;
   /** The one line on the WAVES page. */
   docket: string;
 }
 
 export const ENEMIES: Record<EnemyId, EnemySpec> = {
-  skitter: {
-    id: 'skitter',
-    name: 'SKITTER',
-    hp: 20,
+  mite: {
+    id: 'mite',
+    name: 'MITE',
+    hp: 6,
     speed: 0.5,
-    bite: 3,
-    biteS: 0.7,
-    radius: 0.09,
+    bite: 1,
+    biteS: 0.8,
+    radius: 0.05,
+    give: 1,
+    scrap: 0.05,
     bounty: {},
-    docket: 'Scrap tick. Fast, thin, and there are always more.',
+    neon: 0xff2bd6,
+    docket: 'The tide. One hit each, and there are thousands.',
   },
-  grub: {
-    id: 'grub',
-    name: 'GRUB',
-    hp: 110,
-    speed: 0.22,
-    bite: 9,
-    biteS: 1.1,
-    radius: 0.14,
-    bounty: { gear: 1 },
-    docket: 'Slow and fat. Chews through rail like it is lunch.',
-  },
-  sapper: {
-    id: 'sapper',
-    name: 'SAPPER',
-    hp: 34,
-    speed: 0.42,
-    bite: 0,
-    biteS: 1,
-    radius: 0.1,
-    blast: { damage: 55, radius: 0.5 },
+  beetle: {
+    id: 'beetle',
+    name: 'BEETLE',
+    hp: 45,
+    speed: 0.3,
+    bite: 4,
+    biteS: 0.9,
+    radius: 0.085,
+    give: 0.6,
+    scrap: 0.35,
     bounty: {},
-    docket: 'Carries its own charge. Blows the first thing it reaches.',
+    neon: 0xb8ff2b,
+    docket: 'Shell on it. Shrugs off a slug and chews through rail.',
   },
-  brute: {
-    id: 'brute',
-    name: 'BRUTE',
-    hp: 650,
-    speed: 0.17,
-    bite: 28,
-    biteS: 1.4,
-    radius: 0.26,
-    bounty: { gear: 4, cell: 2 },
-    docket: 'Plate and fury. Walls are a suggestion.',
+  hulk: {
+    id: 'hulk',
+    name: 'HULK',
+    hp: 900,
+    speed: 0.14,
+    bite: 30,
+    biteS: 1.3,
+    radius: 0.2,
+    give: 0.2,
+    scrap: 0,
+    bounty: { gear: 6, cell: 2 },
+    neon: 0xff6a2a,
+    docket: 'Plate and fury, walking in the middle of the tide.',
   },
 };
+
+/** The kinds, in the order the horde indexes them. */
+export const HORDE_KINDS: EnemyId[] = ['mite', 'beetle', 'hulk'];
 
 /* ── THE ARSENAL ───────────────────────────────────────────────────────────
  * Weapons COST parts to build and fire for FREE. The factory's job is to
@@ -1030,8 +1041,8 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     name: 'TURRET',
     docket: 'Rapid kinetic rounds at one target. Never runs dry.',
     range: 2.1,
-    cycleS: 0.32,
-    damage: 7,
+    cycleS: 0.14,
+    damage: 8,
     speed: 10,
     color: 0xffb347,
     muzzleY: 1.02,
@@ -1042,7 +1053,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     docket: 'A cone of fire that sets crawlers burning and the floor alight. Drinks the amber feed.',
     range: 1.15,
     cycleS: 0.1,
-    damage: 3.2,
+    damage: 2.4,
     cone: 0.5,
     burn: { dps: 7, s: 2.5 },
     fuel: 'mains',
@@ -1052,24 +1063,25 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
   piston: {
     id: 'piston',
     name: 'PISTON',
-    docket: 'A hydraulic ram that punches crawlers back the way they came.',
-    range: 0.5,
-    cycleS: 1.5,
-    damage: 22,
+    docket: 'A hydraulic ram that shoves the whole front of the tide back the way it came.',
+    range: 0.55,
+    cycleS: 1.1,
+    damage: 30,
     knock: 0.9,
     stunS: 0.6,
+    cone: 0.75,
     color: 0xb8fff4,
     muzzleY: 0.5,
   },
   tesla: {
     id: 'tesla',
     name: 'TESLA COIL',
-    docket: 'Arcs that bite one and jump through four more. Drinks the violet feed.',
+    docket: 'A bolt that jumps through ten of them at once. Drinks the violet feed.',
     range: 1.7,
-    cycleS: 0.85,
-    damage: 15,
-    chain: 4,
-    chainReach: 0.75,
+    cycleS: 0.7,
+    damage: 16,
+    chain: 10,
+    chainReach: 0.5,
     fuel: 'volt',
     color: 0xc79bff,
     muzzleY: 1.3,
@@ -1081,8 +1093,8 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     range: 3.4,
     minRange: 0.7,
     cycleS: 2.3,
-    damage: 55,
-    splash: 0.6,
+    damage: 60,
+    splash: 0.7,
     speed: 2.4,
     color: 0xffd36a,
     muzzleY: 0.95,
@@ -1091,11 +1103,11 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
 
 export const SIEGE = {
   /** The core's hit points — the whole game is keeping this above zero. */
-  coreHp: 300,
+  coreHp: 420,
   /** Plant hit points by kind. Walls are the thick ones on purpose; a
    *  rail is a snack. */
   hp: {
-    dock: 300,
+    dock: 420,
     maker: 70,
     belt: 18,
     combiner: 80,
@@ -1141,13 +1153,18 @@ export const SIEGE = {
   chewBase: 6,
   chewPerHp: 0.08,
   /** Endless mode: after the ladder, each wave's spawns scale by this. */
-  endlessGrowth: 1.22,
+  endlessGrowth: 1.15,
+  /** THE CROWD: how hard overlapping crawlers shove apart (0..1 of the
+   *  overlap per tick), and how many neighbours each one checks. */
+  shove: 0.45,
+  shoveMax: 8,
 };
 
 export interface WaveSpawn {
   enemy: EnemyId;
   count: number;
-  /** Seconds between each of this group's arrivals. */
+  /** Seconds between each of this group's arrivals (a stream: 0.05 is
+   *  twenty a second pouring out of the plaster). */
   gap: number;
   /** Seconds into the wave this group starts. */
   at: number;
@@ -1170,14 +1187,19 @@ export interface WaveSpec {
   wakes: { feeds?: LineId[]; units?: UnitType[] };
 }
 
-const s = (enemy: EnemyId, count: number, gap: number, at = 0, breach = 0): WaveSpawn => ({
+/** A stream: `count` of them at `perS` a second, from `at` seconds in. */
+const s = (enemy: EnemyId, count: number, perS: number, at = 0, breach = 0): WaveSpawn => ({
   enemy,
   count,
-  gap,
+  gap: 1 / perS,
   at,
   breach,
 });
 
+/**
+ * THE LADDER. Every wave is a TIDE — hundreds at first, thousands by the
+ * end — and every one adds a tool for killing them in bulk.
+ */
 export const WAVES: WaveSpec[] = [
   {
     id: 'first-watch',
@@ -1185,16 +1207,16 @@ export const WAVES: WaveSpec[] = [
     tip: 'Haul amber into a MAKER, rail its GEARS to the CORE, spend them on TURRETS.',
     breaches: 1,
     buildS: 100,
-    spawns: [s('skitter', 5, 2.4)],
+    spawns: [s('mite', 50, 3), s('mite', 50, 6, 20)],
     wakes: { feeds: ['mains'], units: ['dock', 'maker', 'belt', 'turret'] },
   },
   {
     id: 'two-doors',
     name: 'TWO DOORS',
-    tip: 'WALLS cost 1 GEAR. Funnel them past your guns.',
+    tip: 'WALLS cost 1 GEAR. Funnel the tide past your guns.',
     breaches: 2,
     buildS: 55,
-    spawns: [s('skitter', 5, 2, 0, 0), s('skitter', 5, 2, 3, 1)],
+    spawns: [s('mite', 140, 8, 0, 0), s('mite', 140, 8, 4, 1)],
     wakes: { units: ['wall'] },
   },
   {
@@ -1203,95 +1225,108 @@ export const WAVES: WaveSpec[] = [
     tip: 'FLAMETHROWERS drink amber: haul the feed\'s second spout into one.',
     breaches: 2,
     buildS: 55,
-    spawns: [s('skitter', 8, 1.6, 0, 0), s('grub', 2, 6, 4, 1), s('skitter', 4, 1.2, 10, 1)],
+    spawns: [s('mite', 260, 14, 0, 0), s('mite', 260, 14, 3, 1), s('beetle', 16, 1, 6, 0)],
     wakes: { feeds: ['coolant'], units: ['flamer'] },
   },
   {
-    id: 'sappers',
-    name: 'SAPPERS',
-    tip: 'PISTONS punch crawlers back the way they came. Sappers too.',
-    breaches: 2,
+    id: 'the-tide',
+    name: 'THE TIDE',
+    tip: 'PISTONS shove the front of the tide back into the flames.',
+    breaches: 3,
     buildS: 50,
     spawns: [
-      s('skitter', 6, 1.4, 0, 0),
-      s('sapper', 4, 3, 3, 1),
-      s('grub', 2, 5, 8, 0),
+      s('mite', 300, 18, 0, 0),
+      s('mite', 300, 18, 2, 1),
+      s('mite', 200, 14, 5, 2),
+      s('beetle', 30, 1.5, 8, 1),
     ],
     wakes: { units: ['combiner', 'chest', 'piston'] },
   },
   {
     id: 'live-wire',
     name: 'LIVE WIRE',
-    tip: 'TESLA COILS drink violet and arc through a whole crowd.',
+    tip: 'TESLA COILS drink violet and arc through ten at a time.',
     breaches: 3,
     buildS: 55,
     spawns: [
-      s('skitter', 12, 0.9, 0, 0),
-      s('grub', 3, 4, 3, 1),
-      s('sapper', 3, 2.5, 6, 2),
+      s('mite', 450, 22, 0, 0),
+      s('mite', 450, 22, 2, 1),
+      s('mite', 300, 18, 4, 2),
+      s('beetle', 40, 2, 6, 0),
     ],
     wakes: { feeds: ['volt'], units: ['tesla'] },
   },
   {
     id: 'heavy-metal',
     name: 'HEAVY METAL',
-    tip: 'MORTARS lob shells over your walls. They cost PUMPS: GEAR + CELL.',
+    tip: 'MORTARS drop shells into the thick of it. They cost PUMPS: GEAR + CELL.',
     breaches: 3,
     buildS: 60,
     spawns: [
-      s('grub', 6, 3, 0, 0),
-      s('skitter', 10, 1, 2, 1),
-      s('sapper', 4, 2.2, 6, 2),
+      s('mite', 600, 26, 0, 0),
+      s('mite', 600, 26, 2, 1),
+      s('mite', 400, 20, 4, 2),
+      s('beetle', 60, 2.5, 5, 1),
+      s('hulk', 1, 1, 14, 0),
     ],
     wakes: { units: ['mortar'] },
   },
   {
-    id: 'the-brute',
-    name: 'THE BRUTE',
-    tip: 'One brute. Burn it, shock it, shell it — and keep it off the core.',
-    breaches: 2,
+    id: 'the-hulks',
+    name: 'THE HULKS',
+    tip: 'Three hulks in the tide. Burn the tide, shell the hulks.',
+    breaches: 3,
     buildS: 60,
-    spawns: [s('skitter', 10, 1, 0, 0), s('brute', 1, 1, 6, 1), s('grub', 3, 3, 10, 0)],
+    spawns: [
+      s('mite', 700, 28, 0, 0),
+      s('mite', 700, 28, 2, 1),
+      s('hulk', 3, 0.15, 6, 2),
+      s('beetle', 80, 3, 8, 2),
+    ],
     wakes: {},
   },
   {
     id: 'swarm',
     name: 'SWARM',
-    tip: 'Thirty of them. Flame the doorway and let the coils do the rest.',
-    breaches: 3,
+    tip: 'Two and a half thousand. All at once.',
+    breaches: 4,
     buildS: 55,
     spawns: [
-      s('skitter', 14, 0.5, 0, 0),
-      s('skitter', 14, 0.5, 2, 1),
-      s('sapper', 5, 1.6, 5, 2),
+      s('mite', 650, 40, 0, 0),
+      s('mite', 650, 40, 0, 1),
+      s('mite', 650, 40, 0, 2),
+      s('mite', 650, 40, 0, 3),
     ],
     wakes: {},
   },
   {
     id: 'siege-engine',
     name: 'SIEGE ENGINE',
-    tip: 'Two brutes behind a wall of grubs. Pistons keep them off your plate.',
-    breaches: 3,
+    tip: 'Beetles in the front rank, hulks behind. Hold the core.',
+    breaches: 4,
     buildS: 60,
     spawns: [
-      s('grub', 8, 2, 0, 0),
-      s('brute', 2, 8, 4, 1),
-      s('sapper', 6, 1.8, 6, 2),
-      s('skitter', 10, 0.8, 10, 0),
+      s('beetle', 160, 6, 0, 0),
+      s('mite', 700, 30, 2, 1),
+      s('mite', 700, 30, 2, 2),
+      s('hulk', 4, 0.2, 8, 3),
+      s('mite', 500, 30, 12, 0),
     ],
     wakes: {},
   },
   {
     id: 'last-shift',
     name: 'THE LAST SHIFT',
-    tip: 'Everything you have, everywhere at once.',
+    tip: 'Everything, everywhere, at once.',
     breaches: 4,
     buildS: 70,
     spawns: [
-      s('skitter', 20, 0.6, 0, 0),
-      s('grub', 8, 2, 3, 1),
-      s('sapper', 8, 1.5, 6, 2),
-      s('brute', 3, 7, 8, 3),
+      s('mite', 900, 40, 0, 0),
+      s('mite', 900, 40, 0, 1),
+      s('mite', 900, 40, 0, 2),
+      s('mite', 900, 40, 0, 3),
+      s('beetle', 200, 6, 6, 1),
+      s('hulk', 6, 0.25, 10, 2),
     ],
     wakes: {},
   },

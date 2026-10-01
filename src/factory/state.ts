@@ -11,6 +11,7 @@
  * DOWN TOOLS clears it.
  */
 
+import { Horde } from './horde.js';
 import { Vector3 } from 'three';
 import {
   FACTORY,
@@ -68,6 +69,11 @@ export interface Unit {
   cool?: number;
   yaw?: number;
   firedT?: number;
+  /** The crawler it is tracking (horde uid; 0 = none), where it was last
+   *  seen (an index hint), and seconds until it looks again. */
+  tgt?: number;
+  tgtAt?: number;
+  look?: number;
 }
 
 /** One supply run off a feed's spout. Field names deliberately mirror
@@ -211,42 +217,14 @@ export interface Plant {
 
 /* ── THE SIEGE ──────────────────────────────────────────────────────────── */
 
-export interface Enemy {
-  id: number;
-  kind: EnemyId;
-  /** Plan position (plant metres) — they walk the floor, y is always 0. */
-  x: number;
-  z: number;
-  hp: number;
-  maxHp: number;
-  /** Facing (plan yaw) — eased toward travel so a turn reads as a turn. */
-  heading: number;
-  /** emerge: climbing out of the plaster; walk: pathing; bite: chewing. */
-  phase: 'emerge' | 'walk' | 'bite';
-  phaseT: number;
-  /** The breach it came out of. */
+/** A stream of crawlers pouring out of one breach: `left` still to come,
+ *  one every `gap` seconds, the next at `next` seconds into the wave. */
+export interface Stream {
+  enemy: EnemyId;
+  left: number;
+  gap: number;
+  next: number;
   breach: number;
-  /** The unit it is chewing (−1 = none). */
-  target: number;
-  biteT: number;
-  /** FROST: seconds of slow left, and how slow. */
-  slowT: number;
-  slowF: number;
-  /** A per-enemy lane offset, so a column of them reads as a crowd. */
-  lane: number;
-  /** Seconds of white flash left from the last hit. */
-  flash: number;
-  /** How far it has walked (drives the leg cycle). */
-  stride: number;
-  /** PUNCHED: knock-back velocity (plant m/s) and how long it lasts, and
-   *  how long it stays stunned after. */
-  kvx: number;
-  kvz: number;
-  kT: number;
-  stunT: number;
-  /** ON FIRE: seconds left burning, and how hard. */
-  burnT: number;
-  burnDps: number;
 }
 
 /** A patch of burning floor where a flame landed. */
@@ -279,8 +257,10 @@ export interface Shot {
   x1: number;
   y1: number;
   z1: number;
-  /** The enemy it is chasing (−1 = a spot on the floor). */
+  /** The crawler it is chasing (horde uid; −1 = a spot on the floor),
+   *  and where in the horde it was when fired (an index hint). */
   target: number;
+  at?: number;
   t: number;
   dur: number;
 }
@@ -331,10 +311,10 @@ export interface Siege {
   buildT: number;
   /** Wave phase: seconds since the horn. */
   waveT: number;
-  /** Spawns still to come this wave, sorted by time. */
-  queue: Array<{ enemy: EnemyId; at: number; breach: number }>;
-  enemies: Enemy[];
-  nextEnemy: number;
+  /** The wave's streams, still pouring. */
+  streams: Stream[];
+  /** Every crawler on the floor (factory/horde.ts). */
+  horde: Horde;
   shots: Shot[];
   nextShot: number;
   /** Burning floor. */
@@ -343,6 +323,8 @@ export interface Siege {
    *  through the whole build phase so you can wall the right side. */
   breaches: Breach[];
   kills: number;
+  /** Fractional GEARS earned by kills, waiting to make a whole one. */
+  scrap: number;
   /** The ladder has been cleared at least once (endless from here). */
   won: boolean;
   fx: SiegeFx[];
@@ -377,14 +359,14 @@ export function freshSiege(): Siege {
     wave: 0,
     buildT: 0,
     waveT: 0,
-    queue: [],
-    enemies: [],
-    nextEnemy: 1,
+    streams: [],
+    horde: new Horde(),
     shots: [],
     nextShot: 1,
     fires: [],
     breaches: [],
     kills: 0,
+    scrap: 0,
     won: false,
     fx: [],
   };

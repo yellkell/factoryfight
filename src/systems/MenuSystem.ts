@@ -112,7 +112,7 @@ function costText(type: UnitType): string {
   const parts = Object.entries(unitCost(type)).map(([item, n]) => `${n} ${item.toUpperCase()}`);
   return parts.length ? parts.join(' + ') : 'free';
 }
-import { coreHealth, soundHorn, waveSpec } from '../factory/siege.js';
+import { coreHealth, siegeLeft, soundHorn, waveSpec } from '../factory/siege.js';
 import { buildView, typeAvailable, type BuildTool } from './BuildSystem.js';
 import { factoryView } from './FactorySystem.js';
 import { goopView } from './GoopSystem.js';
@@ -1898,7 +1898,7 @@ export class MenuSystem extends createSystem({}) {
             : sg.phase === 'build'
               ? `WAVE ${sg.wave + 1} \u00b7 ${wave.name} \u00b7 ${Math.ceil(sg.buildT)}s`
               : sg.phase === 'wave'
-                ? `WAVE ${sg.wave + 1} \u00b7 ${sg.queue.length + sg.enemies.length} INCOMING`
+                ? `WAVE ${sg.wave + 1} \u00b7 ${siegeLeft()} INCOMING`
                 : 'THE CORE HAS FALLEN';
         g.fillText(status, cw / 2, 150, cw - 80);
         g.font = font(500, 22);
@@ -2156,7 +2156,7 @@ export class MenuSystem extends createSystem({}) {
           g.fillText('until the horn', 120, 113);
         } else if (sg.phase === 'wave') {
           g.fillStyle = UI.danger;
-          g.fillText(`${sg.queue.length + sg.enemies.length} INCOMING`, 36, 112);
+          g.fillText(`${siegeLeft()} INCOMING`, 36, 112);
         } else if (sg.phase === 'core') {
           g.fillStyle = UI.accent;
           g.fillText('PLACE THE CORE', 36, 112);

@@ -37,6 +37,10 @@ await page.evaluate(() => {
   rig?.traverse((c) => {
     if (c.isMesh || c.isLine) c.material.visible = false;
   });
+  const cs = [...document.querySelectorAll('canvas')].sort(
+    (a, b) => Number(getComputedStyle(a).zIndex || 0) - Number(getComputedStyle(b).zIndex || 0),
+  );
+  cs.slice(1).forEach((c) => (c.style.visibility = 'hidden'));
   window.__tubes.menu.act('tab:factory');
   window.__tubes.menu.act('start-order');
 });
@@ -45,8 +49,8 @@ mkdirSync('shots/enemies', { recursive: true });
 
 // The core goes down behind them (so the plate and its ring are in the
 // world, as in play), then the fight is held still.
-const kinds = ['skitter', 'sapper', 'grub', 'brute'];
-const xs = [-1.25, -0.45, 0.4, 1.45]; // plant metres
+const kinds = ['mite', 'beetle', 'hulk'];
+const xs = [-0.6, -0.2, 0.45]; // plant metres
 const Z = -1.6;
 await page.evaluate(
   ({ kinds, xs, Z }) => {
@@ -74,12 +78,12 @@ async function lookAt(px, pz, py, tx, ty, tz) {
 }
 
 // The line-up, from a crouch.
-await lookAt(0.05, Z * S + 1.15, -1.05, 0.05, 0.05, Z * S);
+await lookAt(0.0, Z * S + 0.8, -1.2, 0.0, 0.05, Z * S);
 await page.screenshot({ path: 'shots/enemies/lineup.png' });
 console.log('  · shots/enemies/lineup.png');
 
 // Each one, close.
-const reach = { skitter: 0.42, sapper: 0.45, grub: 0.55, brute: 0.85 };
+const reach = { mite: 0.3, beetle: 0.4, hulk: 0.8 };
 for (let n = 0; n < kinds.length; n++) {
   const x = xs[n] * S;
   const z = Z * S;
@@ -88,5 +92,19 @@ for (let n = 0; n < kinds.length; n++) {
   await page.screenshot({ path: `shots/enemies/${kinds[n]}.png` });
   console.log(`  · shots/enemies/${kinds[n]}.png`);
 }
+// A crowd: two hundred of them, frozen mid-stride.
+await page.evaluate(() => {
+  const t = window.__tubes;
+  t.siege.clear();
+  for (let k = 0; k < 220; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 0.25 + Math.sqrt(Math.random()) * 0.9;
+    t.siege.place(Math.random() < 0.08 ? 'beetle' : 'mite', Math.sin(a) * d, -1.6 + Math.cos(a) * d * 0.6, Math.PI + (Math.random() - 0.5));
+  }
+  t.siege.place('hulk', 0.1, -1.7, Math.PI);
+});
+await lookAt(0.0, Z * S + 1.0, -0.9, 0.0, 0.05, Z * S);
+await page.screenshot({ path: 'shots/enemies/crowd.png' });
+console.log('  · shots/enemies/crowd.png');
 if (errs.length) console.log('errors', errs);
 await browser.close();

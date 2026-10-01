@@ -12,7 +12,7 @@
  *
  *   MAN THE WALLS   one door; the core stands; the first breach cracks
  *   THE GUN CHAIN   amber feed → maker → hauled rail → turret
- *   FIRST WATCH     the horn; five skitters; the gun holds the core
+ *   FIRST WATCH     the horn; a hundred mites; the gun holds the core
  *   THE WALL        walls cost gears; a hauled run is as long as the bank
  *   THE CHEW        a ring of plate gets chewed, not walked through
  *   THE FALL        an undefended core falls; TRY AGAIN deals a new floor
@@ -239,7 +239,7 @@ console.log('FIRST WATCH');
 await page.evaluate(() => window.__tubes.siege.horn());
 sg = await siege();
 check(
-  sg.phase === 'wave' && sg.queued + sg.enemies === 5,
+  sg.phase === 'wave' && sg.queued + sg.enemies === 100,
   `the horn: wave 1 is coming (${sg.enemies} out, ${sg.queued} queued)`,
 );
 await page.waitForTimeout(5200);
@@ -266,8 +266,8 @@ const cleared = await page
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
 sg = await siege();
 check(cleared, `FIRST WATCH held (kills ${sg.kills}, core ${(sg.core * 100).toFixed(0)}%)`);
-check(sg.kills === 5, `every skitter put down by the gun (${sg.kills})`);
-check(sg.core > 0.6, `the core barely scratched (${(sg.core * 100).toFixed(0)}%)`);
+check(sg.kills === 100, `the whole tide put down (${sg.kills} killed)`);
+check(sg.core > 0.5, `the core still standing strong (${(sg.core * 100).toFixed(0)}%)`);
 check(sg.phase === 'build' && sg.breaches.length === 2, `wave 2's two breaches crack (${sg.breaches.length})`);
 
 /* ── THE CARDS ───────────────────────────────────────────────────────── */
@@ -318,7 +318,7 @@ await shot('03-the-wall');
 
 console.log('THE CHEW');
 // A full ring of plate round the core (tools stand it for free with a
-// bank top-up), then a grub dropped at a breach: it must chew, not walk.
+// bank top-up), then a beetle dropped at a breach: it must chew, not walk.
 await page.evaluate(
   ({ cx, cz }) => {
     const p = window.__tubes;
@@ -345,21 +345,22 @@ const ringOk = await page.evaluate(
   { ring },
 );
 check(ringOk === 8, `a closed ring of plate round the core (${ringOk}/8)`);
-await page.evaluate(() => window.__tubes.siege.spawn('grub', 0));
+const coreBefore = (await siege()).core;
+await page.evaluate(() => window.__tubes.siege.spawn('beetle', 0));
 await page.evaluate(() => window.__tubes.plant.timeScale(4));
 const chewing = await page
   .waitForFunction(
-    () => window.__tubes.siege.enemies().some((e) => e.kind === 'grub' && e.phase === 'bite'),
+    () => window.__tubes.siege.enemies().some((e) => e.kind === 'beetle' && e.phase === 'bite'),
     undefined,
     { timeout: 40000 },
   )
   .then(() => true)
   .catch(() => false);
 const coreNow = (await siege()).core;
-check(chewing, 'the grub reaches the ring and CHEWS');
-check(coreNow > 0.99, `and the core behind the plate is untouched (${(coreNow * 100).toFixed(0)}%)`);
+check(chewing, 'the beetle reaches the ring and CHEWS');
+check(coreNow >= coreBefore - 1e-6, `and the core behind the plate is untouched (${(coreBefore * 100).toFixed(0)}% → ${(coreNow * 100).toFixed(0)}%, still healing from wave 1)`);
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
-const g = (await page.evaluate(() => window.__tubes.siege.enemies())).find((e) => e.kind === 'grub');
+const g = (await page.evaluate(() => window.__tubes.siege.enemies())).find((e) => e.kind === 'beetle');
 if (g) {
   await lookAt(g.x * 0.7 * 0.4 + 0.6, g.z * 0.7 * 0.4 + 0.9, -0.5, g.x * 0.7 * 0.6, 0.15, g.z * 0.7 * 0.6);
   await shot('04-the-chew');
@@ -416,15 +417,15 @@ const cell = 0.35;
 const cellAt = (i, j) => [(i + 0.5) * cell, (j + 0.5) * cell];
 // A crawler in front of each weapon, inside its reach.
 const targets = {
-  piston: [cellAt(cx, cz + 1)[0], cellAt(cx, cz + 1)[1] + 0.38, 'brute'],
-  flamer: [cellAt(cx - 1, cz - 1)[0], cellAt(cx - 1, cz - 1)[1] - 0.7, 'grub'],
-  tesla: [cellAt(cx + 1, cz + 1)[0] + 0.4, cellAt(cx + 1, cz + 1)[1] + 0.9, 'skitter'],
-  mortar: [cellAt(cx, cz + 3)[0] - 0.4, cellAt(cx, cz + 3)[1] + 1.9, 'brute'],
+  piston: [cellAt(cx, cz + 1)[0], cellAt(cx, cz + 1)[1] + 0.38, 'beetle'],
+  flamer: [cellAt(cx - 1, cz - 1)[0], cellAt(cx - 1, cz - 1)[1] - 0.7, 'beetle'],
+  tesla: [cellAt(cx + 1, cz + 1)[0] + 0.4, cellAt(cx + 1, cz + 1)[1] + 0.9, 'mite'],
+  mortar: [cellAt(cx, cz + 3)[0] - 0.4, cellAt(cx, cz + 3)[1] + 1.9, 'hulk'],
 };
 for (const [w, [x, z, kind]] of Object.entries(targets)) {
   await page.evaluate(({ kind, x, z }) => window.__tubes.siege.place(kind, x, z, Math.PI), { kind, x, z });
-  // Second skitter for the coil to chain to.
-  if (w === 'tesla') await page.evaluate(({ x, z }) => window.__tubes.siege.place('skitter', x + 0.3, z + 0.25, Math.PI), { x, z });
+  // A second mite for the coil to chain to.
+  if (w === 'tesla') await page.evaluate(({ x, z }) => window.__tubes.siege.place('mite', x + 0.3, z + 0.25, Math.PI), { x, z });
 }
 await page.evaluate(() => window.__tubes.siege.tough(8));
 // Watch all four at once: each must fire at least once.
@@ -452,7 +453,8 @@ console.log('THE FALL');
 await page.evaluate(() => {
   const p = window.__tubes;
   for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
-  for (let k = 0; k < 4; k++) p.siege.spawn('brute', k);
+  for (let k = 0; k < 4; k++) p.siege.spawn('hulk', k);
+  p.siege.spawn('mite', 0, 300);
   p.plant.timeScale(10);
 });
 const fell = await page

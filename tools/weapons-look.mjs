@@ -121,11 +121,11 @@ const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) =
 // One weapon at a time, on a clean floor: where it stands (cells off the
 // core), the road its crawlers come down, and how far out they start.
 const roads = {
-  flamer: { at: [0, -2], d: [0, -1], far: 0.95, kind: 'brute', more: 'grub' },
-  piston: { at: [0, -2], d: [0, -1], far: 0.5, kind: 'brute' },
-  turret: { at: [0, -2], d: [0, -1], far: 1.3, kind: 'brute', more: 'skitter' },
-  tesla: { at: [0, -2], d: [0, -1], far: 1.0, kind: 'grub', more: 'skitter' },
-  mortar: { at: [-5, -3], d: [1, 0], far: 1.6, kind: 'brute', more: 'skitter', flip: -1, eye: -0.6 },
+  flamer: { at: [0, -2], d: [0, -1], far: 0.95, kind: 'beetle', more: 'mite', crowd: 40 },
+  piston: { at: [0, -2], d: [0, -1], far: 0.45, kind: 'beetle', more: 'mite', crowd: 14 },
+  turret: { at: [0, -2], d: [0, -1], far: 1.3, kind: 'hulk', more: 'mite', crowd: 10 },
+  tesla: { at: [0, -2], d: [0, -1], far: 1.0, kind: 'beetle', more: 'mite', crowd: 30 },
+  mortar: { at: [-5, -3], d: [1, 0], far: 1.6, kind: 'hulk', more: 'mite', crowd: 60, flip: -1, eye: -0.6 },
 };
 const feedOf = { flamer: 'far:1', tesla: 'right:0' };
 for (const [w, r] of Object.entries(roads)) {
@@ -158,6 +158,18 @@ for (const [w, r] of Object.entries(roads)) {
     await place(r.more, ex + uz * 0.34 + ux * 0.35, ez - ux * 0.34 + uz * 0.35);
   }
   await page.evaluate(() => window.__tubes.siege.tough(40));
+  // …and a crowd of ordinary mites round it, which die like mites: the
+  // shot is of the tide coming apart, not of one sitter.
+  await page.evaluate(
+    ({ n, x, z, ux, uz, h }) => {
+      for (let k = 0; k < n; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.sqrt(Math.random()) * 0.32;
+        window.__tubes.siege.place('mite', x + Math.sin(a) * d + ux * 0.15, z + Math.cos(a) * d + uz * 0.15, h + (Math.random() - 0.5) * 0.6);
+      }
+    },
+    { n: r.crowd ?? 0, x: ex, z: ez, ux, uz, h: head },
+  );
   // The camera: square-on to the road, a little back toward the gun,
   // low — the gun on one side of the frame, what it is killing on the
   // other.
@@ -215,9 +227,10 @@ await page.waitForTimeout(400);
 }
 await page.evaluate(() => {
   const t = window.__tubes;
-  for (let k = 0; k < 4; k++) t.siege.spawn('skitter', 0);
-  t.siege.spawn('brute', 0);
-  t.siege.spawn('grub', 0);
+  t.siege.breaches(4);
+  for (let b = 0; b < 4; b++) t.siege.spawn('mite', b, 120);
+  t.siege.spawn('hulk', 0);
+  t.siege.spawn('beetle', 1, 10);
   t.siege.tough(6);
 });
 // The whole ring, from above and behind the core.
