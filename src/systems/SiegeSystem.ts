@@ -64,6 +64,8 @@ import {
   bindRoom,
   breachHex,
   coreHealth,
+  debugFreeze,
+  debugPlace,
   debugSpawn,
   soundHorn,
   standCore,
@@ -96,6 +98,9 @@ export const siegeView: {
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
   spawn?: (kind: EnemyId, breach?: number) => void;
+  /** TOOLS ONLY: stand a crawler at plant (x, z), and freeze the fight. */
+  place?: (kind: EnemyId, x: number, z: number, heading?: number) => void;
+  freeze?: (on: boolean) => void;
   enemies?: () => Array<{ id: number; kind: string; x: number; z: number; hp: number; phase: string }>;
   turrets?: () => Array<{ id: number; ammo: number; loaded: string | null; rounds: number; yaw: number }>;
 } = {};
@@ -634,6 +639,8 @@ export class SiegeSystem extends createSystem({}) {
     siegeView.horn = () => soundHorn();
     siegeView.core = () => standCore();
     siegeView.spawn = (kind, breach = 0) => debugSpawn(kind, breach);
+    siegeView.place = (kind, x, z, heading = 0) => debugPlace(kind, x, z, heading);
+    siegeView.freeze = (on) => debugFreeze(on);
     siegeView.enemies = () =>
       plant.siege.enemies.map((e) => ({ id: e.id, kind: e.kind, x: e.x, z: e.z, hp: e.hp, phase: e.phase }));
     siegeView.turrets = () =>

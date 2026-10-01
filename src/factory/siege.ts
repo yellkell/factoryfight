@@ -416,7 +416,7 @@ function fx(e: SiegeFx): void {
 
 export function siegeTick(dt: number): void {
   const sg = plant.siege;
-  if (sg.phase === 'off' || sg.phase === 'fallen') return;
+  if (frozen || sg.phase === 'off' || sg.phase === 'fallen') return;
   // The core just landed: the siege begins.
   if (sg.phase === 'core') {
     if (dockUnit()) beginBuild(sg.wave);
@@ -889,6 +889,32 @@ export function breachHex(): number {
 export function coreHealth(): number {
   const c = dockUnit();
   return c ? Math.max(0, c.hp / c.maxHp) : 1;
+}
+
+let frozen = false;
+/** TOOLS ONLY: hold the fight still (a portrait session). */
+export function debugFreeze(on: boolean): void {
+  frozen = on;
+}
+export function siegeFrozen(): boolean {
+  return frozen;
+}
+
+/** TOOLS ONLY: stand a crawler anywhere, already walking. */
+export function debugPlace(kind: EnemyId, x: number, z: number, heading = 0): void {
+  // A crawler is born at a breach; a portrait needs one even before the
+  // wall has cracked, so stand one in for the moment of the spawn.
+  const real = plant.siege.breaches;
+  if (real.length === 0) plant.siege.breaches = [{ x, z, nx: 0, nz: 1, wall: 1 }];
+  spawn(kind, 0);
+  plant.siege.breaches = real;
+  const e = plant.siege.enemies[plant.siege.enemies.length - 1];
+  if (!e) return;
+  e.x = x;
+  e.z = z;
+  e.heading = heading;
+  e.phase = 'walk';
+  e.phaseT = 0;
 }
 
 /** Headless: drop an enemy at a breach right now. */
