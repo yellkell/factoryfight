@@ -26,12 +26,10 @@
 import { createSystem } from '@iwsdk/core';
 import {
   AdditiveBlending,
-  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   type Texture,
-  CircleGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
@@ -43,7 +41,6 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
   PlaneGeometry,
   Points,
   Quaternion,
@@ -55,12 +52,19 @@ import {
 import { ENEMIES, HORDE_KINDS, LINES, SIEGE, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
+import { intents } from '../input/intents.js';
 import { site } from '../game/state.js';
 import { siegeFallen } from '../game/flow.js';
-import { cellCenter } from '../floor/grid.js';
+import { CELL, cellCenter } from '../floor/grid.js';
 import { ensurePlantRoot, toPlant } from '../factory/frame.js';
+import { NEON } from '../factory/neon.js';
+import { buildGate, type GateRefs } from '../factory/crystal.js';
 import {
   bindRoom,
+  grabEnemy,
+  holdEnemy,
+  holding,
+  throwEnemy,
   breachHex,
   coreHealth,
   debugFreeze,
@@ -114,6 +118,13 @@ export const siegeView: {
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
   spawn?: (kind: EnemyId, breach?: number, count?: number) => void;
+  /** THE THROW, headless: a fist closing at a plant point, carrying,
+   *  and opening with a velocity (plant m, m/s). */
+  grab?: (hand: 0 | 1, x: number, y: number, z: number) => boolean;
+  hold?: (hand: 0 | 1, x: number, y: number, z: number) => boolean;
+  throw?: (hand: 0 | 1, vx: number, vy: number, vz: number) => boolean;
+  /** Every live crawler, for a walk to look at. */
+  crawlers?: () => Array<{ uid: number; kind: number; x: number; y: number; z: number; phase: number; hp: number }>;
   /** TOOLS ONLY: a whole tide at once, already out of the walls. */
   flood?: (kind: EnemyId, count: number) => void;
   /** TOOLS ONLY: crack n breaches right now. */
@@ -161,11 +172,10 @@ const _cam = new Vector3();
 const _c = { x: 0, z: 0 };
 const Y = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
+const _hand = new Vector3();
 
 let _sphere: SphereGeometry | null = null;
 const sphereGeo = (): SphereGeometry => (_sphere ??= new SphereGeometry(1, 14, 10));
-let _box: BoxGeometry | null = null;
-const boxGeo = (): BoxGeometry => (_box ??= new BoxGeometry(1, 1, 1));
 
 function glow(color: number): MeshBasicMaterial {
   return new MeshBasicMaterial({
@@ -192,55 +202,8 @@ function trs(
 
 /* ── THE BREACH ─────────────────────────────────────────────────────────── */
 
-let _crackTex: CanvasTexture | null = null;
-/** A crack in plaster: a jagged trunk from the floor up, branching, drawn
- *  white so the material colour lights it. */
-function crackTexture(): CanvasTexture {
-  if (_crackTex) return _crackTex;
-  const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 256;
-  const g = c.getContext('2d')!;
-  g.strokeStyle = '#ffffff';
-  g.lineCap = 'round';
-  g.lineJoin = 'round';
-  g.shadowColor = '#ffffff';
-  g.shadowBlur = 10;
-  let seed = 7;
-  const rnd = (): number => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-  const branch = (x: number, y: number, ang: number, len: number, w: number, depth: number): void => {
-    g.lineWidth = w;
-    g.beginPath();
-    g.moveTo(x, y);
-    let px = x;
-    let py = y;
-    const steps = 6;
-    for (let k = 0; k < steps; k++) {
-      ang += (rnd() - 0.5) * 0.9;
-      px += Math.sin(ang) * (len / steps);
-      py -= Math.cos(ang) * (len / steps);
-      g.lineTo(px, py);
-      if (depth > 0 && rnd() < 0.35) branch(px, py, ang + (rnd() < 0.5 ? -1 : 1) * 0.9, len * 0.45, w * 0.6, depth - 1);
-    }
-    g.stroke();
-  };
-  branch(128, 256, 0, 200, 7, 2);
-  branch(110, 256, -0.7, 120, 4, 1);
-  branch(146, 256, 0.7, 120, 4, 1);
-  _crackTex = new CanvasTexture(c);
-  _crackTex.colorSpace = SRGBColorSpace;
-  return _crackTex;
-}
-
-interface BreachHw {
-  group: Group;
-  crack: MeshBasicMaterial;
-  hole: Mesh;
-  pool: MeshBasicMaterial;
-}
+/** A gate's moving parts (factory/crystal.ts builds it). */
+type BreachHw = GateRefs;
 
 /* ── particles ──────────────────────────────────────────────────────────── */
 
@@ -406,6 +369,31 @@ interface ArcHw {
 
 /* ── the system ─────────────────────────────────────────────────────────── */
 
+/**
+ * THE HAMMER's arm angle (about X; 0 level, + down) `f` seconds after
+ * it began a swing: heave up, slam down (it lands at the sim's
+ * HAMMER_SWING), a little rebound, then lift back to rest.
+ */
+const H_REST = -0.55;
+const H_UP = -1.3;
+const H_HIT = 0.56;
+function hammerAngle(f: number, t: number): number {
+  if (f < 0.13) {
+    const k = f / 0.13;
+    return H_REST + (H_UP - H_REST) * (1 - (1 - k) * (1 - k));
+  }
+  if (f < 0.22) {
+    const k = (f - 0.13) / 0.09;
+    return H_UP + (H_HIT - H_UP) * k * k;
+  }
+  if (f < 0.42) return H_HIT - 0.07 * Math.sin(((f - 0.22) / 0.2) * Math.PI);
+  if (f < 0.95) {
+    const k = (f - 0.42) / 0.53;
+    return H_HIT + (H_REST - H_HIT) * k * k * (3 - 2 * k);
+  }
+  return H_REST + 0.03 * Math.sin(t * 1.4);
+}
+
 export class SiegeSystem extends createSystem({}) {
   private root!: Group;
   private swarm!: SwarmMesh;
@@ -438,7 +426,15 @@ export class SiegeSystem extends createSystem({}) {
   private coreRing!: Mesh;
   private coreRingMat!: MeshBasicMaterial;
   private coreRingFrac = -1;
+  private clearing!: Mesh;
+  private clearingMat!: MeshBasicMaterial;
   private coreHit = 0;
+  private coreSpin = 0;
+  /** Each hand's recent path (plant m, with the clock), for the throw. */
+  private fistTrail: Array<Array<[number, number, number, number]>> = [[], []];
+  /** Whether each fist took what it holds (a walk's headless grab is
+   *  left to the walk). */
+  private fistOwns = [false, false];
   private plate!: Mesh;
   private plateCtx!: CanvasRenderingContext2D;
   private plateTex!: CanvasTexture;
@@ -577,6 +573,16 @@ export class SiegeSystem extends createSystem({}) {
     this.coreRing.visible = false;
     this.root.add(this.coreRing);
 
+    // THE CLEARING round the core, where nothing may be built: a faint
+    // square on the floor (a four-sided ring turned to sit square).
+    const half = (SIEGE.coreClear + 0.5) * CELL;
+    this.clearingMat = glow(0xffcf3a);
+    this.clearingMat.side = DoubleSide;
+    this.clearing = new Mesh(new RingGeometry(half * Math.SQRT2 - 0.012 * Math.SQRT2, half * Math.SQRT2, 4, 1, Math.PI / 4), this.clearingMat);
+    this.clearing.rotation.x = -Math.PI / 2;
+    this.clearing.visible = false;
+    this.root.add(this.clearing);
+
     // THE PLATE — the one sign the siege floats.
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -614,6 +620,18 @@ export class SiegeSystem extends createSystem({}) {
     siegeView.horn = () => soundHorn();
     siegeView.core = () => standCore();
     siegeView.spawn = (kind, breach = 0, count = 1) => debugSpawn(kind, breach, count);
+    siegeView.grab = (hand, x, y, z) => grabEnemy(hand, x, y, z);
+    siegeView.hold = (hand, x, y, z) => holdEnemy(hand, x, y, z);
+    siegeView.throw = (hand, vx, vy, vz) => throwEnemy(hand, vx, vy, vz);
+    siegeView.crawlers = () => {
+      const h = plant.siege.horde;
+      const out = [];
+      for (let i = 0; i < h.n; i++) {
+        if (h.dead[i]) continue;
+        out.push({ uid: h.uid[i], kind: h.kind[i], x: h.x[i], y: h.y[i], z: h.z[i], phase: h.phase[i], hp: h.hp[i] });
+      }
+      return out;
+    };
     siegeView.flood = (kind, count) => debugFlood(kind, count);
     siegeView.breaches = (n) => debugBreaches(n);
     siegeView.jump = (n) => debugJump(n);
@@ -677,6 +695,7 @@ export class SiegeSystem extends createSystem({}) {
       if (this.fallenT > 2.6) siegeFallen();
     }
 
+    this.tickFists(delta);
     this.drainFx();
     this.laneStrips.sync(sg.lanes, sg.open, this.clock, SIEGE.laneWidth * 0.65, breachHex());
     this.syncBreaches(false);
@@ -740,12 +759,29 @@ export class SiegeSystem extends createSystem({}) {
         break;
       }
       case 'punch': {
-        // THE RAM lands: a shock ring where it hit, steel sparks.
-        this.ring(f.x, f.z, color, 0.32, 0.35);
-        this.flash(f.x, f.y, f.z, 0xffffff, 0.12, 0.15);
-        const yaw = f.yaw ?? 0;
-        this.sparks.jet(f.x, f.y, f.z, Math.sin(yaw), Math.cos(yaw), 14, 2.2, 0.7, [0xffffff, 0xd8e4ff, 0xffd27a], 0.3, 1);
-        sfx.pistonSlam();
+        // THE HAMMER lands: a hard white flash, two shock rings out
+        // across the floor, crystal grit thrown up all round.
+        const r = f.radius ?? 0.22;
+        this.ring(f.x, f.z, 0xffffff, r * 1.1, 0.25);
+        this.ring(f.x, f.z, color, r * 1.9, 0.5);
+        this.flash(f.x, 0.05, f.z, 0xffffff, r * 0.7, 0.14);
+        this.sparks.burst(f.x, 0.04, f.z, 26, color, 2.0, 0.45, 5, 1.1);
+        this.sparks.burst(f.x, 0.04, f.z, 10, 0xffffff, 1.4, 0.3, 3, 0.8);
+        sfx.hammerSlam();
+        buzz(this.world, 'both', 0.25, 50);
+        break;
+      }
+      case 'grab':
+        // A fist closes on one: a pinch of its neon squeezed out.
+        this.sparks.burst(f.x, f.y, f.z, 6, breachHex(), 0.6, 0.2, 0, 0.5);
+        sfx.grabLatch();
+        break;
+      case 'slam': {
+        // A thrown one hits the floor.
+        const r = f.radius ?? 0.12;
+        this.ring(f.x, f.z, breachHex(), r * 1.6, 0.3);
+        this.sparks.burst(f.x, 0.03, f.z, 14, 0xffffff, 1.3, 0.3, 3, 0.8);
+        sfx.scrapCrunch(r > 0.15);
         break;
       }
       case 'shell': {
@@ -1145,7 +1181,7 @@ export class SiegeSystem extends createSystem({}) {
       const r = rangeOf(u);
       this.reach.position.set(_c.x, 0.01, _c.z);
       this.reach.scale.set(r, 1, r);
-      this.reachMat.color.set(WEAPONS[u.type as WeaponId].color);
+      this.reachMat.color.set(NEON[u.type]);
       this.reachMat.opacity = 0.45 + 0.15 * Math.sin(this.clock * 4);
       this.reach.visible = true;
     } else {
@@ -1164,16 +1200,22 @@ export class SiegeSystem extends createSystem({}) {
       if (gun.head) gun.head.rotation.y = (u.yaw ?? 0) - refs.group.rotation.y;
       let r = this.recoil.get(u.id) ?? 0;
       if (r > 0) {
-        r = Math.max(0, r - delta * (u.type === 'piston' ? 4 : 7));
+        r = Math.max(0, r - delta * 7);
         this.recoil.set(u.id, r);
       }
       if (gun.barrel) {
-        // A gun KICKS back down its bore; the piston DRIVES its ram out
-        // fast and hauls it home slow.
-        const stroke = gun.ramOut ? (r > 0.75 ? (1 - r) / 0.25 : r / 0.75) : r * r;
+        // A gun KICKS back down its bore and eases home.
         const base = gun.barrel.userData.rest ?? (gun.barrel.userData.rest = gun.barrel.position.z);
-        gun.barrel.position.z = base + (gun.ramOut ? 1 : -1) * stroke * gun.kick;
+        gun.barrel.position.z = base - r * r * gun.kick;
       }
+      if (gun.swing) gun.swing.rotation.x = hammerAngle(u.firedT ?? 99, this.clock + u.id);
+      if (gun.bob) {
+        for (const o of gun.bob) {
+          const y0 = o.userData.restY ?? (o.userData.restY = o.position.y);
+          o.position.y = y0 + 0.012 * Math.sin(this.clock * 1.7 + u.id * 1.3);
+        }
+      }
+      if (gun.spin) for (const o of gun.spin) o.rotation.y = this.clock * 0.9 + u.id;
       if (gun.flash && gun.flashMesh) {
         gun.flash.opacity = r > 0.5 ? (r - 0.5) / 0.5 : 0;
         if (u.type === 'tesla') gun.flashMesh.scale.setScalar(0.08 + r * 0.12);
@@ -1207,6 +1249,55 @@ export class SiegeSystem extends createSystem({}) {
     }
   }
 
+  /* ── the fists ──────────────────────────────────────────────────────
+   * Close a fist (or squeeze the grip) on a mite or a beetle and it is
+   * yours; open it and the thing flies with your hand's speed — taken
+   * over the last few frames, so a flick of the wrist counts.
+   */
+  private tickFists(delta: number): void {
+    const grips = this.world.playerSpaceEntities?.gripSpaces;
+    (['left', 'right'] as const).forEach((side, k) => {
+      const hand = k as 0 | 1;
+      const obj = grips?.[side]?.object3D;
+      const trail = this.fistTrail[k];
+      if (!obj || site.paused) {
+        trail.length = 0;
+        // A hand the headset lost lets go of what it held: it drops.
+        if (this.fistOwns[k] && holding(hand)) throwEnemy(hand, 0, 0, 0);
+        this.fistOwns[k] = false;
+        return;
+      }
+      toPlant(obj.getWorldPosition(_hand));
+      trail.push([this.clock, _hand.x, _hand.y, _hand.z]);
+      while (trail.length > 2 && this.clock - trail[0][0] > 0.1) trail.shift();
+      const grab = intents[side].grab;
+      if (grab.down && grabEnemy(hand, _hand.x, _hand.y, _hand.z)) {
+        this.fistOwns[k] = true;
+        buzz(this.world, side, 0.45, 35);
+      } else if (this.fistOwns[k] && !holding(hand)) {
+        this.fistOwns[k] = false; // it died in your hand
+      } else if (this.fistOwns[k]) {
+        if (grab.pressed) {
+          holdEnemy(hand, _hand.x, _hand.y, _hand.z);
+        } else {
+          // Opened: throw with the hand's velocity over the trail.
+          const a = trail[0];
+          const span = Math.max(1 / 90, this.clock - a[0]);
+          const boost = 1.25;
+          throwEnemy(
+            hand,
+            ((_hand.x - a[1]) / span) * boost,
+            ((_hand.y - a[2]) / span) * boost,
+            ((_hand.z - a[3]) / span) * boost,
+          );
+          this.fistOwns[k] = false;
+          buzz(this.world, side, 0.25, 20);
+        }
+      }
+    });
+    void delta;
+  }
+
   /* ── the breaches ───────────────────────────────────────────────────── */
 
   private syncBreaches(clear: boolean): void {
@@ -1217,45 +1308,11 @@ export class SiegeSystem extends createSystem({}) {
     for (const hw of this.breachHw) hw.group.removeFromParent();
     this.breachHw = [];
     for (const b of list) {
-      const group = new Group();
-      group.position.set(b.x + b.nx * 0.012, 0, b.z + b.nz * 0.012);
-      group.rotation.y = Math.atan2(b.nx, b.nz);
-      // The hole: dark, an arch at the foot of the plaster.
-      const hole = new Mesh(new CircleGeometry(1, 24, 0, Math.PI), new MeshBasicMaterial({ color: 0x050403 }));
-      hole.scale.set(0.24, 0.3, 1);
-      hole.position.z = 0.002;
-      group.add(hole);
-      const crack = new MeshBasicMaterial({
-        map: crackTexture(),
-        color: breachHex(),
-        transparent: true,
-        blending: AdditiveBlending,
-        depthWrite: false,
-      });
-      const crackMesh = new Mesh(new PlaneGeometry(0.9, 0.9), crack);
-      crackMesh.position.set(0, 0.45, 0.006);
-      crackMesh.renderOrder = 13;
-      group.add(crackMesh);
-      // The glow it throws on the floor in front of it.
-      const pool = glow(breachHex());
-      pool.side = DoubleSide;
-      const poolMesh = new Mesh(new CircleGeometry(1, 28), pool);
-      poolMesh.rotation.x = -Math.PI / 2;
-      poolMesh.scale.set(0.42, 0.3, 1);
-      poolMesh.position.set(0, 0.004, 0.18);
-      group.add(poolMesh);
-      // Rubble: broken plaster on the boards.
-      const rubbleMat = new MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.9, metalness: 0 });
-      for (let k = 0; k < 7; k++) {
-        const chunk = new Mesh(boxGeo(), rubbleMat);
-        const s = 0.025 + Math.random() * 0.035;
-        chunk.scale.set(s, s * 0.6, s * 1.2);
-        chunk.position.set((Math.random() - 0.5) * 0.5, s * 0.3, 0.05 + Math.random() * 0.22);
-        chunk.rotation.set(Math.random(), Math.random() * 3, Math.random());
-        group.add(chunk);
-      }
-      this.root.add(group);
-      this.breachHw.push({ group, crack, hole, pool });
+      const gate = buildGate(breachHex());
+      gate.group.position.set(b.x + b.nx * 0.004, 0, b.z + b.nz * 0.004);
+      gate.group.rotation.y = Math.atan2(b.nx, b.nz);
+      this.root.add(gate.group);
+      this.breachHw.push(gate);
     }
   }
 
@@ -1264,25 +1321,32 @@ export class SiegeSystem extends createSystem({}) {
     this.breachFlare = Math.max(0, this.breachFlare - delta * 0.8);
     const fighting = sg.phase === 'wave';
     const hex = breachHex();
-    this.breachHw.forEach((hw, k) => {
-      // A SEALED crack (a later wave's) is a faint scar in the plaster.
+    this.breachHw.forEach((g, k) => {
+      const u = g.voidMat.uniforms;
+      u.uTime.value = this.clock;
+      // SEALED (a later wave's): a dim frame, no void, nothing turning.
       if (k >= sg.open) {
-        hw.crack.opacity = 0.1;
-        hw.pool.opacity = 0.03;
-        hw.hole.scale.set(0.04, 0.05, 1);
+        g.voidMesh.visible = false;
+        g.tube.color.setHex(hex).multiplyScalar(0.25);
+        g.halo.opacity = 0.05;
+        g.glass.emissiveIntensity = 0.05;
+        g.pool.opacity = 0.02;
         return;
       }
-      // Build phase: the crack breathes — a warning, not yet a door.
-      // Wave: it is OPEN, the hole yawns, the light is steady and hot.
+      // Build phase: the void gathers, slow, breathing — a warning.
+      // Wave: it pours — fast, hot, flaring as each one comes through.
       const breathe = 0.5 + 0.5 * Math.sin(this.clock * (fighting ? 9 : 2.4));
-      hw.crack.color.set(hex);
-      hw.pool.color.set(hex);
-      hw.crack.opacity = Math.min(1, (fighting ? 0.75 : 0.35) + breathe * 0.25 + this.breachFlare * 0.5);
-      hw.pool.opacity = (fighting ? 0.35 : 0.12) + breathe * 0.1 + this.breachFlare * 0.2;
-      const open = fighting ? 1 : 0.25;
-      const s = hw.hole.scale;
-      s.x += (0.24 * open + 0.02 - s.x) * Math.min(1, delta * 4);
-      s.y += (0.3 * open + 0.02 - s.y) * Math.min(1, delta * 4);
+      const want = fighting ? 1 : 0.35;
+      u.uOpen.value += (Math.min(1.4, want + this.breachFlare * 0.4) - u.uOpen.value) * Math.min(1, delta * 3);
+      g.voidMesh.visible = true;
+      const lit = Math.min(1, (fighting ? 0.8 : 0.5) + breathe * 0.2 + this.breachFlare * 0.4);
+      g.tube.color.setHex(hex).multiplyScalar(lit);
+      g.halo.opacity = 0.12 + 0.2 * lit;
+      g.glass.emissiveIntensity = 0.12 + 0.25 * lit;
+      g.pool.opacity = (fighting ? 0.3 : 0.1) + breathe * 0.08 + this.breachFlare * 0.2;
+      const spin = (fighting ? 1.6 : 0.4) * delta;
+      g.rings[0].rotation.z += spin;
+      g.rings[1].rotation.z -= spin * 1.4;
     });
   }
 
@@ -1291,6 +1355,7 @@ export class SiegeSystem extends createSystem({}) {
   private tickCore(delta: number): void {
     const core = dockUnit();
     if (!core) {
+      this.clearing.visible = false;
       this.coreRing.visible = false;
       this.plate.visible = false;
       return;
@@ -1306,6 +1371,27 @@ export class SiegeSystem extends createSystem({}) {
     this.coreHit = Math.max(0, this.coreHit - delta * 3);
     this.coreRing.position.set(_c.x, 0.015, _c.z);
     this.coreRing.visible = true;
+    this.clearing.position.set(_c.x, 0.006, _c.z);
+    this.clearing.visible = true;
+    this.clearingMat.opacity = plant.siege.phase === 'build' ? 0.3 + 0.1 * Math.sin(this.clock * 2) : 0.1;
+    const crys = liveUnitRefs.get(core.id)?.core;
+    if (crys) {
+      // THE CRYSTAL: it turns slower, sinks lower and burns dimmer the
+      // more the tide has got into it; its cracks open in three stages.
+      this.coreSpin += delta * (0.25 + 0.45 * frac);
+      crys.spin.rotation.y = this.coreSpin;
+      crys.spin.position.y = 0.5 + 0.12 * frac + 0.018 * Math.sin(this.clock * 1.3);
+      crys.rings.forEach((g, k) => {
+        g.rotation.y = this.coreSpin * (1.4 + k * 0.6) * (k % 2 ? -1 : 1);
+        g.parent!.position.y = crys.spin.position.y;
+      });
+      const flicker = frac < 0.25 ? 0.55 + 0.45 * Math.random() : 1;
+      crys.glass.emissiveIntensity = (0.06 + 0.3 * frac) * flicker + this.coreHit * 0.5;
+      crys.heart.opacity = (0.2 + 0.7 * frac) * flicker + this.coreHit * 0.4;
+      crys.ringMat.opacity = 0.3 + 0.7 * frac;
+      crys.edge.color.setHex(NEON.dock).multiplyScalar((0.3 + 0.7 * frac) * flicker);
+      crys.cracks.forEach((g, k) => (g.visible = frac < [0.75, 0.5, 0.25][k]));
+    }
     _col.set(frac > 0.5 ? 0x6cff9a : frac > 0.25 ? 0xffc23a : 0xff4030);
     if (this.coreHit > 0) _col.lerp(_tmpWhite, this.coreHit * 0.6);
     this.coreRingMat.color.copy(_col);

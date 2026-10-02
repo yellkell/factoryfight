@@ -14,42 +14,80 @@ Something lives behind your walls. Place your core, and it comes for it.
   laid once, when the core lands. Wave 1 opens one lane; later waves open
   more. A lane that hasn't opened yet is drawn faint and dashed, so you can
   see where it will come.
-- **Build TOWERS beside the lanes,** anywhere on the floor except on a lane.
-  Towers aim and fire on their own:
+- **Build TOWERS beside the lanes,** anywhere on the floor except on a lane
+  or in the core's **clearing** (the faint gold square two cells round it):
+  you defend the lanes, not the doorstep. While a tower is in your hand, the
+  circle it will shoot within is drawn on the floor under it (the mortar's
+  blind spot left dark). Towers aim and fire on their own:
 
   | Tower | Coins | What it does |
   | --- | --- | --- |
-  | TURRET | 50 | rapid tracer slugs, a mite a shot |
-  | PISTON | 60 | a ram that shoves the front of a column back down its lane and stuns it |
+  | TURRET | 50 | rapid tracer slugs at one target |
+  | HAMMER | 70 | heaves up and smashes the lane beside it: everything under the head is flattened and stunned |
   | FLAMER | 80 | a cone of fire that sets the whole column (and the floor) burning |
   | TESLA COIL | 100 | a bolt that chains through ten of them at once |
   | MORTAR | 120 | lobs shells into the thick of a lane; long reach, blind up close |
 
-- **Touch a tower to UPGRADE or SELL it.** Three levels: each costs a share of
-  the tower's price and buys damage, reach and rate of fire, shown on the
-  panel as now → next. An upgraded tower stands a little bigger and wears a
-  neon ring per level. Selling returns 70% of everything you put in.
-- **Coins** come from kills (1 a mite, 5 a beetle, 60 a hulk) and from every
-  wave you clear (40 + 15 × the wave). You start with 150.
+- **Touch a tower to UPGRADE or SELL it.** The panel is just the tower, its
+  level dots and two big buttons: UPGRADE (with its price) and SELL (with what
+  you get back). Three levels, each buying damage, reach and rate of fire. An
+  upgraded tower stands a little bigger and wears a neon ring per level.
+  Selling returns 70% of everything you put in.
+- **Coins are tight.** Kills pay a little (a fifth of a coin a mite, 2 a
+  beetle, 25 a hulk); clearing a wave pays more (40 + 15 × the wave). You
+  start with 120: two turrets and change.
+- **They get tougher every wave.** Hit points grow with the wave
+  (× 1 + 0.15w + 0.11w² for wave index w): over twice as tough by wave 4,
+  four and a half times by wave 6, eleven by the last. A level-1 turret
+  one-shots a mite only in the first wave; after that, upgrade or lose. `tools/balance-bot.mjs` plays the whole
+  ladder the blunt way (spend everything, every wave) and finishes it at
+  about half a core.
 - **They come in TIDES.** When the horn goes they pour out of the open cracks
-  and march their lanes: a hundred-odd in the first wave, thousands by the
+  and march their lanes: a hundred in the first wave, thousands by the
   end. There are three kinds, all the same neon-legged body:
-  - **MITE:** the tide itself. Tiny, quick, and one hit kills it.
+  - **MITE:** the tide itself. Tiny and quick.
   - **BEETLE:** a lime-green shell that takes a few hits.
   - **HULK:** a big orange bruiser in the middle of the tide.
-- **Whatever reaches the core takes a bite and is gone** (1 for a mite, 4 for
-  a beetle, 25 for a hulk, out of 100). The core never heals.
+- **Pick them up and throw them.** Close a fist (or squeeze the grip) on a
+  MITE or a BEETLE and it's yours, thrashing in your hand; the towers hold
+  their fire on it. Open your hand and it flies with your hand's speed. Thrown
+  hard, it breaks where it lands and takes the ones it lands on with it; set
+  down gently, it lives and scrabbles back to its lane. A HULK is too big.
+- **Whatever reaches the core takes a bite and is gone** (1 for a mite, 5 for
+  a beetle, 30 for a hulk, out of 100). The core never heals: its crystal
+  cracks, dims, slows and sinks as it is hurt.
 - **They come apart.** Each death bursts into neon shards that bounce across
   the floor, leaves a glowing stain, and pops. The core's plate keeps the body
   count.
-- **Ten waves,** each adding a tower or a threat, up to THE LAST SHIFT (3,600
-  mites, 200 beetles, 6 hulks). After that comes OVERTIME, which never ends.
+- **Ten waves,** each adding a tower or a threat, up to THE LAST SHIFT (4,680
+  mites, 260 beetles, 7 hulks). After that comes OVERTIME, which never ends.
 
-## Neon
+## Crystal & hex
 
-Every tower is near-black glass traced in neon, standing on a ring of the same
-light: TURRET red, PISTON steel white, FLAMER flame orange, TESLA COIL violet,
-MORTAR teal, and the CORE gold. The tide and its lanes are magenta. The menus
+Every tower is holographic geometry: faceted prisms of dark glass, their edges
+traced in neon, standing on a glowing **hex pad** flat on your floor (no legs,
+nothing plugged in), with whatever does the shooting mounted on a turntable on
+top of it.
+
+- **TURRET** (red): a cut obelisk with a turntable on top, and a crystal lance
+  in its yoke that turns to its target.
+- **HAMMER** (white): a crystal pylon with a long arm and a great hex-prism
+  head that heaves up and slams down.
+- **FLAMER** (orange): a brazier of three leaning shards round a stem, and a
+  cut cone of glass on the stem's turntable that pours the fire.
+- **TESLA COIL** (violet): a twisted spire of stacked prisms, its point run up
+  into an orb held in two crossed rings.
+- **MORTAR** (teal): six standing shards round a pedestal, and on it a fat
+  hexagonal tube cocked up at the sky.
+- **THE CORE** (gold): a big crystal hovering over its pad, turning inside
+  three orbiting halo rings.
+- **THE GATES** (magenta), where the tide comes through your wall: a
+  hexagonal portal flush against the plaster, its frame of dark crystal beams,
+  two hex rings turning against each other inside it, and a void that swirls
+  slowly while it gathers (build) and hard and bright while they pour out. A
+  gate that hasn't opened yet is an empty, dim frame.
+
+The tide and its lanes are magenta. The menus
 use no drawings: at load, a small studio (`src/ui/pictures.ts`) photographs
 every tower with the same builders the floor uses.
 
@@ -71,7 +109,7 @@ hands, everything is **poked with your right index finger**.
 
   Header and tiles are one flat panel, so nothing on it can hide anything
   else.
-- **Touch a tower** (either hand) to open its panel: UPGRADE, SELL, CLOSE, with
+- **Touch a tower** (either hand) to open its panel: UPGRADE, SELL and ✕, with
   its reach drawn on the floor while it's open.
 - **Panels come to you.** Pause and tower panels appear within arm's reach,
   and you press them by touch.
@@ -97,8 +135,11 @@ npm run typecheck
 npm run dev &
 node tools/siege-walk.mjs   # end to end: lanes, wave 1, coins, upgrade, sell, a leak, the fall
 node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a tower to upgrade and sell
-node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 2,600-mite wave vs a ring of towers
+node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 3,300-mite wave vs a ring of towers
+node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
+node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
+node tools/lane-look.mjs    # the lanes from above, a crowd going round a bend, a gate open and sealed
 node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
 ```
@@ -106,16 +147,17 @@ node tools/floor-walk.mjs   # the hazard-tape floor
 ## Map of the parts
 
 ```
-src/factory/lanes.ts      THE LANES: routed over the grid from each crack to the core
+src/factory/lanes.ts      THE LANES: routed over the grid from each crack to the core, corners rounded
 src/factory/horde.ts      THE HORDE: every crawler as typed-array columns (cap 4,096),
                           walking its lane, and a spatial hash for splash and chains
+src/factory/crystal.ts    CRYSTAL & HEX: the core and the five towers' models
 src/factory/siege.ts      the fight's sim: waves (streams), lanes, leaks, coins, the five
                           towers and their levels, shells, bolts, burning
 src/systems/laneStrips.ts the lanes drawn: neon roads with chevrons flowing to the core
 src/systems/swarm.ts      the horde drawn: every crawler in ONE instanced draw call with
                           its legs animated on the GPU; shards and floor splats
 src/systems/SiegeSystem.ts  the fight drawn and voiced: the swarm, deaths, tracers,
-                          lobbed shells, bolts, fire, the ram, level rings, the core's plate
+                          lobbed shells, bolts, fire, the hammer's swing, level rings, the core's crystal
 src/systems/HandSystem.ts reads controllers or hands into intents; owns the palm panel
 src/config.ts             THE SIEGE: enemies, TOWERS, costs and levels, the ten waves
 ```

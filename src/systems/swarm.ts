@@ -34,7 +34,7 @@ import {
   type Group,
 } from 'three';
 import { ENEMIES, HORDE_KINDS } from '../config.js';
-import { HORDE_CAP, PHASE_EMERGE, type Horde } from '../factory/horde.js';
+import { HORDE_CAP, PHASE_EMERGE, PHASE_FLY, PHASE_HELD, type Horde } from '../factory/horde.js';
 
 /** The hostile body: near-black, so the neon carries the shape. */
 const BODY = 0x0b0a10;
@@ -171,6 +171,7 @@ attribute vec3 aHip;
 attribute vec4 iPose;   // x, z, heading, radius
 attribute vec4 iAnim;   // stride, flash, burn, rise
 attribute float iKind;
+attribute vec2 iAir;    // height off the floor, flailing (0..1)
 uniform float uTime;
 varying float vGlow;
 varying vec3 vN;
@@ -186,6 +187,8 @@ void main() {
   // Legs cycle with distance walked (so a stopped crawler stands still),
   // plus a nervous twitch so a biting crowd isn't frozen.
   float ph = stride * 9.0 / max(iPose.w * 8.0, 0.4) + aLeg.x * 3.14159;
+  // In your fist or in the air, the legs thrash.
+  ph = mix(ph, uTime * 26.0 + aLeg.x * 3.14159 + iPose.x * 7.0, iAir.y);
   if (aLeg.y > 0.5) {
     vec2 rel = p.xz - aHip.xz;
     float reach = clamp(length(rel) / 1.4, 0.0, 1.0);
@@ -206,6 +209,7 @@ void main() {
   vec3 w = vec3(p.x * ch + p.z * sh, p.y, -p.x * sh + p.z * ch) * s;
   vec3 wn = vec3(n.x * ch + n.z * sh, n.y, -n.x * sh + n.z * ch);
   w.x += iPose.x;
+  w.y += iAir.x;
   w.z += iPose.y;
   vec4 mv = modelViewMatrix * vec4(w, 1.0);
   vN = normalize(normalMatrix * wn);
@@ -251,6 +255,7 @@ export class SwarmMesh {
   private readonly pose: InstancedBufferAttribute;
   private readonly anim: InstancedBufferAttribute;
   private readonly kind: InstancedBufferAttribute;
+  private readonly air: InstancedBufferAttribute;
   private readonly mat: ShaderMaterial;
 
   constructor(parent: Group) {
@@ -265,6 +270,8 @@ export class SwarmMesh {
     this.geo.setAttribute('iPose', this.pose);
     this.geo.setAttribute('iAnim', this.anim);
     this.geo.setAttribute('iKind', this.kind);
+    this.air = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 2), 2).setUsage(DynamicDrawUsage);
+    this.geo.setAttribute('iAir', this.air);
     this.geo.instanceCount = 0;
     this.mat = new ShaderMaterial({
       vertexShader: SWARM_VERT,
@@ -287,6 +294,7 @@ export class SwarmMesh {
     const P = this.pose.array as Float32Array;
     const A = this.anim.array as Float32Array;
     const K = this.kind.array as Float32Array;
+    const R = this.air.array as Float32Array;
     const radii = HORDE_KINDS.map((k) => ENEMIES[k].radius);
     let n = 0;
     for (let i = 0; i < h.n; i++) {
@@ -301,6 +309,9 @@ export class SwarmMesh {
       A[o + 2] = h.burnT[i] > 0 ? 1 : 0;
       A[o + 3] = h.phase[i] === PHASE_EMERGE ? Math.min(1, h.phaseT[i] * 1.6) : 1;
       K[n] = h.kind[i];
+      const ph = h.phase[i];
+      R[n * 2] = h.y[i];
+      R[n * 2 + 1] = ph === PHASE_HELD || ph === PHASE_FLY ? 1 : 0;
       n++;
     }
     this.geo.instanceCount = n;
@@ -312,6 +323,9 @@ export class SwarmMesh {
       this.pose.addUpdateRange(0, n * 4);
       this.anim.addUpdateRange(0, n * 4);
       this.kind.addUpdateRange(0, n);
+      this.air.clearUpdateRanges();
+      this.air.addUpdateRange(0, n * 2);
+      this.air.needsUpdate = true;
       this.pose.needsUpdate = true;
       this.anim.needsUpdate = true;
       this.kind.needsUpdate = true;

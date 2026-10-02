@@ -149,13 +149,13 @@ await page.evaluate(() => {
   window.__tubes.plant.timeScale(1);
 });
 
-// Close in: pistons and flamers; further out: turrets and coils; the
+// Close in: hammers and flamers; further out: turrets and coils; the
 // mortars behind the core, where their blind spot is covered.
 const ring = [
-  ['piston', 0, -1],
-  ['piston', 0, 1],
-  ['piston', -1, 0],
-  ['piston', 1, 0],
+  ['hammer', 0, -1],
+  ['hammer', 0, 1],
+  ['hammer', -1, 0],
+  ['hammer', 1, 0],
   ['flamer', -1, -1],
   ['flamer', 1, 1],
   ['turret', 1, -1],
@@ -166,12 +166,26 @@ const ring = [
   ['tesla', 0, 2],
   ['mortar', 2, 2],
   ['mortar', -2, -2],
+  // …and the second ring a player has by wave 7 (the balance bot stands
+  // about two dozen): further out along every side.
+  ['turret', 4, 0],
+  ['turret', -4, 0],
+  ['turret', 0, 4],
+  ['turret', 0, -4],
+  ['flamer', 3, -3],
+  ['flamer', -3, 3],
+  ['tesla', 3, 3],
+  ['tesla', -3, -3],
+  ['hammer', 4, 2],
+  ['hammer', -4, -2],
+  ['mortar', 2, -4],
+  ['mortar', -2, 4],
 ];
 const stood = await page.evaluate(
   ({ ring, ci, cj }) => {
     const near = (w, i, j) => {
     // The cell asked for, or the nearest free one off every lane.
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < 6; r++) {
       for (let di = -r; di <= r; di++) {
         for (let dj = -r; dj <= r; dj++) {
           if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
@@ -181,12 +195,25 @@ const stood = await page.evaluate(
     }
     return null;
   };
-    window.__tubes.siege.coins(5000);
+    window.__tubes.siege.coins(9000);
     return ring.filter(([w, di, dj]) => near(w, ci + di, cj + dj)).length;
   },
   { ring, ci: core.i, cj: core.j },
 );
 check(stood === ring.length, `a ring of ${stood}/${ring.length} towers round the core, off the lanes`);
+// By wave 7 a player has had thousands of coins through their hands:
+// the ring is upgraded to the top, the way theirs would be.
+const top = await page.evaluate(() => {
+  const t = window.__tubes;
+  for (const tw of t.siege.turrets()) {
+    t.menu.inspect(tw.id);
+    t.menu.act('box:upgrade');
+    t.menu.act('box:upgrade');
+  }
+  t.menu.act('box:close');
+  return t.siege.turrets().filter((tw) => tw.level === 3).length;
+});
+check(top === ring.length, `and every one of them upgraded to level 3 (${top}/${ring.length})`);
 
 /* ── the tide ──────────────────────────────────────────────────────────── */
 

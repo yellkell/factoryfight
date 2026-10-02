@@ -34,9 +34,9 @@ import { floorLayout } from '../floor/plan.js';
 import { mulberry32 } from '../game/rng.js';
 import type { Wall } from '../room/walls.js';
 import { PLANT_SCALE } from './frame.js';
-import { HORDE_CAP, PHASE_EMERGE, PHASE_WALK } from './horde.js';
+import { HORDE_CAP, PHASE_EMERGE, PHASE_FLY, PHASE_HELD, PHASE_RETURN, PHASE_WALK } from './horde.js';
 import { laneAt, laneCellSet, layLanes } from './lanes.js';
-import { dockUnit, isWeapon, placeUnit, removeUnit } from './sim.js';
+import { dockUnit, isWeapon, noBuild, placeUnit, removeUnit } from './sim.js';
 import { plant, unitAtCell, type Breach, type SiegeFx, type Unit } from './state.js';
 
 /* ── the room, as the siege sees it ─────────────────────────────────────── */
@@ -99,6 +99,7 @@ export function startSiege(atWave = 0): void {
   sg.wave = Math.max(0, atWave);
   sg.kills = 0;
   sg.coins = SIEGE.startCoins;
+  sg.coinDust = 0;
   sg.horde.clear();
   sg.streams = [];
   sg.won = sg.wave >= WAVES.length;
@@ -151,10 +152,9 @@ function layTheLanes(): void {
   plant.generation++;
 }
 
-/** Is (i, j) on a lane? Nothing is built there. */
+/** Is (i, j) on a lane, or in the core's clearing? Nothing is built there. */
 export function laneBlocked(i: number, j: number): boolean {
-  const cells = plant.siege.laneCells;
-  return cells.size > 0 && cells.has((i + 4096) * 8192 + (j + 4096));
+  return noBuild(i, j);
 }
 
 function beginBuild(n: number): void {
@@ -296,10 +296,12 @@ const KIND_INDEX: Record<EnemyId, number> = Object.fromEntries(HORDE_KINDS.map((
 const NO_LANE = 255;
 
 /** Weapons by index — what killed a crawler, in the horde's death log. */
-export const WEAPON_ORDER: WeaponId[] = ['turret', 'mortar', 'tesla', 'flamer', 'piston'];
-const W: Record<WeaponId, number> = { turret: 0, mortar: 1, tesla: 2, flamer: 3, piston: 4 };
+export const WEAPON_ORDER: WeaponId[] = ['turret', 'mortar', 'tesla', 'flamer', 'hammer'];
+const W: Record<WeaponId, number> = { turret: 0, mortar: 1, tesla: 2, flamer: 3, hammer: 4 };
 /** The death log's cause for one that reached the core. */
 export const LEAK = 9;
+/** Cause of death: thrown (it hit the floor, or was hit by one that did). */
+export const THROWN = 8;
 
 function fx(e: SiegeFx): void {
   const list = plant.siege.fx;
@@ -391,7 +393,9 @@ function spawn(kind: EnemyId, laneIdx: number): number {
   const lane = sg.lanes[k];
   if (!lane) return -1;
   const h = sg.horde;
-  const i = h.add(KIND_INDEX[kind], lane.pts[0], lane.pts[1], ENEMIES[kind].hp, 0, k);
+  const w = plant.siege.wave;
+  const hp = ENEMIES[kind].hp * (1 + SIEGE.hpPerWave * w + SIEGE.hpPerWave2 * w * w);
+  const i = h.add(KIND_INDEX[kind], lane.pts[0], lane.pts[1], hp, 0, k);
   if (i < 0) return -1;
   // A little behind the crack's mouth, so it climbs out rather than pops.
   h.s[i] = -Math.random() * 0.1;
@@ -435,6 +439,16 @@ function tickHorde(dt: number): void {
         continue;
       }
     }
+    const ph = h.phase[i];
+    if (ph === PHASE_HELD) continue;
+    if (ph === PHASE_FLY) {
+      fly(i, dt);
+      continue;
+    }
+    if (ph === PHASE_RETURN) {
+      scrabble(i, dt);
+      continue;
+    }
     if (h.breach[i] === NO_LANE) continue;
     const lane = sg.lanes[h.breach[i]];
     if (!lane) continue;
@@ -466,6 +480,194 @@ function tickHorde(dt: number): void {
     const d = Math.atan2(Math.sin(want - h.heading[i]), Math.cos(want - h.heading[i]));
     h.heading[i] += d * Math.min(1, dt * 8);
   }
+}
+
+/* ── THE THROW ──────────────────────────────────────────────────────────
+ * Your own hands are a weapon of last resort: close a fist on a mite or
+ * a beetle (not a hulk) and it is yours — it thrashes in your grip, the
+ * towers hold their fire on it, and when you open your hand it flies
+ * with your hand's speed. Where it lands it breaks, and so does what it
+ * lands on; whatever survives scrabbles back to its lane.
+ */
+
+/** How close a fist must be to take one (plant m, body to hand). */
+export const GRAB_REACH = 0.16;
+/** Gravity in plant metres (the room's 9.8, at the plant's scale). */
+const G = 9.8 / 0.7;
+/** Damage on landing per (plant m/s) of speed past a gentle drop. */
+const IMPACT = 34;
+const SOFT = 1.2;
+
+const held: [number, number] = [0, 0];
+const heldAt: [number, number] = [-1, -1];
+
+/** Who a fist is holding (−1 none) — looked up by uid each time. */
+function heldIndex(hand: 0 | 1): number {
+  if (!held[hand]) return -1;
+  const h = plant.siege.horde;
+  const i = h.find(held[hand], heldAt[hand]);
+  if (i < 0 || h.phase[i] !== PHASE_HELD) {
+    held[hand] = 0;
+    return -1;
+  }
+  heldAt[hand] = i;
+  return i;
+}
+
+/** A fist closes at (x, y, z): take the nearest mite or beetle in reach. */
+export function grabEnemy(hand: 0 | 1, x: number, y: number, z: number): boolean {
+  if (heldIndex(hand) >= 0) return false;
+  const h = plant.siege.horde;
+  let best = -1;
+  let bestD = GRAB_REACH;
+  for (let k = 0; k < h.n; k++) {
+    if (h.dead[k] || h.phase[k] === PHASE_HELD || HORDE_KINDS[h.kind[k]] === 'hulk') continue;
+    const r = SPECS[h.kind[k]].radius;
+    const d = Math.hypot(h.x[k] - x, h.y[k] + r * 0.6 - y, h.z[k] - z) - r;
+    if (d < bestD) {
+      bestD = d;
+      best = k;
+    }
+  }
+  if (best < 0) return false;
+  h.phase[best] = PHASE_HELD;
+  h.kT[best] = 0;
+  h.stunT[best] = 0;
+  held[hand] = h.uid[best];
+  heldAt[hand] = best;
+  holdEnemy(hand, x, y, z);
+  fx({ kind: 'grab', x, y, z });
+  return true;
+}
+
+/** Carry it with the fist (call every frame while it is held). */
+export function holdEnemy(hand: 0 | 1, x: number, y: number, z: number): boolean {
+  const i = heldIndex(hand);
+  if (i < 0) return false;
+  const h = plant.siege.horde;
+  const r = SPECS[h.kind[i]].radius;
+  h.x[i] = x;
+  h.z[i] = z;
+  h.y[i] = Math.max(0, y - r * 0.6);
+  return true;
+}
+
+/** The fist opens: it goes with (vx, vy, vz) plant m/s. */
+export function throwEnemy(hand: 0 | 1, vx: number, vy: number, vz: number): boolean {
+  const i = heldIndex(hand);
+  held[hand] = 0;
+  if (i < 0) return false;
+  const h = plant.siege.horde;
+  const sp = Math.hypot(vx, vy, vz);
+  const k = sp > 12 ? 12 / sp : 1;
+  h.vx[i] = vx * k;
+  h.vy[i] = vy * k;
+  h.vz[i] = vz * k;
+  h.phase[i] = PHASE_FLY;
+  h.phaseT[i] = 0;
+  return true;
+}
+
+/** Is a fist holding one? */
+export function holding(hand: 0 | 1): boolean {
+  return heldIndex(hand) >= 0;
+}
+
+/** One step of the arc; on the floor, the landing. */
+function fly(i: number, dt: number): void {
+  const h = plant.siege.horde;
+  h.vy[i] -= G * dt;
+  h.x[i] += h.vx[i] * dt;
+  h.y[i] += h.vy[i] * dt;
+  h.z[i] += h.vz[i] * dt;
+  if (Math.abs(h.vx[i]) + Math.abs(h.vz[i]) > 0.05) h.heading[i] += dt * 14;
+  if (h.y[i] > 0) return;
+  // THE LANDING.
+  const speed = Math.hypot(h.vx[i], h.vy[i], h.vz[i]);
+  h.y[i] = 0;
+  h.vx[i] = 0;
+  h.vy[i] = 0;
+  h.vz[i] = 0;
+  const dmg = Math.max(0, speed - SOFT) * IMPACT;
+  const x = h.x[i];
+  const z = h.z[i];
+  const me = h.uid[i];
+  if (dmg > 0) {
+    // What it lands on takes the blow too.
+    const r = 0.09 + Math.min(0.12, speed * 0.015);
+    h.near(x, z, r, (k) => {
+      if (h.uid[k] !== me) hurt(k, dmg * 0.6, THROWN);
+    });
+    fx({ kind: 'slam', x, y: 0.02, z, radius: r });
+  }
+  // (`near` can sweep nothing, so i is still i.)
+  h.phase[i] = PHASE_RETURN;
+  h.phaseT[i] = 0;
+  h.stunT[i] = 0.5;
+  hurt(i, dmg, THROWN);
+}
+
+/** Landed and alive: dazed a moment, then back to the nearest point of
+ *  its lane on foot; there it falls in and marches on. */
+function scrabble(i: number, dt: number): void {
+  const sg = plant.siege;
+  const h = sg.horde;
+  if (h.stunT[i] > 0) {
+    h.stunT[i] -= dt;
+    return;
+  }
+  // Pick (once) the lane and the place on it to make for.
+  if (h.phaseT[i] < 1e6) {
+    let best = Infinity;
+    let bl = -1;
+    let bs = 0;
+    sg.lanes.forEach((l, li) => {
+      if (li >= Math.max(1, sg.open)) return;
+      const p = l.pts;
+      for (let k = 0; k + 1 < p.length / 2; k++) {
+        const ax = p[k * 2];
+        const az = p[k * 2 + 1];
+        const dx = p[k * 2 + 2] - ax;
+        const dz = p[k * 2 + 3] - az;
+        const L2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((h.x[i] - ax) * dx + (h.z[i] - az) * dz) / L2));
+        const d = Math.hypot(ax + dx * t - h.x[i], az + dz * t - h.z[i]);
+        if (d < best) {
+          best = d;
+          bl = li;
+          bs = l.cum[k] + Math.sqrt(L2) * t;
+        }
+      }
+    });
+    if (bl < 0) {
+      h.phase[i] = PHASE_WALK; // no lanes: it just stands
+      h.breach[i] = NO_LANE;
+      return;
+    }
+    h.breach[i] = bl;
+    h.s[i] = Math.max(SIEGE.emergeDepth, bs);
+    h.lane[i] = Math.random() - 0.5;
+    h.phaseT[i] = 1e6 + 1;
+  }
+  const lane = sg.lanes[h.breach[i]];
+  if (!lane) return;
+  laneAt(lane, h.s[i], _p);
+  const side = h.lane[i] * SIEGE.laneWidth;
+  const tx = _p.x - _p.dz * side;
+  const tz = _p.z + _p.dx * side;
+  const dx = tx - h.x[i];
+  const dz = tz - h.z[i];
+  const d = Math.hypot(dx, dz);
+  const step = SPECS[h.kind[i]].speed * 1.3 * dt;
+  h.heading[i] = Math.atan2(dx, dz);
+  h.stride[i] += step;
+  if (d <= step) {
+    h.phase[i] = PHASE_WALK;
+    place(i);
+    return;
+  }
+  h.x[i] += (dx / d) * step;
+  h.z[i] += (dz / d) * step;
 }
 
 /** Something reached the core. */
@@ -537,6 +739,8 @@ function pickTarget(x: number, z: number, range: number, minRange = 0): number {
   const m2 = minRange * minRange;
   for (let i = 0; i < h.n; i++) {
     if (h.dead[i] || (h.phase[i] === PHASE_EMERGE && h.phaseT[i] < 0.3)) continue;
+    // Not the one in your hand, nor one in the air.
+    if (h.phase[i] === PHASE_HELD || h.phase[i] === PHASE_FLY) continue;
     const dx = h.x[i] - x;
     const dz = h.z[i] - z;
     const d2 = dx * dx + dz * dz;
@@ -567,6 +771,11 @@ function tickWeapons(dt: number): void {
     u.cool = Math.max(0, (u.cool ?? 0) - dt);
     u.firedT = (u.firedT ?? 99) + dt;
     u.look = (u.look ?? 0) - dt;
+    if (u.strike) {
+      u.strike.t -= dt;
+      if (u.strike.t <= 0) smash(u);
+      continue; // mid-swing: it neither turns nor fires
+    }
     cellCenter(u.i, u.j, _c);
     const range = rangeOf(u);
     // Keep the one it has while it is alive and in reach; look again
@@ -587,12 +796,12 @@ function tickWeapons(dt: number): void {
     u.tgtAt = ti;
     if (ti < 0) continue;
     const want = Math.atan2(h.x[ti] - _c.x, h.z[ti] - _c.z);
-    const aimed = slew(u, want, dt, w === 'flamer' || w === 'piston' ? 0.5 : 0.3);
+    const aimed = slew(u, want, dt, w === 'flamer' ? 0.5 : 0.3);
     if (!aimed || u.cool > 0) continue;
     u.cool = spec.cycleS / lv(u).rate;
     u.firedT = 0;
     const yaw = u.yaw ?? want;
-    const reach = w === 'mortar' ? 0.22 : w === 'piston' ? 0.12 : 0.18;
+    const reach = w === 'mortar' ? 0.22 : 0.18;
     const mx = _c.x + Math.sin(yaw) * reach;
     const mz = _c.z + Math.cos(yaw) * reach;
     const my = spec.muzzleY;
@@ -600,8 +809,8 @@ function tickWeapons(dt: number): void {
       flame(u, mx, my, mz, yaw);
       continue;
     }
-    if (w === 'piston') {
-      punch(u, mx, mz, yaw);
+    if (w === 'hammer') {
+      swing(u, ti);
       continue;
     }
     fx({ kind: 'fire', x: mx, y: my, z: mz, weapon: w, unit: u.id, yaw });
@@ -685,33 +894,38 @@ function knock(i: number, dist: number, kt: number, stun: number): void {
   h.stunT[i] = Math.max(h.stunT[i], stun);
 }
 
-/** PISTON: the ram drives out and throws the whole front rank back the
- *  way it came — everything in a short cone ahead of it. */
-function punch(u: Unit, mx: number, mz: number, yaw: number): void {
-  const spec = WEAPONS.piston;
+/** HAMMER: the head goes up. It lands HAMMER_SWING seconds later, on
+ *  the spot the target was walking into. */
+const HAMMER_SWING = 0.22;
+function swing(u: Unit, ti: number): void {
+  const sg = plant.siege;
+  const h = sg.horde;
+  let x = h.x[ti];
+  let z = h.z[ti];
+  // Lead it: by the time the head comes down it has walked on.
+  const lane = h.breach[ti] !== NO_LANE ? sg.lanes[h.breach[ti]] : undefined;
+  if (lane) {
+    laneAt(lane, h.s[ti] + SPECS[h.kind[ti]].speed * h.pace[ti] * HAMMER_SWING, _p);
+    x = _p.x;
+    z = _p.z;
+  }
+  u.strike = { x, z, t: HAMMER_SWING };
+}
+
+/** The head comes down: everything under it is flattened and stunned. */
+function smash(u: Unit): void {
+  const st = u.strike;
+  if (!st) return;
+  u.strike = undefined;
+  const spec = WEAPONS.hammer;
   const h = plant.siege.horde;
-  const reach = rangeOf(u);
-  const cone = spec.cone ?? 0.7;
+  const r = spec.splash ?? 0.2;
   const dmg = damageOf(u);
-  cellCenter(u.i, u.j, _c);
-  h.near(_c.x, _c.z, reach + MAX_R, (i, d) => {
-    const a = Math.atan2(h.x[i] - _c.x, h.z[i] - _c.z);
-    const off = Math.abs(Math.atan2(Math.sin(a - yaw), Math.cos(a - yaw)));
-    if (off > cone && d > 0.12) return;
-    hurt(i, dmg, W.piston);
-    if (h.dead[i]) return;
-    const give = SPECS[h.kind[i]].give;
-    knock(i, (spec.knock ?? 0.9) * give * (1 - (d / (reach + MAX_R)) * 0.5), 0.22, (spec.stunS ?? 0.5) * give);
+  h.near(st.x, st.z, r + MAX_R, (i, d) => {
+    hurt(i, dmg * (d < r * 0.6 ? 1 : 0.6), W.hammer);
+    if (!h.dead[i]) h.stunT[i] = Math.max(h.stunT[i], spec.stunS ?? 0.4);
   });
-  fx({
-    kind: 'punch',
-    x: mx + Math.sin(yaw) * 0.2,
-    y: 0.2,
-    z: mz + Math.cos(yaw) * 0.2,
-    weapon: 'piston',
-    unit: u.id,
-    yaw,
-  });
+  fx({ kind: 'punch', x: st.x, y: 0.02, z: st.z, weapon: 'hammer', unit: u.id, yaw: u.yaw ?? 0, radius: r });
 }
 
 /** FLAMER: one tick of the cone — everything inside it scorches and
@@ -813,7 +1027,7 @@ function tickShots(dt: number): void {
 /** Damage one crawler; it dies at zero. */
 function hurt(i: number, dmg: number, cause: number, flash = true): void {
   const h = plant.siege.horde;
-  if (h.dead[i]) return;
+  if (h.dead[i] || h.phase[i] === PHASE_HELD) return; // your fist shields it
   h.hp[i] -= dmg;
   if (flash) h.flash[i] = 0.12;
   if (h.hp[i] <= 0) die(i, cause);
@@ -826,7 +1040,10 @@ function die(i: number, cause: number): void {
   if (h.dead[i]) return;
   h.kill(i, cause);
   sg.kills++;
-  sg.coins += SPECS[h.kind[i]].coin;
+  sg.coinDust += SPECS[h.kind[i]].coin;
+  const whole = Math.floor(sg.coinDust + 1e-9);
+  sg.coins += whole;
+  sg.coinDust -= whole;
 }
 
 /* ── tools ──────────────────────────────────────────────────────────────── */

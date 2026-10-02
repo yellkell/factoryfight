@@ -66,7 +66,7 @@ export interface Unit {
   hurtT: number;
   /** WEAPONS: the cycle cooldown, where the head points (plan yaw,
    *  radians), and how long ago it last fired (drives recoil, the flame,
-   *  the piston's stroke — the look of firing, kept with the gun). */
+   *  the hammer's swing — the look of firing, kept with the gun). */
   cool?: number;
   yaw?: number;
   firedT?: number;
@@ -78,6 +78,8 @@ export interface Unit {
   /** TOWER LEVEL (1–3), and every coin put into it (sells for a share). */
   level?: number;
   spent?: number;
+  /** THE HAMMER, mid-swing: where it will land and seconds until it does. */
+  strike?: { x: number; z: number; t: number };
 }
 
 /** One supply run off a feed's spout. Field names deliberately mirror
@@ -291,7 +293,9 @@ export interface SiegeFx {
     | 'flame'
     | 'punch'
     | 'shell'
-    | 'upgrade';
+    | 'upgrade'
+    | 'grab' // a fist closed on one
+    | 'slam'; // a thrown one hit the floor
   x: number;
   y: number;
   z: number;
@@ -338,6 +342,9 @@ export interface Siege {
   kills: number;
   /** THE PURSE: coins, earned by kills and cleared waves, spent on towers. */
   coins: number;
+  /** A kill can be worth less than a coin (a mite is half): the
+   *  fraction waits here until it makes a whole one. */
+  coinDust: number;
   /** The ladder has been cleared at least once (endless from here). */
   won: boolean;
   fx: SiegeFx[];
@@ -383,6 +390,7 @@ export function freshSiege(): Siege {
     laneCells: new Set(),
     kills: 0,
     coins: 0,
+    coinDust: 0,
     won: false,
     fx: [],
   };
@@ -585,6 +593,6 @@ export function openShopFully(): void {
       plant.events.push({ kind: 'feed-wake', side });
     }
   }
-  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat', 'turret', 'wall', 'flamer', 'piston', 'tesla', 'mortar'];
+  plant.unitsAvailable = ['dock', 'maker', 'belt', 'combiner', 'chest', 'vat', 'turret', 'wall', 'flamer', 'hammer', 'tesla', 'mortar'];
   plant.generation++;
 }

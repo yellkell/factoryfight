@@ -867,9 +867,9 @@ export function flameRoar(): void {
   whooshNoise(0.18, 0.05, 2600, 1200, 0.03);
 }
 
-/** The piston: a hiss of hydraulics and a steel slam. */
-export function pistonSlam(): void {
-  if (!gate('piston', 0.12)) return;
+/** The hammer: a hiss of hydraulics and a steel slam. */
+export function hammerSlam(): void {
+  if (!gate('hammer', 0.12)) return;
   whooshNoise(0.12, 0.08, 4200, 1800);
   clank(130, 0.2, 0.3, 0.05);
   subSwell(90, 40, 0.25, 0.18, 0.05, 0.004);

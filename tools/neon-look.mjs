@@ -59,7 +59,7 @@ await page.evaluate((row) => {
   for (let i = -3; i <= 3; i++) window.__tubes.build.placeAt(i, 1, 'belt', 1);
   // THE ARSENAL, a row behind (paid for by a tools-only grant).
   window.__tubes.plant.grantBank({ gear: 40, cell: 4, chip: 6, pump: 4 });
-  ['piston', 'flamer', 'tesla', 'mortar'].forEach((t, k) => window.__tubes.build.placeAt(-3 + k * 2, -4, t, 2));
+  ['hammer', 'flamer', 'tesla', 'mortar'].forEach((t, k) => window.__tubes.build.placeAt(-3 + k * 2, -4, t, 2));
   window.__tubes.build.placeAt(2, 0, 'wall', 0);
   window.__tubes.build.placeAt(3, 0, 'wall', 0);
 }, row);

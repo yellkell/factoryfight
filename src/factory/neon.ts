@@ -43,12 +43,12 @@ export const NEON: Record<UnitType | 'delete', number> = {
   post: 0xffffff,
   vat: 0x4dff9b,
   // THE ARSENAL, each its own heat: the flamer burns orange-red, the
-  // coil wears its feed's violet, the mortar is artillery teal, and the
-  // piston is cold hydraulic steel.
+  // coil is violet, the mortar is artillery teal, and the hammer is
+  // cold white crystal.
   flamer: 0xff4d1a,
   tesla: 0xc79bff,
   mortar: 0x2fffc0,
-  piston: 0xd8e4ff,
+  hammer: 0xd8e4ff,
   delete: 0xff4a3a,
 };
 
