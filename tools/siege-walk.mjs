@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
- * THE SIEGE — the fight, walked end to end, headlessly.
+ * THE SIEGE, WALKED — FACTORY FIGHT end to end, headlessly, as a tower
+ * defence.
  *
  *   npm run dev
- *   node tools/siege-walk.mjs
+ *   node tools/siege-walk.mjs      → shots/siege/
  *
- * Everything goes through the hands' own doors (build.aimAt / trigger,
- * the haul, the pull's driven grips) — the same resolve-and-commit path a
- * controller runs — and the sim runs for real: real breaches on the
- * fallback room's walls, real flow field, real crawlers, real guns.
- *
- *   MAN THE WALLS   one door; the core stands; the first breach cracks
- *   THE GUN CHAIN   amber feed → maker → hauled rail → turret
- *   FIRST WATCH     the horn; a hundred mites; the gun holds the core
- *   THE WALL        walls cost gears; a hauled run is as long as the bank
- *   THE CHEW        a ring of plate gets chewed, not walked through
- *   THE FALL        an undefended core falls; TRY AGAIN deals a new floor
+ *   MAN THE WALLS   the board's one door; the floor waits for its CORE
+ *   THE LANES       the core lands: four lanes laid, one open; nothing
+ *                   can be built on a lane
+ *   FIRST WATCH     three turrets beside the lane; the horn; the tide
+ *                   dies; kills and the wave bonus fill the purse
+ *   THE TOWER       its panel: UPGRADE (level 2, dearer, stronger), SELL
+ *   THE CARDS       every page of the card, inside the card
+ *   THE LEAK        an unguarded lane: whatever reaches the core takes a
+ *                   bite out of it, and is gone
+ *   THE FALL        a flood with no towers; TRY AGAIN deals a new floor
  */
 
 import { mkdirSync } from 'node:fs';
@@ -63,47 +63,6 @@ async function handPlace(tool, i, j, r = 0) {
   await arm(null);
   return { view, ok };
 }
-async function haulRun(tool, from, to) {
-  await arm(tool);
-  await aim(from[0], from[1], 0);
-  if (!(await pull())) {
-    await arm(null);
-    return { anchor: false, laid: 0, steps: [] };
-  }
-  const steps = await page.evaluate(({ x, z }) => window.__tubes.build.haulTo(x, z), cellXZ(to[0], to[1]));
-  const laid = await page.evaluate(() => window.__tubes.build.haulRelease());
-  await arm(null);
-  return { anchor: true, laid, steps };
-}
-async function seatRun(side, unit) {
-  const g = (await page.evaluate((s) => window.__tubes.plant.glands(s), side)).find((x) => x.unit === unit);
-  if (!g) return false;
-  await page.evaluate((s) => window.__tubes.plant.grab(s), side);
-  const head = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === (side.includes(':') ? side : `${side}:0`)).head;
-  const seat = { x: g.x + g.nx * 0.1, y: g.y, z: g.z + g.nz * 0.1 };
-  for (let k = 1; k <= 6; k++) {
-    await page.evaluate(
-      ({ a, b, k }) =>
-        window.__tubes.plant.dragTo(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k),
-      { a: head, b: seat, k: k / 6 },
-    );
-    await page.waitForTimeout(160);
-  }
-  const ok = await page
-    .waitForFunction(
-      ({ s, u }) => {
-        const r = window.__tubes.plant.state().runs.find((x) => x.key === (s.includes(':') ? s : `${s}:0`));
-        return r && (r.phase === 'seated' || r.phase === 'flowing') && r.target === u;
-      },
-      { s: side, u: unit },
-      { timeout: 10000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  await page.evaluate(() => window.__tubes.plant.release());
-  return ok;
-}
-
 /** Studio light, and the emulator's own furniture out of the frame. */
 const studio = () =>
   page.evaluate(() => {
@@ -149,7 +108,6 @@ const shot = async (name) => {
   await page.screenshot({ path: `shots/siege/${name}.png` });
   console.log(`  · shots/siege/${name}.png`);
 };
-
 /* ── MAN THE WALLS ───────────────────────────────────────────────────── */
 
 console.log('MAN THE WALLS');
@@ -167,108 +125,119 @@ await page.evaluate(() => window.__tubes.menu.act('start-order'));
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
 await page.waitForTimeout(300);
 let sg = await siege();
-check(sg.phase === 'core' && sg.breaches.length === 0, `the siege opens waiting for its CORE, no clock, no breach (${sg.phase})`);
+check(sg.phase === 'core' && sg.lanes.length === 0, `the siege opens waiting for its CORE, no lanes yet (${sg.phase})`);
 const cat0 = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(cat0.length === 1 && cat0[0] === 'dock', `and the core is the only thing on offer (${cat0.join(', ')})`);
+
+/* ── THE LANES ───────────────────────────────────────────────────────── */
+
+console.log('THE LANES');
 const coreAt = await handPlace('dock', 0, 0);
 check(coreAt.ok, 'the CORE stands where you put it');
 await page.waitForTimeout(200);
 sg = await siege();
 check(sg.phase === 'build' && sg.wave === 0, `and the siege begins: building for wave 1 (${sg.phase} ${sg.wave})`);
-check(sg.breaches.length === 1, `one breach is already cracking (${sg.breaches.length})`);
-check((sg.bank.gear ?? 0) === 5, `the bank opens with 5 GEAR (${sg.bank.gear})`);
-let units = await plan();
-const core = units.find((u) => u.type === 'dock');
-check(Boolean(core), 'the CORE is on the plan');
-const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
+check(sg.lanes.length === 4 && sg.open === 1, `four lanes are laid, one open (${sg.lanes.length} laid, ${sg.open} open)`);
+check(sg.lanes.every((l) => l.cells.length >= 3 && l.len > 1), `each runs from a crack to the core (${sg.lanes.map((l) => l.len.toFixed(1) + ' m').join(', ')})`);
+const core = (await plan()).find((u) => u.type === 'dock');
 check(
-  ['maker', 'belt', 'turret'].every((t) => cat.includes(t)) && !cat.includes('wall') && !cat.includes('dock'),
-  `wave 1's catalogue: maker, rail, turret — no wall, no second core (${cat.join(', ')})`,
+  sg.lanes.every((l) => {
+    const last = l.cells[l.cells.length - 1];
+    return Math.abs(last.i - core.i) + Math.abs(last.j - core.j) === 1;
+  }),
+  'and every lane ends right beside the core',
 );
+check(sg.coins === 150, `the purse opens with 150 coins (${sg.coins})`);
+const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
+check(cat.length === 1 && cat[0] === 'turret', `wave 1 offers the TURRET and nothing else (${cat.join(', ')})`);
+const onLane = sg.lanes[0].cells[2];
+const refused = await handPlace('turret', onLane.i, onLane.j);
+check(!refused.ok && !refused.view?.placeable, 'a turret aimed at a lane cell is refused (the ghost says so)');
+check((await siege()).coins === 150, 'and costs nothing');
 await studio();
-
-/* ── THE GUN CHAIN ───────────────────────────────────────────────────── */
-
-console.log('THE GUN CHAIN');
-// The gun costs parts and fires for free: it goes between the breach and
-// the core, and the factory's job is to rail GEARS into the CORE's bank.
-const b0 = sg.breaches[0];
-const cx = core.i;
-const cz = core.j;
-const gunAt = [cx + (b0.x > 0 ? 1 : -1), cz - 2];
-const sideStep = b0.x > 0 ? -1 : 1;
-const makerAt = [cx + sideStep * 3, cz];
-let r = await handPlace('turret', gunAt[0], gunAt[1]);
-check(r.ok, `a TURRET stands at ${gunAt} (cost: 3 GEAR)`);
-sg = await siege();
-check((sg.bank.gear ?? 0) === 2, `and the bank paid for it (${sg.bank.gear} left)`);
-const railFrom = [makerAt[0] - sideStep, cz];
-const railTo = [cx + sideStep, cz];
-const hauled = await haulRun('belt', railFrom, railTo);
-check(hauled.laid >= 1, `a rail run hauled ${railFrom} → ${railTo} (${hauled.laid + 1} pieces)`);
-r = await handPlace('maker', makerAt[0], makerAt[1]);
-check(r.ok, `a MAKER stands at ${makerAt}`);
-units = await plan();
-const maker = units.find((u) => u.type === 'maker');
-const gun = units.find((u) => u.type === 'turret');
-// Walk the chain: maker → … → core.
-let at = maker;
-let hops = 0;
-while (at && at.feeds !== null && hops < 20) {
-  at = units.find((u) => u.id === at.feeds);
-  hops++;
+{
+  const S = 0.7;
+  const cx = (core.i + 0.5) * CELL * S;
+  const cz = (core.j + 0.5) * CELL * S;
+  await page.evaluate(() => window.__tubes.siege.breaches(4));
+  await lookAt(cx + 0.2, cz + 2.2, 0.6, cx, 0, cz - 0.3);
+  await shot('01-the-lanes');
+  await page.evaluate(() => window.__tubes.siege.breaches(1));
 }
-check(at?.id === core.id, `the maker's chute runs down the lane into the CORE (${hops} hops)`);
-check(await seatRun('far', maker.id), 'the amber feed is hauled into the maker');
-await page.evaluate(() => window.__tubes.plant.timeScale(6));
-const banked = await page
-  .waitForFunction(() => (window.__tubes.siege.state().bank.gear ?? 0) >= 5, undefined, { timeout: 30000 })
-  .then(() => true)
-  .catch(() => false);
-sg = await siege();
-check(banked, `GEARS ride the rail into the core's bank (${sg.bank.gear} GEAR)`);
-await page.evaluate(() => window.__tubes.plant.timeScale(1));
-const idle = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.id === gun.id);
-check(idle && idle.fired > 5, `and the gun sits quiet with nothing to shoot (no magazine to fill)`);
-await lookAt(0.2, 0.9, -0.5, 0.05, 0.4, -0.35);
-await shot('01-the-chain');
 
 /* ── FIRST WATCH ─────────────────────────────────────────────────────── */
 
 console.log('FIRST WATCH');
+const lane0 = sg.lanes[0].cells;
+const stood = [];
+for (const k of [lane0.length - 2, lane0.length - 5, lane0.length - 8]) {
+  const c = lane0[Math.max(0, k)];
+  for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const r = await handPlace('turret', c.i + di, c.j + dj);
+    if (r.ok) {
+      stood.push([c.i + di, c.j + dj]);
+      break;
+    }
+  }
+}
+sg = await siege();
+check(stood.length === 3 && sg.coins === 0, `three TURRETS beside the lane, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
 await page.evaluate(() => window.__tubes.siege.horn());
 sg = await siege();
-check(
-  sg.phase === 'wave' && sg.queued + sg.enemies === 100,
-  `the horn: wave 1 is coming (${sg.enemies} out, ${sg.queued} queued)`,
-);
-await page.waitForTimeout(5200);
-const b = sg.breaches[0];
-// Look from behind the core, toward the breach (room metres = plant × 0.7).
+check(sg.phase === 'wave' && sg.queued + sg.enemies === 80, `the horn: 80 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
+await page.waitForTimeout(4000);
 {
   const S = 0.7;
-  const bl = Math.hypot(b.x, b.z);
-  const ux = b.x / bl;
-  const uz = b.z / bl;
-  await lookAt(-ux * 0.9 + uz * 0.5, -uz * 0.9 - ux * 0.5, 0.1, b.x * S * 0.5, 0.1, b.z * S * 0.5);
+  const b = sg.breaches[0];
+  const cx = (core.i + 0.5) * CELL * S;
+  const cz = (core.j + 0.5) * CELL * S;
+  await lookAt(cx + (b.x * S - cx) * 0.2 + 0.5, cz + (b.z * S - cz) * 0.2 + 0.9, -0.3, (cx + b.x * S) / 2, 0, (cz + b.z * S) / 2);
+  await shot('02-first-watch');
 }
-await shot('02-first-watch');
-const fired = await page
-  .waitForFunction(() => window.__tubes.siege.turrets().some((t) => t.type === 'turret' && t.fired < 1), undefined, { timeout: 30000 })
-  .then(() => true)
-  .catch(() => false);
-check(fired, 'the turret opens up on its own — free rounds, no hands');
-await page.evaluate(() => window.__tubes.plant.timeScale(3));
+await page.evaluate(() => window.__tubes.plant.timeScale(4));
 const cleared = await page
-  .waitForFunction(() => window.__tubes.siege.state().wave === 1, undefined, { timeout: 90000 })
+  .waitForFunction(() => window.__tubes.siege.state().wave === 1, undefined, { timeout: 120000 })
   .then(() => true)
   .catch(() => false);
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
 sg = await siege();
 check(cleared, `FIRST WATCH held (kills ${sg.kills}, core ${(sg.core * 100).toFixed(0)}%)`);
-check(sg.kills === 100, `the whole tide put down (${sg.kills} killed)`);
-check(sg.core > 0.5, `the core still standing strong (${(sg.core * 100).toFixed(0)}%)`);
-check(sg.phase === 'build' && sg.breaches.length === 2, `wave 2's two breaches crack (${sg.breaches.length})`);
+check(sg.kills === 80, `every mite put down (${sg.kills})`);
+check(sg.coins === 80 + 55, `a coin a kill plus the wave bonus (${sg.coins} = 80 + 55)`);
+check(sg.phase === 'build' && sg.open === 2, `wave 2 opens a second lane (${sg.open} open)`);
+const cat2 = await page.evaluate(() => window.__tubes.build.catalogue().available);
+check(cat2.includes('piston'), `and the PISTON joins the catalogue (${cat2.join(', ')})`);
+
+/* ── THE TOWER ───────────────────────────────────────────────────────── */
+
+console.log('THE TOWER');
+let towers = await page.evaluate(() => window.__tubes.siege.turrets());
+const t0 = towers[0];
+await page.evaluate((id) => window.__tubes.menu.inspect(id), t0.id);
+await page.waitForTimeout(250);
+{
+  const { writeFileSync } = await import('node:fs');
+  const url = await page.evaluate(() => window.__tubes.menu.snapBox?.());
+  if (url) {
+    writeFileSync('shots/siege/tower-panel.png', Buffer.from(url.split(',')[1], 'base64'));
+    console.log('  · shots/siege/tower-panel.png');
+  }
+}
+const c1 = (await siege()).coins;
+await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
+towers = await page.evaluate(() => window.__tubes.siege.turrets());
+const c2 = (await siege()).coins;
+check(towers.find((t) => t.id === t0.id)?.level === 2 && c1 - c2 === 40, `UPGRADE: level 2 for 40 coins (${c1} → ${c2})`);
+await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
+towers = await page.evaluate(() => window.__tubes.siege.turrets());
+const c3 = (await siege()).coins;
+check(towers.find((t) => t.id === t0.id)?.level === 3 && c2 - c3 === 70, `UPGRADE again: level 3 for 70 (${c2} → ${c3})`);
+await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
+check((await siege()).coins === c3, 'and no further: level 3 is the top');
+await page.evaluate(() => window.__tubes.menu.act('box:remove'));
+towers = await page.evaluate(() => window.__tubes.siege.turrets());
+const c4 = (await siege()).coins;
+check(!towers.some((t) => t.id === t0.id) && c4 - c3 === 112, `SELL: it comes off the floor for 70% of 160 (${c3} → ${c4})`);
 
 /* ── THE CARDS ───────────────────────────────────────────────────────── */
 
@@ -279,7 +248,7 @@ const savePng = async (name, dataUrl) => {
   console.log(`  · shots/siege/${name}.png`);
 };
 await page.evaluate(() => window.__tubes.menu.setPause(true));
-for (const pg of ['build', 'goals', 'supply']) {
+for (const pg of ['build', 'goals', 'controls']) {
   await page.evaluate((p) => window.__tubes.menu.act(`card:${p}`), pg);
   await page.waitForTimeout(250);
   await savePng(`card-${pg}`, await page.evaluate(() => window.__tubes.menu.snapCard()));
@@ -290,171 +259,33 @@ for (const pg of ['build', 'goals', 'supply']) {
 }
 const cardIds = await page.evaluate(() => window.__tubes.menu.cardButtons());
 check(cardIds.includes('card:horn'), 'the card offers SOUND THE HORN while you build');
+check(!cardIds.some((i) => /build:(maker|belt|wall|chest|combiner|post|delete)/.test(i)), 'and no factory machine anywhere on it');
 await page.evaluate(() => window.__tubes.menu.act('card:build'));
 await page.evaluate(() => window.__tubes.menu.setPause(false));
 
-/* ── THE WALL ────────────────────────────────────────────────────────── */
+/* ── THE LEAK ────────────────────────────────────────────────────────── */
 
-console.log('THE WALL');
-const cat2 = await page.evaluate(() => window.__tubes.build.catalogue().available);
-check(cat2.includes('wall'), 'clearing wave 1 unlocks the WALL');
-const gearsBefore = (await siege()).bank.gear ?? 0;
-const want = 10;
-const wallRow = cz + 2;
-const wr = await haulRun('wall', [cx - 4, wallRow], [cx - 4 + want, wallRow]);
-const gearsAfter = (await siege()).bank.gear ?? 0;
-const laidWalls = (await plan()).filter((u) => u.type === 'wall').length;
-check(
-  // (The maker is still banking GEARS while the wall goes down, so the
-  // bank can only be held to "paid at least this much".)
-  laidWalls === Math.min(gearsBefore, want + 1) && gearsAfter <= gearsBefore - laidWalls + 2,
-  `a hauled wall is as long as the bank can pay for (${laidWalls} laid, ${gearsBefore} → ${gearsAfter} GEAR)`,
-);
-void wr;
-await lookAt(0.1, 1.5, -0.4, 0.1, 0.3, 0.35);
-await shot('03-the-wall');
-
-/* ── THE CHEW ────────────────────────────────────────────────────────── */
-
-console.log('THE CHEW');
-// A full ring of plate round the core (tools stand it for free with a
-// bank top-up), then a beetle dropped at a breach: it must chew, not walk.
-await page.evaluate(
-  ({ cx, cz }) => {
-    const p = window.__tubes;
-    for (let di = -1; di <= 1; di++) {
-      for (let dj = -1; dj <= 1; dj++) {
-        if (di === 0 && dj === 0) continue;
-        p.build.removeAt(cx + di, cz + dj);
-      }
-    }
-  },
-  { cx, cz },
-);
-const ring = [];
-for (let di = -1; di <= 1; di++) {
-  for (let dj = -1; dj <= 1; dj++) if (di || dj) ring.push([cx + di, cz + dj]);
-}
-// A tools-only bank top-up: this is a test of the chew, not the economy.
-const ringOk = await page.evaluate(
-  ({ ring }) => {
-    const p = window.__tubes;
-    p.plant.grantBank({ gear: ring.length });
-    return ring.filter(([i, j]) => p.build.placeAt(i, j, 'wall', 0)).length;
-  },
-  { ring },
-);
-check(ringOk === 8, `a closed ring of plate round the core (${ringOk}/8)`);
+console.log('THE LEAK');
+await page.evaluate(() => {
+  const p = window.__tubes;
+  for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
+});
 const coreBefore = (await siege()).core;
-await page.evaluate(() => window.__tubes.siege.spawn('beetle', 0));
-await page.evaluate(() => window.__tubes.plant.timeScale(4));
-const chewing = await page
-  .waitForFunction(
-    () => window.__tubes.siege.enemies().some((e) => e.kind === 'beetle' && e.phase === 'bite'),
-    undefined,
-    { timeout: 40000 },
-  )
-  .then(() => true)
-  .catch(() => false);
-const coreNow = (await siege()).core;
-check(chewing, 'the beetle reaches the ring and CHEWS');
-check(coreNow >= coreBefore - 1e-6, `and the core behind the plate is untouched (${(coreBefore * 100).toFixed(0)}% → ${(coreNow * 100).toFixed(0)}%, still healing from wave 1)`);
+await page.evaluate(() => window.__tubes.siege.spawn('mite', 0, 10));
+await page.evaluate(() => window.__tubes.plant.timeScale(6));
+await page
+  .waitForFunction(() => window.__tubes.siege.state().enemies === 0, undefined, { timeout: 60000 })
+  .catch(() => {});
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
-const g = (await page.evaluate(() => window.__tubes.siege.enemies())).find((e) => e.kind === 'beetle');
-if (g) {
-  await lookAt(g.x * 0.7 * 0.4 + 0.6, g.z * 0.7 * 0.4 + 0.9, -0.5, g.x * 0.7 * 0.6, 0.15, g.z * 0.7 * 0.6);
-  await shot('04-the-chew');
-}
-
-/* ── THE ARSENAL ─────────────────────────────────────────────────────── */
-
-console.log('THE ARSENAL');
-// Every weapon stood round the core, each with a crawler in front of it.
-// They cost parts and fire for free; the flamer and the coil fire only
-// while their feed's tube is seated — the TWIN spouts mean the amber feed
-// can run a maker and a flamer at once.
-await page.evaluate(
-  ({ cx, cz }) => {
-    const p = window.__tubes;
-    for (const u of p.plant.plan()) if (u.type === 'wall') p.build.removeAt(u.i, u.j);
-    p.siege.wakeAll();
-    p.plant.grantBank({ gear: 40, cell: 6, chip: 6, pump: 4 });
-  },
-  { cx, cz },
-);
-await page.waitForTimeout(300);
-const arms = {
-  piston: [cx, cz + 1, 2],
-  flamer: [cx - 1, cz - 1, 0],
-  tesla: [cx + 1, cz + 1, 2],
-  mortar: [cx, cz + 3, 2],
-};
-const stood = await page.evaluate(
-  ({ arms }) =>
-    Object.fromEntries(
-      Object.entries(arms).map(([t, [i, j, r]]) => [t, window.__tubes.build.placeAt(i, j, t, r)]),
-    ),
-  { arms },
-);
-check(Object.values(stood).every(Boolean), `four more weapons stand (${JSON.stringify(stood)})`);
-units = await plan();
-const unitOf = (t) => units.find((u) => u.type === t);
-const runs0 = (await page.evaluate(() => window.__tubes.plant.state())).runs.map((r) => r.key);
-check(runs0.includes('far:0') && runs0.includes('far:1'), `every feed pours from TWO spouts (${runs0.join(' ')})`);
-const fuelled = async (t) =>
-  (await page.evaluate(() => window.__tubes.siege.turrets())).find((w) => w.type === t)?.fuelled;
-check(!(await fuelled('flamer')), 'an unplumbed flamer is dark');
-check(await seatRun('far:1', unitOf('flamer').id), "the amber feed's TWIN spout is hauled into the flamer (the maker keeps its own)");
-{
-  const r0 = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === 'far:0');
-  check(r0?.target === maker.id, `and the main amber spout is still in the maker (${r0?.target} = ${maker.id})`);
-}
-check(await seatRun('right', unitOf('tesla').id), 'the volt feed is hauled into the tesla coil');
-await page.waitForTimeout(600);
-check((await fuelled('flamer')) && (await fuelled('tesla')), 'both burners light their pilots');
-const S = 0.7;
-const cell = 0.35;
-const cellAt = (i, j) => [(i + 0.5) * cell, (j + 0.5) * cell];
-// A crawler in front of each weapon, inside its reach.
-const targets = {
-  piston: [cellAt(cx, cz + 1)[0], cellAt(cx, cz + 1)[1] + 0.38, 'beetle'],
-  flamer: [cellAt(cx - 1, cz - 1)[0], cellAt(cx - 1, cz - 1)[1] - 0.7, 'beetle'],
-  tesla: [cellAt(cx + 1, cz + 1)[0] + 0.4, cellAt(cx + 1, cz + 1)[1] + 0.9, 'mite'],
-  mortar: [cellAt(cx, cz + 3)[0] - 0.4, cellAt(cx, cz + 3)[1] + 1.9, 'hulk'],
-};
-for (const [w, [x, z, kind]] of Object.entries(targets)) {
-  await page.evaluate(({ kind, x, z }) => window.__tubes.siege.place(kind, x, z, Math.PI), { kind, x, z });
-  // A second mite for the coil to chain to.
-  if (w === 'tesla') await page.evaluate(({ x, z }) => window.__tubes.siege.place('mite', x + 0.3, z + 0.25, Math.PI), { x, z });
-}
-await page.evaluate(() => window.__tubes.siege.tough(8));
-// Watch all four at once: each must fire at least once.
-const heard = await page.evaluate(
-  () =>
-    new Promise((done) => {
-      const seen = new Set();
-      const t0 = performance.now();
-      const look = () => {
-        for (const t of window.__tubes.siege.turrets()) if (t.fired < 0.3) seen.add(t.type);
-        if (seen.size >= 5 || performance.now() - t0 > 20000) return done([...seen]);
-        requestAnimationFrame(look);
-      };
-      look();
-    }),
-);
-for (const w of ['piston', 'flamer', 'tesla', 'mortar']) {
-  check(heard.includes(w), `the ${w.toUpperCase()} fires on its own`);
-}
-// (The portraits of each weapon firing are tools/weapons-look.mjs.)
+const coreAfter = (await siege()).core;
+check(Math.abs(coreBefore - coreAfter - 0.1) < 1e-6, `ten mites walk an empty lane into the core: −10 (${(coreBefore * 100).toFixed(0)}% → ${(coreAfter * 100).toFixed(0)}%)`);
 
 /* ── THE FALL ────────────────────────────────────────────────────────── */
 
 console.log('THE FALL');
 await page.evaluate(() => {
   const p = window.__tubes;
-  for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
   for (let k = 0; k < 4; k++) p.siege.spawn('hulk', k);
-  p.siege.spawn('mite', 0, 300);
   p.plant.timeScale(10);
 });
 const fell = await page
@@ -468,15 +299,13 @@ check(
   finaleButtons.includes('fin:retry') && finaleButtons.includes('fin:board'),
   `it offers TRY AGAIN and the board (${finaleButtons.join(', ')})`,
 );
-await lookAt(0, 1.4, 0, 0, 1.2, -1);
-await shot('05-fallen');
 await page.evaluate(() => window.__tubes.menu.act('fin:retry'));
 await page.waitForTimeout(400);
 sg = await siege();
-units = await plan();
+const units = await plan();
 check(
-  sg.phase === 'core' && sg.wave === 0 && units.length === 0,
-  `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units)`,
+  sg.phase === 'core' && sg.wave === 0 && units.length === 0 && sg.lanes.length === 0 && sg.coins === 150,
+  `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units, ${sg.lanes.length} lanes, ${sg.coins} coins)`,
 );
 
 await browser.close();

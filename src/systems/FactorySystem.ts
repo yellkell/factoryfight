@@ -571,6 +571,9 @@ export class FactorySystem extends createSystem({}) {
       for (const side of ['far', 'left', 'right', 'near'] as FloorSide[]) {
         const lineId = FACTORY.sides[side];
         const refs = buildFeed(lineId ? LINES[lineId] : null);
+        // FACTORY FIGHT has no feeds: the pillars are kept (TUBES' code
+        // reads them) but never stood on the floor.
+        refs.group.visible = false;
         plantRoot.add(refs.group);
         this.feeds.set(side, refs);
       }

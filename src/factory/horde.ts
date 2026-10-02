@@ -9,10 +9,15 @@
  * `uid` is what to hold across ticks: an index moves when the crawlers
  * behind it are swept, a uid never does.
  *
+ * THE LANE. Each crawler walks one lane (factory/lanes.ts): `s` is how
+ * far along it is, `lane` its sideways place in the column — so moving
+ * the whole tide is one addition each, and "nearest the core" is just
+ * the biggest `s`.
+ *
  * THE BUCKETS. A spatial hash over the floor (cell HASH_CELL plant m),
- * rebuilt once a tick, answers "who is near here" for separation, splash,
- * the flamer's cone, the coil's next hop and a slug's landing — without
- * any of them walking all n.
+ * rebuilt once a tick, answers "who is near here" for splash, the
+ * flamer's cone, the coil's next hop, the piston's shove and a slug's
+ * landing — without any of them walking all n.
  *
  * Deaths leave a record in `deaths` (x, z, kind, cause) for the renderer
  * to burst, splat and voice; the sim never draws.
@@ -27,7 +32,6 @@ export const DEATH_CAP = 2048;
 
 export const PHASE_EMERGE = 0;
 export const PHASE_WALK = 1;
-export const PHASE_BITE = 2;
 
 export class Horde {
   n = 0;
@@ -43,23 +47,26 @@ export class Horde {
   readonly heading = new Float32Array(HORDE_CAP);
   readonly phase = new Uint8Array(HORDE_CAP);
   readonly phaseT = new Float32Array(HORDE_CAP);
+  /** Which lane it walks (index into siege.lanes). */
   readonly breach = new Uint8Array(HORDE_CAP);
-  /** The unit it is chewing (−1 none). */
-  readonly target = new Int32Array(HORDE_CAP);
-  readonly biteT = new Float32Array(HORDE_CAP);
-  /** A per-crawler lane offset, so a column spreads into a crowd. */
+  /** How far along that lane it is (plant m). */
+  readonly s = new Float32Array(HORDE_CAP);
+  /** Its pace, as a share of its kind's (a column that all walked in step
+   *  would read as one thing). */
+  readonly pace = new Float32Array(HORDE_CAP);
+  /** Sideways place in the column, −0.5..0.5 of the lane's width. */
   readonly lane = new Float32Array(HORDE_CAP);
   readonly flash = new Float32Array(HORDE_CAP);
   /** Distance walked (the legs' cycle). */
   readonly stride = new Float32Array(HORDE_CAP);
-  /** Knockback: velocity and seconds of it left; then a stun. */
-  readonly kvx = new Float32Array(HORDE_CAP);
-  readonly kvz = new Float32Array(HORDE_CAP);
+  /** Knockback: speed back down the lane, and seconds of it left; then
+   *  a stun. */
+  readonly ks = new Float32Array(HORDE_CAP);
   readonly kT = new Float32Array(HORDE_CAP);
   readonly stunT = new Float32Array(HORDE_CAP);
   readonly burnT = new Float32Array(HORDE_CAP);
   readonly burnDps = new Float32Array(HORDE_CAP);
-  /** The flow field's distance-to-core where it stands (targeting). */
+  /** How far it still has to go to the core (targeting: least = first). */
   readonly fd = new Float32Array(HORDE_CAP);
 
   /** This tick's deaths: x, z, kind, cause (weapon index; −1 = none). */
@@ -89,13 +96,12 @@ export class Horde {
     this.phase[i] = PHASE_EMERGE;
     this.phaseT[i] = 0;
     this.breach[i] = breach;
-    this.target[i] = -1;
-    this.biteT[i] = 0;
+    this.s[i] = 0;
+    this.pace[i] = 0.85 + Math.random() * 0.3;
     this.lane[i] = Math.random() - 0.5;
     this.flash[i] = 0;
     this.stride[i] = Math.random() * 10;
-    this.kvx[i] = 0;
-    this.kvz[i] = 0;
+    this.ks[i] = 0;
     this.kT[i] = 0;
     this.stunT[i] = 0;
     this.burnT[i] = 0;
@@ -143,13 +149,12 @@ export class Horde {
     this.phase[to] = this.phase[from];
     this.phaseT[to] = this.phaseT[from];
     this.breach[to] = this.breach[from];
-    this.target[to] = this.target[from];
-    this.biteT[to] = this.biteT[from];
+    this.s[to] = this.s[from];
+    this.pace[to] = this.pace[from];
     this.lane[to] = this.lane[from];
     this.flash[to] = this.flash[from];
     this.stride[to] = this.stride[from];
-    this.kvx[to] = this.kvx[from];
-    this.kvz[to] = this.kvz[from];
+    this.ks[to] = this.ks[from];
     this.kT[to] = this.kT[from];
     this.stunT[to] = this.stunT[from];
     this.burnT[to] = this.burnT[from];
@@ -210,81 +215,6 @@ export class Horde {
           if (d2 <= r * r && fn(i, Math.sqrt(d2))) return;
         }
       }
-    }
-  }
-}
-
-/**
- * THE CROWD, inlined (it runs for every crawler every tick, so no
- * closures): each one is pushed off the ones overlapping it, by `share`
- * of the overlap — never into a cell `walkable` refuses. `reachOf` is the
- * neighbour radius each kind looks out to (its own plus the largest SMALL
- * kind's — the few giants shove separately, in `giantShove`).
- */
-export function crowdShove(
-  h: Horde,
-  radii: Float32Array,
-  smallMax: number,
-  strength: number,
-  maxChecks: number,
-  walkable: (x: number, z: number) => boolean,
-  parity: number,
-): void {
-  const head = h.head;
-  const next = h.next;
-  // Half the crowd a tick (alternating): a shove at 36 Hz looks the same
-  // as one at 72, and costs half.
-  for (let i = parity & 1; i < h.n; i += 2) {
-    if (h.dead[i] || h.phase[i] === PHASE_EMERGE) continue;
-    const ri = radii[h.kind[i]];
-    const xi = h.x[i];
-    const zi = h.z[i];
-    const reach = ri + smallMax;
-    const ci0 = Math.floor((xi - reach) / HASH_CELL);
-    const ci1 = Math.floor((xi + reach) / HASH_CELL);
-    const cj0 = Math.floor((zi - reach) / HASH_CELL);
-    const cj1 = Math.floor((zi + reach) / HASH_CELL);
-    let px = 0;
-    let pz = 0;
-    let checks = 0;
-    // However packed the crowd, a crawler looks at a bounded handful.
-    let scan = maxChecks * 3;
-    outer: for (let cj = cj0; cj <= cj1; cj++) {
-      for (let ci = ci0; ci <= ci1; ci++) {
-        for (let j = head[bucketOf(ci, cj)]; j >= 0; j = next[j]) {
-          if (--scan < 0) break outer;
-          if (j === i || h.dead[j]) continue;
-          const dx = xi - h.x[j];
-          const dz = zi - h.z[j];
-          const rj = radii[h.kind[j]];
-          const want = (ri + rj) * 0.9;
-          const d2 = dx * dx + dz * dz;
-          if (d2 >= want * want) continue;
-          const d = Math.sqrt(d2);
-          const share = rj / (ri + rj);
-          if (d < 1e-4) {
-            const a = (i * 2.399) % (Math.PI * 2);
-            px += Math.sin(a) * want * 0.5;
-            pz += Math.cos(a) * want * 0.5;
-          } else {
-            const push = ((want - d) * share) / d;
-            px += dx * push;
-            pz += dz * push;
-          }
-          if (++checks >= maxChecks) break outer;
-        }
-      }
-    }
-    if (px === 0 && pz === 0) continue;
-    const nx = xi + px * strength;
-    const nz = zi + pz * strength;
-    if (walkable(nx, nz)) {
-      h.x[i] = nx;
-      h.z[i] = nz;
-    } else if (walkable(nx, zi)) {
-      h.x[i] = nx;
-    } else if (walkable(xi, nz)) {
-      h.z[i] = nz;
     }
   }
 }

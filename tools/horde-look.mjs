@@ -6,8 +6,8 @@
  *   node tools/horde-look.mjs            → shots/horde/
  *   COUNT=4000 node tools/horde-look.mjs
  *
- * A core in the middle of the floor, a ring of guns round it (the
- * burners plumbed), four cracks in the walls — and then COUNT crawlers
+ * A core in the middle of the floor, a ring of towers round it (off the
+ * lanes), all four lanes open — and then COUNT crawlers
  * at once, already out of the plaster. It photographs the tide coming
  * in, the guns tearing into it and the floor after, and reports what
  * the sim and the swarm's draw cost per frame while it was at its
@@ -86,34 +86,6 @@ async function lookAt(px, pz, py, tx, ty, tz) {
   });
 }
 
-async function seatRun(key, unit) {
-  const g = (await page.evaluate((s) => window.__tubes.plant.glands(s), key)).find((x) => x.unit === unit);
-  if (!g) return false;
-  await page.evaluate((s) => window.__tubes.plant.grab(s), key);
-  const head = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === key).head;
-  const seat = { x: g.x + g.nx * 0.1, y: g.y, z: g.z + g.nz * 0.1 };
-  for (let k = 1; k <= 6; k++) {
-    await page.evaluate(
-      ({ a, b, k }) =>
-        window.__tubes.plant.dragTo(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k),
-      { a: head, b: seat, k: k / 6 },
-    );
-    await page.waitForTimeout(140);
-  }
-  const ok = await page
-    .waitForFunction(
-      ({ s, u }) => {
-        const r = window.__tubes.plant.state().runs.find((x) => x.key === s);
-        return r && r.phase === 'flowing' && r.target === u;
-      },
-      { s: key, u: unit },
-      { timeout: 10000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  await page.evaluate(() => window.__tubes.plant.release());
-  return ok;
-}
 
 /* ── the ring ──────────────────────────────────────────────────────────── */
 
@@ -122,7 +94,6 @@ await page.evaluate(() => {
   const t = window.__tubes;
   t.siege.core();
   t.siege.wakeAll();
-  t.plant.grantBank({ gear: 200, cell: 30, chip: 30, pump: 30 });
 });
 await page.waitForTimeout(300);
 const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
@@ -140,7 +111,7 @@ await page.evaluate((n) => {
   t.siege.flood('hulk', 6);
   // Slow time: the cost of a tick doesn't care, and the core (with no
   // gun yet) outlives the measurement.
-  t.plant.timeScale(0.2);
+  t.plant.timeScale(0.05);
 }, CROWD);
 await lookAt(corePos0.x + 0.3, corePos0.z + 2.4, 0.35, corePos0.x, 0.0, corePos0.z - 0.4);
 await studio();
@@ -197,37 +168,35 @@ const ring = [
   ['mortar', -2, -2],
 ];
 const stood = await page.evaluate(
-  ({ ring, ci, cj }) => ring.filter(([w, di, dj]) => window.__tubes.build.placeAt(ci + di, cj + dj, w, 0)).length,
+  ({ ring, ci, cj }) => {
+    const near = (w, i, j) => {
+    // The cell asked for, or the nearest free one off every lane.
+    for (let r = 0; r < 4; r++) {
+      for (let di = -r; di <= r; di++) {
+        for (let dj = -r; dj <= r; dj++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+          if (window.__tubes.build.placeAt(i + di, j + dj, w, 0)) return [i + di, j + dj];
+        }
+      }
+    }
+    return null;
+  };
+    window.__tubes.siege.coins(5000);
+    return ring.filter(([w, di, dj]) => near(w, ci + di, cj + dj)).length;
+  },
   { ring, ci: core.i, cj: core.j },
 );
-check(stood === ring.length, `a ring of ${stood}/${ring.length} weapons round the core`);
-const plan = await page.evaluate(() => window.__tubes.plant.plan());
-const flamers = plan.filter((u) => u.type === 'flamer');
-const coils = plan.filter((u) => u.type === 'tesla');
-let plumbed = 0;
-for (const [key, u] of [
-  ['far:1', flamers[0]],
-  ['far:0', flamers[1]],
-  ['right:0', coils[0]],
-  ['right:1', coils[1]],
-]) {
-  // (A first haul now and then fails to take; a fitter tries twice.)
-  const ok = Boolean(u) && ((await seatRun(key, u.id)) || (await seatRun(key, u.id)));
-  if (ok) plumbed++;
-  else console.log(`    (${key} would not seat in ${u?.type} ${u?.id})`);
-}
-check(plumbed === 4, `both flamers and both coils plumbed (${plumbed}/4)`);
+check(stood === ring.length, `a ring of ${stood}/${ring.length} towers round the core, off the lanes`);
 
 /* ── the tide ──────────────────────────────────────────────────────────── */
 
 console.log('THE TIDE');
 // A real wave: SWARM, four doors, two and a half thousand pouring out at
 // forty a second each.
-const WAVE = Number(process.env.WAVE ?? 7);
+const WAVE = Number(process.env.WAVE ?? 6);
 await page.evaluate((n) => {
   const t = window.__tubes;
   t.siege.jump(n);
-  t.plant.grantBank({ gear: 200, cell: 30, chip: 30, pump: 30 });
   t.siege.horn();
 }, WAVE);
 let st = await page.evaluate(() => window.__tubes.siege.state());
@@ -291,7 +260,7 @@ await page
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
 st = await page.evaluate(() => window.__tubes.siege.state());
 check(st.phase === 'build', `the ring HOLDS: ${st.kills} killed, core ${(st.core * 100).toFixed(0)}% (${st.phase})`);
-check((st.bank.gear ?? 0) > 200 - 70, `and the tide paid in scrap (${st.bank.gear} GEAR in the bank)`);
+check(st.coins > 2000, `and the tide paid its coins (${st.coins} in the purse)`);
 await lookAt(corePos.x + 0.4, corePos.z + 2.0, 0.1, corePos.x, 0.0, corePos.z - 0.3);
 await page.waitForTimeout(200);
 await page.screenshot({ path: 'shots/horde/04-after.png' });

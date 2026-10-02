@@ -14,9 +14,10 @@
  *
  *   HANDS ARE INPUT   both sides read as hands; a pinch is a point
  *   THE FIST          open / pinch / point never grab; a fist does, and holds
- *   THE CUFF          turn the wrist and it rises; look away and it sinks
- *   THE POKE          the right index tip presses MENU, BACK, DOWN
- *   TWO FISTS         a tube hauled out of the feed into a maker
+ *   THE PALM          turn the hand and the panel rises: header + towers,
+ *                     in one plane, nothing covering anything
+ *   THE POKE          the right index tip presses PAUSE, BACK, DOWN, tiles
+ *   TOUCH A TOWER     its panel opens: UPGRADE it, then SELL it
  */
 
 import { mkdirSync } from 'node:fs';
@@ -169,7 +170,7 @@ check(
   ids.includes('tool:dock') && ids.filter((i) => i.startsWith('tool:')).length === 1,
   `a bare floor: the toolbelt holds ONE tile, the CORE (${ids.join(', ')})`,
 );
-check(ids.includes('menu') && !ids.includes('horn'), 'and the watch offers PAUSE, no horn yet');
+check(ids.includes('menu') && !ids.includes('horn'), 'and the header offers PAUSE, no horn yet');
 await page.screenshot({ path: 'shots/hands/core-first.png' });
 console.log('  · shots/hands/core-first.png');
 
@@ -218,25 +219,35 @@ await raiseLeft();
 await frames(6);
 ids = (await cuff()).studs.map((s) => s.id);
 check(
-  ['tool:maker', 'tool:belt', 'tool:turret', 'tool:delete'].every((t) => ids.includes(t)) && !ids.includes('tool:dock'),
-  `now the belt holds the shop (${ids.filter((i) => i.startsWith('tool:')).join(', ')})`,
+  ids.includes('tool:turret') && !ids.includes('tool:dock') && !ids.some((i) => /maker|belt|delete|wall/.test(i)),
+  `now the palm holds the towers — no factory (${ids.filter((i) => i.startsWith('tool:')).join(', ')})`,
 );
-check(ids.includes('horn') && ids.includes('menu'), 'and the watch offers HORN and PAUSE');
+check(ids.includes('horn') && ids.includes('menu'), 'and the header offers HORN and PAUSE');
+// ONE PANEL: the header's studs and the tiles share a plane and never
+// sit on top of one another (the old wrist watch hid behind the tiles).
+{
+  const c2 = await cuff();
+  const studsOnly = c2.studs.filter((x) => !x.id.startsWith('tool:'));
+  const tiles = c2.studs.filter((x) => x.id.startsWith('tool:'));
+  const t0 = tiles[0];
+  const planeOff = Math.max(...studsOnly.map((x) => Math.abs((x.x - t0.x) * t0.nx + (x.y - t0.y) * t0.ny + (x.z - t0.z) * t0.nz)));
+  const nearest = Math.min(...studsOnly.flatMap((a) => tiles.map((b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z))));
+  check(planeOff < 0.01, `the header and the tiles are one plane (${(planeOff * 100).toFixed(1)} cm apart)`);
+  check(nearest > 0.03, `and no stud sits over a tile (closest ${(nearest * 100).toFixed(1)} cm)`);
+}
 await page.screenshot({ path: 'shots/hands/toolbelt.png' });
 console.log('  · shots/hands/toolbelt.png');
 
-// THE WHOLE ARSENAL ON THE PALM: late in the ladder every machine and
-// every weapon is offered — all of them must still sit on the hand,
-// within a finger's reach, and take a poke.
+// THE WHOLE ARSENAL ON THE PALM: late in the ladder every tower is
+// offered — all of them must still sit on the hand, within a finger's
+// reach, and take a poke.
 await page.evaluate(() => {
   window.__tubes.siege.wakeAll();
-  window.__tubes.plant.grantBank({ gear: 60, cell: 30, chip: 10, pump: 10 });
-  // Posts come with an upgrade off the core, not with a wave.
-  window.__tubes.menu.act('buy:route-posts');
+  window.__tubes.siege.coins(1000);
 });
 await frames(8);
 const full = (await cuff()).studs.filter((s) => s.id.startsWith('tool:'));
-const want = ['maker', 'belt', 'combiner', 'chest', 'post', 'wall', 'piston', 'flamer', 'turret', 'tesla', 'mortar', 'delete'];
+const want = ['turret', 'piston', 'flamer', 'tesla', 'mortar'];
 check(
   want.every((t) => full.some((s) => s.id === `tool:${t}`)),
   `the full arsenal is on the palm: ${full.length} tiles (${full.map((s) => s.id.slice(5)).join(', ')})`,
@@ -285,90 +296,56 @@ await frames(6);
 await poke(await stud('tool:turret'));
 check((await armed()) === 'turret', 'POKE the TURRET tile: a gun in your hand');
 ids = (await cuff()).studs.map((s) => s.id);
-check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the watch grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
+check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
 await poke(await stud('stow'));
 check((await armed()) === null, 'POKE DOWN: the tool is put away');
-await poke(await stud('tool:maker'));
-check((await armed()) === 'maker', 'pick the MAKER');
-await poke(await stud('tool:maker'));
+await poke(await stud('tool:piston'));
+check((await armed()) === 'piston', 'pick the PISTON');
+await poke(await stud('tool:piston'));
 check((await armed()) === null, 'and poke the same tile again to put it down');
 
-/* ── TOUCH THE CORE ──────────────────────────────────────────────────── */
+/* ── TOUCH A TOWER ───────────────────────────────────────────────────── */
 
-console.log('TOUCH THE CORE');
+console.log('TOUCH A TOWER');
 await pose('left', LEFT_REST);
-await page.evaluate(() => window.__tubes.plant.grantBank({ gear: 12, cell: 4 }));
-const coreUnit = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
-const corePt = { x: (coreUnit.i + 0.5) * 0.35 * S, y: 0.45, z: (coreUnit.j + 0.5) * 0.35 * S, nx: 0, ny: 1, nz: 0 };
-await tipTo(corePt, 0.3);
-await frames(4);
-await tipTo(corePt, 0);
-await frames(14);
-check(
-  (await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('core'),
-  'touch the core: its panel opens — the bank and the upgrades',
+// A turret beside the open lane (the walk stands it; placing by pinch
+// is BuildSystem's and is walked in siege-walk).
+const lane = (await page.evaluate(() => window.__tubes.siege.state())).lanes[0].cells;
+const spot = await page.evaluate(
+  ({ cells }) => {
+    for (const c of cells.slice(2)) {
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (window.__tubes.build.placeAt(c.i + di, c.j + dj, 'turret', 0)) return { i: c.i + di, j: c.j + dj };
+      }
+    }
+    return null;
+  },
+  { cells: lane },
 );
-await page.screenshot({ path: 'shots/hands/core-panel.png' });
-console.log('  · shots/hands/core-panel.png');
-await tipTo(corePt, 0.35);
-const buy = await page.evaluate(() => window.__tubes.menu.buttonWorld('buy:thick-plate'));
-await poke(buy);
-const owned = (await page.evaluate(() => window.__tubes.plant.state())).upgrades;
-check(owned.includes('thick-plate'), `POKE THICK PLATE: bought off the core (${owned.join(', ')})`);
-await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:close')));
-check(!(await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('core'), 'POKE CLOSE: the core panel goes');
+check(Boolean(spot), `a TURRET stands beside the lane (${JSON.stringify(spot)})`);
+const towerPt = { x: (spot.i + 0.5) * 0.35 * S, y: 0.5, z: (spot.j + 0.5) * 0.35 * S, nx: 0, ny: 1, nz: 0 };
+await tipTo(towerPt, 0.3);
+await frames(4);
+await tipTo(towerPt, 0);
+await frames(14);
+check((await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('box'), 'touch the tower: its panel opens');
+await tipTo(towerPt, 0.35);
+await frames(4);
+await page.screenshot({ path: 'shots/hands/tower-panel.png' });
+console.log('  · shots/hands/tower-panel.png');
+const coinsBefore = (await page.evaluate(() => window.__tubes.siege.state())).coins;
+await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:upgrade')));
+let tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');
+let coinsNow = (await page.evaluate(() => window.__tubes.siege.state())).coins;
+check(tw?.level === 2 && coinsNow < coinsBefore, `POKE UPGRADE: level ${tw?.level}, ${coinsBefore} → ${coinsNow} coins`);
+await frames(6);
+await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:remove')));
+tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');
+const coinsSold = (await page.evaluate(() => window.__tubes.siege.state())).coins;
+check(!tw && coinsSold > coinsNow, `POKE SELL: the tower is gone and coins come back (${coinsNow} → ${coinsSold})`);
+check(!(await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('box'), 'and its panel goes with it');
 await pose('right', RIGHT_REST);
 await frames(4);
-
-/* ── TWO FISTS ───────────────────────────────────────────────────────── */
-
-console.log('TWO FISTS');
-// A maker near the amber feed, the way a hand would stand it.
-const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
-const placed = await page.evaluate(
-  ({ i, j }) => window.__tubes.build.placeAt(i, j, 'maker', 0),
-  { i: core.i, j: core.j - 2 },
-);
-check(placed, 'a MAKER stands two cells toward the far feed');
-const maker = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'maker');
-const run0 = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.side === 'far');
-const head = [run0.head.x * S, run0.head.y * S, run0.head.z * S];
-// Both hands to the collar (a fist each side of it), and close them.
-await pose('left', [head[0] - 0.06, head[1], head[2] + 0.02]);
-await pose('right', [head[0] + 0.06, head[1], head[2] + 0.02]);
-await frames(6);
-await page.evaluate(() => {
-  window.__tubes.hands.force('left', 'grab', true);
-  window.__tubes.hands.force('right', 'grab', true);
-});
-await frames(6);
-let run = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.side === 'far');
-// Walk both fists to the maker's gland.
-const g = (await page.evaluate(() => window.__tubes.plant.glands('far'))).find((x) => x.unit === maker.id);
-const seat = [(g.x + g.nx * 0.1) * S, g.y * S, (g.z + g.nz * 0.1) * S];
-for (let k = 1; k <= 10; k++) {
-  const p = [head[0] + (seat[0] - head[0]) * (k / 10), head[1] + (seat[1] - head[1]) * (k / 10), head[2] + (seat[2] - head[2]) * (k / 10)];
-  await pose('left', [p[0] - 0.06, p[1], p[2]]);
-  await pose('right', [p[0] + 0.06, p[1], p[2]]);
-  await frames(5);
-}
-const seated = await page
-  .waitForFunction(
-    (u) => {
-      const r = window.__tubes.plant.state().runs.find((x) => x.side === 'far');
-      return r && (r.phase === 'seated' || r.phase === 'flowing') && r.target === u;
-    },
-    maker.id,
-    { timeout: 8000 },
-  )
-  .then(() => true)
-  .catch(() => false);
-run = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.side === 'far');
-check(seated, `two FISTS haul the amber tube into the maker (${run.phase}, ext ${run.ext.toFixed(2)} m)`);
-await page.evaluate(() => {
-  window.__tubes.hands.force('left', 'grab', null);
-  window.__tubes.hands.force('right', 'grab', null);
-});
 
 await browser.close();
 if (fails.length) {

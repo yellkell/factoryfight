@@ -3,50 +3,41 @@
  * anything visible or audible that HAPPENS here leaves as a SiegeFx, and
  * SiegeSystem draws and voices it).
  *
- *   build  — the horn hasn't gone. The NEXT wave's breaches are already
- *            chosen and glowing on your real walls, so you know which
- *            side to wall; the clock runs down (or the horn is sounded
- *            early from the card).
- *   wave   — the TIDE pours out of the plaster, hundreds and then
- *            thousands of them, and paths for the CORE. The guns fire on
- *            their own. When the last one is down, the ladder advances
- *            and the next build phase begins.
- *   fallen — the core went. Nothing moves; the flow takes it from here.
+ * Classic tower defence, in your room:
  *
- * THE PATH. Enemies don't steer, they FLOW: one Dijkstra field over the
- * lattice, rooted at the core, recomputed whenever the plant changes.
- * Free floor costs a step; a cell under standing plant costs a step plus
- * a CHEW price that grows with that plant's hit points. So a long wall
- * with a gap gets walked round (the gap is cheaper), and a closed ring
- * gets chewed through at its thinnest point — which is the whole of
- * tower defence's mazing-vs-blocking argument, settled by one number.
+ *   core   — the floor waits for its CORE. Where it lands decides the
+ *            LANES: up to four glowing roads from cracks at the foot of
+ *            your real walls to the core, laid once and kept.
+ *   build  — the clock runs down (or the horn is sounded early). Towers
+ *            go anywhere on the floor except on a lane.
+ *   wave   — the tide pours out of the open cracks and marches its lanes.
+ *            The towers fire on their own. Anything that reaches the core
+ *            takes a bite out of it and is gone. Every kill drops coins;
+ *            clearing the wave pays a bonus, and the next one opens.
+ *   fallen — the core went.
  *
  * Every distance here is PLANT metres (factory/frame.ts).
  */
 
 import {
   ENEMIES,
-  FACTORY,
   HORDE_KINDS,
-  LINES,
   SIEGE,
   WAVES,
-  type EnemyId,
   WEAPONS,
-  type ItemId,
-  type LineId,
+  type EnemyId,
   type WaveSpec,
   type WeaponId,
 } from '../config.js';
-import { HORDE_CAP, PHASE_BITE, PHASE_EMERGE, PHASE_WALK, crowdShove, type Horde } from './horde.js';
 import { CELL, cellCenter, cellInFloor, worldToCell } from '../floor/grid.js';
-import { floorLayout, type FloorSide } from '../floor/plan.js';
-import { cycleFactor, rangeFactor } from '../game/progress.js';
+import { floorLayout } from '../floor/plan.js';
 import { mulberry32 } from '../game/rng.js';
 import type { Wall } from '../room/walls.js';
 import { PLANT_SCALE } from './frame.js';
+import { HORDE_CAP, PHASE_EMERGE, PHASE_WALK } from './horde.js';
+import { laneAt, laneCellSet, layLanes } from './lanes.js';
 import { dockUnit, isWeapon, placeUnit, removeUnit } from './sim.js';
-import { plant, runSeatedAt, unitAtCell, unitById, type Breach, type SiegeFx, type Unit } from './state.js';
+import { plant, unitAtCell, type Breach, type SiegeFx, type Unit } from './state.js';
 
 /* ── the room, as the siege sees it ─────────────────────────────────────── */
 
@@ -81,20 +72,11 @@ export function waveSpec(n: number): WaveSpec {
   };
 }
 
-/** Everything waves 0..n switch on — cumulative, so arriving at any wave
- *  (a tool's jump, a resumed siege) is self-sufficient. */
+/** Everything waves 0..n put in the catalogue — cumulative, so arriving
+ *  at any wave (a tool's jump, a retry) is self-sufficient. */
 function applyWakes(n: number): void {
   for (let w = 0; w <= n && w < WAVES.length; w++) {
-    const spec = WAVES[w];
-    for (const feedLine of spec.wakes.feeds ?? []) {
-      for (const [side, line] of Object.entries(FACTORY.sides) as Array<[FloorSide, LineId]>) {
-        if (line === feedLine && !plant.feedsAwake[side]) {
-          plant.feedsAwake[side] = true;
-          plant.events.push({ kind: 'feed-wake', side });
-        }
-      }
-    }
-    for (const u of spec.wakes.units ?? []) {
+    for (const u of WAVES[w].wakes.units ?? []) {
       if (!plant.unitsAvailable.includes(u)) plant.unitsAvailable.push(u);
     }
   }
@@ -103,25 +85,27 @@ function applyWakes(n: number): void {
 
 /**
  * MAN THE WALLS. A siege opens on a bare floor and asks for ONE thing:
- * the CORE. It is what they come for, so where it stands is the first
- * decision of the game — and nothing else is offered, no clock runs and
- * no wall cracks until it does (the breaches are picked relative to it,
- * so they can't be chosen before it lands).
+ * the CORE. Where it stands decides where the lanes run, so nothing else
+ * is offered and no clock runs until it lands.
  */
 export function startSiege(atWave = 0): void {
   const sg = plant.siege;
   plant.mode = 'shop';
   plant.orderIndex = -1;
   plant.goalsDone = false;
-  plant.bank = { ...SIEGE.startBank };
+  plant.bank = {};
+  plant.unitsAvailable = [];
   sg.phase = 'core';
   sg.wave = Math.max(0, atWave);
   sg.kills = 0;
-  sg.scrap = 0;
+  sg.coins = SIEGE.startCoins;
   sg.horde.clear();
   sg.streams = [];
   sg.won = sg.wave >= WAVES.length;
   sg.breaches = [];
+  sg.lanes = [];
+  sg.open = 0;
+  sg.laneCells = new Set();
   applyWakes(sg.wave);
 }
 
@@ -148,16 +132,47 @@ export function standCore(): void {
   }
 }
 
+/** THE LANES are laid once, the first time a build phase opens: one per
+ *  breach the siege will ever crack, from the wall's foot to the core. */
+function layTheLanes(): void {
+  const sg = plant.siege;
+  const core = dockUnit();
+  if (!core) return;
+  sg.breaches = pickBreaches(SIEGE.lanes, 0x5eed + core.i * 131 + core.j * 977);
+  sg.lanes = layLanes(sg.breaches, core, 0x1a7e + core.i * 31 + core.j * 17);
+  sg.laneCells = laneCellSet(sg.lanes);
+  // A tower standing where a lane now runs (a retry, a tool) gives way.
+  for (const u of [...plant.units]) {
+    if (u.type !== 'dock' && laneBlocked(u.i, u.j)) {
+      refundTower(u);
+      removeUnit(u);
+    }
+  }
+  plant.generation++;
+}
+
+/** Is (i, j) on a lane? Nothing is built there. */
+export function laneBlocked(i: number, j: number): boolean {
+  const cells = plant.siege.laneCells;
+  return cells.size > 0 && cells.has((i + 4096) * 8192 + (j + 4096));
+}
+
 function beginBuild(n: number): void {
   const sg = plant.siege;
   const spec = waveSpec(n);
+  if (sg.lanes.length === 0) layTheLanes();
+  const was = sg.open;
   sg.phase = 'build';
   sg.wave = n;
   sg.buildT = spec.buildS;
   sg.waveT = 0;
   sg.streams = [];
-  sg.breaches = pickBreaches(spec.breaches, 0x5eed + n * 7919);
-  for (const b of sg.breaches) fx({ kind: 'breach', x: b.x, y: 0, z: b.z });
+  sg.open = Math.max(1, Math.min(spec.breaches, sg.lanes.length));
+  // A crack that opens this wave flares as it goes.
+  for (let k = was; k < sg.open; k++) {
+    const b = sg.breaches[k];
+    if (b) fx({ kind: 'breach', x: b.x, y: 0, z: b.z });
+  }
 }
 
 /** SOUND THE HORN — the build phase ends now (the card's button, and the
@@ -181,7 +196,6 @@ export function soundHorn(): void {
     cellCenter(core.i, core.j, _c);
     fx({ kind: 'horn', x: _c.x, y: 0, z: _c.z });
   }
-  fieldDirty = true;
 }
 
 /* ── THE BREACHES ───────────────────────────────────────────────────────── */
@@ -266,216 +280,26 @@ export function pickBreaches(n: number, seed: number): Breach[] {
   return out.map(({ x, z, nx, nz, wall }) => ({ x, z, nx, nz, wall }));
 }
 
-/* ── THE FLOW FIELD ─────────────────────────────────────────────────────── */
-
-let fieldDirty = true;
-let fieldGen = -1;
-let fieldAge = 0;
-let fI0 = 0;
-let fJ0 = 0;
-let fW = 0;
-let fH = 0;
-let field = new Float32Array(0);
-/** Per field cell: the unit standing there (id, −1 none), whether it is
- *  the core, and the next cell toward the core (index, −1 none). Built
- *  with the field, so a crawler's step is three array reads. */
-let occ = new Int32Array(0);
-let occHp = new Float32Array(0);
-let occDock = new Uint8Array(0);
-let step = new Int32Array(0);
-
-const SQRT2 = Math.SQRT2;
-const NB: ReadonlyArray<[number, number, number]> = [
-  [1, 0, 1],
-  [-1, 0, 1],
-  [0, 1, 1],
-  [0, -1, 1],
-  [1, 1, SQRT2],
-  [1, -1, SQRT2],
-  [-1, 1, SQRT2],
-  [-1, -1, SQRT2],
-];
-
-/** A cell's index in the field (−1 off it). */
-function fieldIndex(i: number, j: number): number {
-  if (i < fI0 || j < fJ0 || i >= fI0 + fW || j >= fJ0 + fH) return -1;
-  return (j - fJ0) * fW + (i - fI0);
-}
-
-function enterCost(idx: number): number {
-  if (occ[idx] < 0 || occDock[idx]) return 1;
-  return 1 + SIEGE.chewBase + occHp[idx] * SIEGE.chewPerHp;
-}
-
-/** A diagonal step may not squeeze between two pieces of plant. */
-function diagonalOpen(i: number, j: number, di: number, dj: number): boolean {
-  const a = fieldIndex(i + di, j);
-  const b = fieldIndex(i, j + dj);
-  return (a < 0 || occ[a] < 0) && (b < 0 || occ[b] < 0);
-}
-
-function rebuildField(): void {
-  const core = dockUnit();
-  fieldDirty = false;
-  fieldGen = plant.generation;
-  fieldAge = 0;
-  if (!core) {
-    fW = fH = 0;
-    return;
-  }
-  // The field covers the floor, every breach, every crawler, and a
-  // margin round them all.
-  let i0 = core.i;
-  let i1 = core.i;
-  let j0 = core.j;
-  let j1 = core.j;
-  const grow = (x: number, z: number): void => {
-    const i = Math.floor(x / CELL);
-    const j = Math.floor(z / CELL);
-    if (i < i0) i0 = i;
-    if (i > i1) i1 = i;
-    if (j < j0) j0 = j;
-    if (j > j1) j1 = j;
-  };
-  grow(floorLayout.left / PLANT_SCALE, floorLayout.far / PLANT_SCALE);
-  grow(floorLayout.right / PLANT_SCALE, floorLayout.near / PLANT_SCALE);
-  for (const b of plant.siege.breaches) grow(b.x, b.z);
-  const h = plant.siege.horde;
-  for (let k = 0; k < h.n; k++) grow(h.x[k], h.z[k]);
-  const pad = SIEGE.fieldPad;
-  fI0 = i0 - pad;
-  fJ0 = j0 - pad;
-  fW = i1 - i0 + 1 + pad * 2;
-  fH = j1 - j0 + 1 + pad * 2;
-  const n = fW * fH;
-  if (field.length < n) {
-    field = new Float32Array(n);
-    occ = new Int32Array(n);
-    occHp = new Float32Array(n);
-    occDock = new Uint8Array(n);
-    step = new Int32Array(n);
-  }
-  field.fill(Infinity, 0, n);
-  occ.fill(-1, 0, n);
-  occDock.fill(0, 0, n);
-  step.fill(-1, 0, n);
-  for (const u of plant.units) {
-    const idx = fieldIndex(u.i, u.j);
-    if (idx < 0) continue;
-    occ[idx] = u.id;
-    occHp[idx] = u.hp;
-    occDock[idx] = u.type === 'dock' ? 1 : 0;
-  }
-  // Dijkstra off the core, on a plain binary heap of (cost, index).
-  const heap: number[] = [];
-  const push = (cost: number, idx: number): void => {
-    heap.push(cost, idx);
-    let c = heap.length / 2 - 1;
-    while (c > 0) {
-      const p = (c - 1) >> 1;
-      if (heap[p * 2] <= heap[c * 2]) break;
-      [heap[p * 2], heap[c * 2]] = [heap[c * 2], heap[p * 2]];
-      [heap[p * 2 + 1], heap[c * 2 + 1]] = [heap[c * 2 + 1], heap[p * 2 + 1]];
-      c = p;
-    }
-  };
-  const pop = (): [number, number] => {
-    const top: [number, number] = [heap[0], heap[1]];
-    const lastI = heap.pop()!;
-    const lastC = heap.pop()!;
-    if (heap.length > 0) {
-      heap[0] = lastC;
-      heap[1] = lastI;
-      let c = 0;
-      const len = heap.length / 2;
-      for (;;) {
-        const l = c * 2 + 1;
-        const r = l + 1;
-        let m = c;
-        if (l < len && heap[l * 2] < heap[m * 2]) m = l;
-        if (r < len && heap[r * 2] < heap[m * 2]) m = r;
-        if (m === c) break;
-        [heap[m * 2], heap[c * 2]] = [heap[c * 2], heap[m * 2]];
-        [heap[m * 2 + 1], heap[c * 2 + 1]] = [heap[c * 2 + 1], heap[m * 2 + 1]];
-        c = m;
-      }
-    }
-    return top;
-  };
-  const start = fieldIndex(core.i, core.j);
-  field[start] = 0;
-  push(0, start);
-  while (heap.length > 0) {
-    const [cost, idx] = pop();
-    if (cost > field[idx]) continue;
-    const ci = (idx % fW) + fI0;
-    const cj = Math.floor(idx / fW) + fJ0;
-    for (const [di, dj, st] of NB) {
-      const nidx = fieldIndex(ci + di, cj + dj);
-      if (nidx < 0) continue;
-      if (di !== 0 && dj !== 0 && !diagonalOpen(ci, cj, di, dj)) continue;
-      // The field is walked BACKWARDS (from the core outward), so the
-      // price paid is the one for the cell being left on the way in —
-      // i.e. the cell we are standing in now.
-      const nc = cost + st * enterCost(idx);
-      if (nc < field[nidx]) {
-        field[nidx] = nc;
-        push(nc, nidx);
-      }
-    }
-  }
-  // Each cell's way down: the neighbour nearest the core.
-  for (let idx = 0; idx < n; idx++) {
-    const ci = (idx % fW) + fI0;
-    const cj = Math.floor(idx / fW) + fJ0;
-    let best = -1;
-    let bestD = field[idx];
-    for (const [di, dj, st] of NB) {
-      const nidx = fieldIndex(ci + di, cj + dj);
-      if (nidx < 0) continue;
-      if (di !== 0 && dj !== 0 && !diagonalOpen(ci, cj, di, dj)) continue;
-      const d = field[nidx] + (st - 1) * 0.01;
-      if (d < bestD) {
-        bestD = d;
-        best = nidx;
-      }
-    }
-    step[idx] = best;
-  }
-}
-
-/** The field's distance-to-core at a cell (Infinity off the field). */
-export function fieldAt(i: number, j: number): number {
-  const idx = fieldIndex(i, j);
-  return idx < 0 ? Infinity : field[idx];
-}
-
-/** Can a crawler stand at (x, z)? Not inside standing plant (they chew
- *  it from outside) — the core's cell included. */
-function walkable(x: number, z: number): boolean {
-  const idx = fieldIndex(Math.floor(x / CELL), Math.floor(z / CELL));
-  return idx < 0 || occ[idx] < 0;
-}
-
 /* ── the tick ───────────────────────────────────────────────────────────── */
 
 const _c = { x: 0, z: 0 };
-const _n = { x: 0, z: 0 };
+const _p = { x: 0, z: 0, dx: 0, dz: 1 };
 
-/** Specs by horde kind index, and each kind's radius (the crowd). */
+/** Specs by horde kind index. */
 const SPECS = HORDE_KINDS.map((k) => ENEMIES[k]);
-const RADII = new Float32Array(SPECS.map((sp) => sp.radius));
 const MAX_R = Math.max(...SPECS.map((sp) => sp.radius));
-/** The largest kind that crowds like the rest (the hulk is bigger). */
-const SMALL_MAX = Math.max(...SPECS.filter((sp) => sp.radius < 0.15).map((sp) => sp.radius));
 const KIND_INDEX: Record<EnemyId, number> = Object.fromEntries(HORDE_KINDS.map((k, i) => [k, i])) as Record<
   EnemyId,
   number
 >;
+/** A crawler placed by a tool, standing still off any lane. */
+const NO_LANE = 255;
 
 /** Weapons by index — what killed a crawler, in the horde's death log. */
 export const WEAPON_ORDER: WeaponId[] = ['turret', 'mortar', 'tesla', 'flamer', 'piston'];
 const W: Record<WeaponId, number> = { turret: 0, mortar: 1, tesla: 2, flamer: 3, piston: 4 };
+/** The death log's cause for one that reached the core. */
+export const LEAK = 9;
 
 function fx(e: SiegeFx): void {
   const list = plant.siege.fx;
@@ -505,24 +329,10 @@ export function siegeTick(dt: number): void {
 function tickSiege(dt: number): void {
   const sg = plant.siege;
   if (frozen || sg.phase === 'off' || sg.phase === 'fallen') return;
-  // The core just landed: the siege begins.
+  // The core just landed: the lanes are laid and the siege begins.
   if (sg.phase === 'core') {
     if (dockUnit()) beginBuild(sg.wave);
     return;
-  }
-
-  if (plant.generation !== fieldGen) fieldDirty = true;
-  fieldAge += dt;
-  // Chew prices move as plant gets bitten, so a live wave re-walks the
-  // field a few times a second even when nothing was built.
-  if (fieldDirty || (sg.phase === 'wave' && fieldAge > 0.5)) rebuildField();
-
-  // Plant knits itself back between bites.
-  for (const u of plant.units) {
-    u.hurtT += dt;
-    if (u.hurtT > SIEGE.repairDelayS && u.hp < u.maxHp) {
-      u.hp = Math.min(u.maxHp, u.hp + SIEGE.repairPerS * dt);
-    }
   }
 
   if (sg.phase === 'build') {
@@ -555,63 +365,68 @@ function tickSiege(dt: number): void {
   }
 }
 
+/** The wave is down: pay the bonus, open the next. */
 function waveCleared(): void {
   const sg = plant.siege;
   const core = dockUnit();
   if (core) cellCenter(core.i, core.j, _c);
+  const bonus = SIEGE.waveBonus + SIEGE.bonusPerWave * (sg.wave + 1);
+  sg.coins += bonus;
   const next = sg.wave + 1;
   if (next === WAVES.length && !sg.won) {
     sg.won = true;
-    fx({ kind: 'victory', x: _c.x, y: 0, z: _c.z });
+    fx({ kind: 'victory', x: _c.x, y: 0, z: _c.z, radius: bonus });
   } else {
-    fx({ kind: 'clear', x: _c.x, y: 0, z: _c.z });
+    fx({ kind: 'clear', x: _c.x, y: 0, z: _c.z, radius: bonus });
   }
   applyWakes(next);
   beginBuild(next);
 }
 
-function spawn(kind: EnemyId, breachIdx: number): number {
+/** One crawler out of an open crack, onto its lane. */
+function spawn(kind: EnemyId, laneIdx: number): number {
   const sg = plant.siege;
-  const nb = Math.max(1, sg.breaches.length);
-  const b = sg.breaches[breachIdx % nb];
-  if (!b) return -1;
-  const spec = ENEMIES[kind];
-  // Spread along the crack, so a stream is a crowd and not a queue.
-  const along = (Math.random() - 0.5) * Math.min(0.8, b.wall * 0.45);
-  const tx = -b.nz;
-  const tz = b.nx;
-  const back = 0.04 + Math.random() * 0.08;
-  return sg.horde.add(
-    KIND_INDEX[kind],
-    b.x + tx * along - b.nx * back,
-    b.z + tz * along - b.nz * back,
-    spec.hp,
-    Math.atan2(b.nx, b.nz),
-    breachIdx % nb,
-  );
+  const open = Math.max(1, Math.min(sg.open, sg.lanes.length));
+  const k = laneIdx % open;
+  const lane = sg.lanes[k];
+  if (!lane) return -1;
+  const h = sg.horde;
+  const i = h.add(KIND_INDEX[kind], lane.pts[0], lane.pts[1], ENEMIES[kind].hp, 0, k);
+  if (i < 0) return -1;
+  // A little behind the crack's mouth, so it climbs out rather than pops.
+  h.s[i] = -Math.random() * 0.1;
+  place(i);
+  return i;
 }
 
-/** Every crawler, one step: burn, reel, climb out, flow for the core,
- *  bite what is in the way. Then the crowd shoves itself apart. */
+/** Stand crawler i where its lane says it is (s along, `lane` sideways). */
+function place(i: number): void {
+  const sg = plant.siege;
+  const h = sg.horde;
+  const lane = sg.lanes[h.breach[i]];
+  if (!lane) return;
+  laneAt(lane, Math.max(0, h.s[i]), _p);
+  const side = h.lane[i] * SIEGE.laneWidth;
+  // Inside the wall: it comes out along the wall's own normal.
+  const back = Math.min(0, h.s[i]);
+  h.x[i] = _p.x - _p.dz * side + lane.breach.nx * back;
+  h.z[i] = _p.z + _p.dx * side + lane.breach.nz * back;
+  h.fd[i] = lane.len - h.s[i];
+}
+
+/** Every crawler, one step: burn, reel, climb out, march, and — at the
+ *  end of the lane — hit the core and be gone. */
 function tickHorde(dt: number): void {
   const sg = plant.siege;
   const h = sg.horde;
   const core = dockUnit();
-  let coreX = 0;
-  let coreZ = 0;
-  if (core) {
-    cellCenter(core.i, core.j, _c);
-    coreX = _c.x;
-    coreZ = _c.z;
-  }
-  const nb = Math.max(1, sg.breaches.length);
   for (let i = 0; i < h.n; i++) {
     if (h.dead[i]) continue;
     const spec = SPECS[h.kind[i]];
     if (h.flash[i] > 0) h.flash[i] -= dt;
     h.phaseT[i] += dt;
 
-    // ON FIRE: it burns where it stands, and it still comes.
+    // ON FIRE: it burns as it walks.
     if (h.burnT[i] > 0) {
       h.burnT[i] -= dt;
       h.hp[i] -= h.burnDps[i] * dt;
@@ -620,201 +435,100 @@ function tickHorde(dt: number): void {
         continue;
       }
     }
-    // PUNCHED: thrown back, then reeling.
+    if (h.breach[i] === NO_LANE) continue;
+    const lane = sg.lanes[h.breach[i]];
+    if (!lane) continue;
+    // THROWN back down its lane, then reeling.
     if (h.kT[i] > 0) {
       h.kT[i] -= dt;
-      const nx = h.x[i] + h.kvx[i] * dt;
-      const nz = h.z[i] + h.kvz[i] * dt;
-      if (walkable(nx, nz)) {
-        h.x[i] = nx;
-        h.z[i] = nz;
-      }
+      h.s[i] = Math.max(SIEGE.emergeDepth, h.s[i] - h.ks[i] * dt);
+      place(i);
       continue;
     }
     if (h.stunT[i] > 0) {
       h.stunT[i] -= dt;
       continue;
     }
-    const pace = spec.speed;
-
-    if (h.phase[i] === PHASE_EMERGE) {
-      // Out of the plaster, along the wall's normal.
-      const b = sg.breaches[h.breach[i] % nb];
-      const st = pace * 0.8 * dt;
-      if (b) {
-        h.x[i] += b.nx * st;
-        h.z[i] += b.nz * st;
-      }
-      h.stride[i] += st;
-      if (h.phaseT[i] * pace * 0.8 >= SIEGE.emergeDepth + 0.1) {
-        h.phase[i] = PHASE_WALK;
-        h.phaseT[i] = 0;
-      }
+    const step = spec.speed * h.pace[i] * dt;
+    h.s[i] += step;
+    h.stride[i] += step;
+    h.phase[i] = h.s[i] < SIEGE.emergeDepth ? PHASE_EMERGE : PHASE_WALK;
+    // THE END OF THE LANE: it hits the core and is spent.
+    if (h.s[i] >= lane.len - (CELL * 0.5 + spec.radius)) {
+      if (core) hitCore(core, spec.leak);
+      h.kill(i, LEAK);
+      if (plant.siege.phase === 'fallen') return;
       continue;
     }
-    if (!core) continue;
-
-    const ci = Math.floor(h.x[i] / CELL);
-    const cj = Math.floor(h.z[i] / CELL);
-    const fidx = fieldIndex(ci, cj);
-    const cdx = coreX - h.x[i];
-    const cdz = coreZ - h.z[i];
-    const toCore = Math.sqrt(cdx * cdx + cdz * cdz);
-    h.fd[i] = fidx >= 0 && field[fidx] < Infinity ? field[fidx] : 1e4 + toCore;
-    const reach = CELL * 0.5 + spec.radius + 0.04;
-
-    // At the core: bite it.
-    if (toCore <= reach + CELL * 0.15) {
-      bite(i, core, coreX, coreZ, dt);
-      continue;
-    }
-
-    // The field's next step. Off the field (or lost) — straight at it.
-    let tx = coreX;
-    let tz = coreZ;
-    let blocker = -1;
-    if (fidx >= 0 && field[fidx] < Infinity) {
-      const nx = step[fidx];
-      if (nx >= 0) {
-        tx = ((nx % fW) + fI0 + 0.5) * CELL;
-        tz = (Math.floor(nx / fW) + fJ0 + 0.5) * CELL;
-        if (occ[nx] >= 0 && !occDock[nx]) blocker = nx;
-      }
-    } else if (fidx >= 0 && occ[fidx] >= 0 && !occDock[fidx]) {
-      blocker = fidx;
-    }
-
-    if (blocker >= 0) {
-      const bx = ((blocker % fW) + fI0 + 0.5) * CELL;
-      const bz = (Math.floor(blocker / fW) + fJ0 + 0.5) * CELL;
-      const bdx = bx - h.x[i];
-      const bdz = bz - h.z[i];
-      if (bdx * bdx + bdz * bdz <= reach * reach) {
-        const u = unitById(occ[blocker]);
-        if (u) {
-          bite(i, u, bx, bz, dt);
-          continue;
-        }
-      }
-    }
-
-    h.phase[i] = PHASE_WALK;
-    h.target[i] = -1;
-    // A per-crawler lane, perpendicular to travel, so a column spreads.
-    let dx = tx - h.x[i];
-    let dz = tz - h.z[i];
-    const len = Math.sqrt(dx * dx + dz * dz) || 1;
-    dx /= len;
-    dz /= len;
-    const lane = h.lane[i] * CELL * 1.1;
-    const ox = tx - dz * lane - h.x[i];
-    const oz = tz + dx * lane - h.z[i];
-    const l2 = Math.sqrt(ox * ox + oz * oz) || 1;
-    const st = Math.min(l2, pace * dt);
-    const nx = h.x[i] + (ox / l2) * st;
-    const nz = h.z[i] + (oz / l2) * st;
-    if (walkable(nx, nz)) {
-      h.x[i] = nx;
-      h.z[i] = nz;
-    }
-    h.stride[i] += st;
-    turnToward(h, i, Math.atan2(ox, oz), dt);
-  }
-
-  // THE CROWD. Overlapping crawlers shove apart — so a tide is a carpet,
-  // not a column of ghosts on one line. Never into plant.
-  h.rebucket();
-  crowdShove(h, RADII, SMALL_MAX, SIEGE.shove, SIEGE.shoveMax, walkable, ++crowdTick);
-  // The giants wade: everything small near a hulk is pushed out of its
-  // way (they are few, so this one can afford to ask the buckets).
-  for (let i = crowdTick & 1; i < h.n; i += 2) {
-    if (h.dead[i] || RADII[h.kind[i]] <= SMALL_MAX) continue;
-    const ri = RADII[h.kind[i]];
-    const xi = h.x[i];
-    const zi = h.z[i];
-    h.near(xi, zi, ri + SMALL_MAX, (j, d) => {
-      if (j === i || RADII[h.kind[j]] > SMALL_MAX) return;
-      const want = (ri + RADII[h.kind[j]]) * 0.9;
-      if (d >= want || d < 1e-4) return;
-      const k = (want - d) / d;
-      const nx = h.x[j] + (h.x[j] - xi) * k;
-      const nz = h.z[j] + (h.z[j] - zi) * k;
-      if (walkable(nx, nz)) {
-        h.x[j] = nx;
-        h.z[j] = nz;
-      }
-    });
+    place(i);
+    // Face along the lane (eased, so a corner reads as a turn).
+    const want = Math.atan2(_p.dx, _p.dz);
+    const d = Math.atan2(Math.sin(want - h.heading[i]), Math.cos(want - h.heading[i]));
+    h.heading[i] += d * Math.min(1, dt * 8);
   }
 }
 
-let crowdTick = 0;
-
-function turnToward(h: Horde, i: number, want: number, dt: number): void {
-  const d = Math.atan2(Math.sin(want - h.heading[i]), Math.cos(want - h.heading[i]));
-  h.heading[i] += d * Math.min(1, dt * 8);
-}
-
-/** One crawler chewing one piece of plant (the core included). */
-function bite(i: number, u: Unit, ux: number, uz: number, dt: number): void {
-  const h = plant.siege.horde;
-  const spec = SPECS[h.kind[i]];
-  turnToward(h, i, Math.atan2(ux - h.x[i], uz - h.z[i]), dt);
-  if (h.phase[i] !== PHASE_BITE || h.target[i] !== u.id) {
-    h.phase[i] = PHASE_BITE;
-    h.target[i] = u.id;
-    h.biteT[i] = spec.biteS * (0.3 + Math.random() * 0.7);
-  }
-  h.stride[i] += dt * 0.15;
-  h.biteT[i] -= dt;
-  if (h.biteT[i] > 0) return;
-  h.biteT[i] = spec.biteS;
-  hurtUnit(u, spec.bite);
-  // Hundreds biting at once would be hundreds of sparks a second: one
-  // in four bites shows.
-  if (u.type === 'dock' || Math.random() < 0.25) {
-    fx({ kind: u.type === 'dock' ? 'core-hit' : 'bite', x: ux, y: 0, z: uz, unit: u.id, enemy: HORDE_KINDS[h.kind[i]] });
-  }
-}
-
-function hurtUnit(u: Unit, dmg: number): void {
-  if (!unitById(u.id)) return;
-  u.hp -= dmg;
-  u.hurtT = 0;
-  if (u.hp > 0) return;
-  if (u.type === 'dock') {
-    u.hp = 0;
-    fall();
-    return;
-  }
-  cellCenter(u.i, u.j, _n);
-  plant.events.push({ kind: 'wreck', unit: u.id });
-  fx({ kind: 'blast', x: _n.x, y: 0.4, z: _n.z, radius: 0.25, unit: u.id });
-  removeUnit(u);
-  fieldDirty = true;
-  // The cell is open NOW: a crawler mid-tick must be able to walk in.
-  const idx = fieldIndex(u.i, u.j);
-  if (idx >= 0) occ[idx] = -1;
-}
-
-function fall(): void {
-  const sg = plant.siege;
-  sg.phase = 'fallen';
-  const core = dockUnit();
-  if (core) cellCenter(core.i, core.j, _c);
+/** Something reached the core. */
+function hitCore(core: Unit, dmg: number): void {
+  core.hp -= dmg;
+  core.hurtT = 0;
+  cellCenter(core.i, core.j, _c);
+  fx({ kind: 'core-hit', x: _c.x, y: 0, z: _c.z, unit: core.id, radius: dmg });
+  if (core.hp > 0) return;
+  core.hp = 0;
+  plant.siege.phase = 'fallen';
   fx({ kind: 'fallen', x: _c.x, y: 0, z: _c.z });
 }
 
-/* ── THE ARSENAL ────────────────────────────────────────────────────────── */
+/* ── THE TOWERS ─────────────────────────────────────────────────────────── */
 
 const SHOT_Y = 0.08; // where a shot lands on a body (plant m up)
 
-function rangeOf(w: WeaponId): number {
-  return WEAPONS[w].range * rangeFactor();
+/** A tower's level (1–3). */
+export function levelOf(u: Unit): number {
+  return u.level ?? 1;
+}
+const lv = (u: Unit) => SIEGE.levels[Math.min(SIEGE.levels.length, levelOf(u)) - 1];
+
+export function rangeOf(u: Unit): number {
+  return WEAPONS[u.type as WeaponId].range * lv(u).range;
+}
+function damageOf(u: Unit): number {
+  return WEAPONS[u.type as WeaponId].damage * lv(u).damage;
 }
 
-/** The crawler a weapon at (x, z) should engage: in range (and outside
- *  any blind spot), nearest the core along the FIELD — the one about to
- *  arrive is the one that matters. −1 for none. */
+/** What the next level costs (null at the top). */
+export function upgradeCost(u: Unit): number | null {
+  if (!isWeapon(u.type) || levelOf(u) >= SIEGE.levels.length) return null;
+  return Math.round(WEAPONS[u.type as WeaponId].cost * SIEGE.levels[levelOf(u)].cost);
+}
+
+/** Buy the next level. */
+export function upgradeTower(u: Unit): boolean {
+  const cost = upgradeCost(u);
+  const sg = plant.siege;
+  if (cost === null || sg.coins < cost) return false;
+  sg.coins -= cost;
+  u.level = levelOf(u) + 1;
+  u.spent = (u.spent ?? 0) + cost;
+  cellCenter(u.i, u.j, _c);
+  fx({ kind: 'upgrade', x: _c.x, y: 0, z: _c.z, unit: u.id, weapon: u.type as WeaponId });
+  plant.generation++;
+  return true;
+}
+
+/** What selling it would return. */
+export function sellValue(u: Unit): number {
+  return Math.round((u.spent ?? 0) * SIEGE.sellBack);
+}
+
+/** Its coins back (a share), as it is taken off the floor. */
+export function refundTower(u: Unit): void {
+  plant.siege.coins += sellValue(u);
+}
+
+/** The crawler a tower at (x, z) should engage: in range (and outside any
+ *  blind spot), FIRST — the one with least lane left to the core. */
 function pickTarget(x: number, z: number, range: number, minRange = 0): number {
   const h = plant.siege.horde;
   let best = -1;
@@ -835,15 +549,7 @@ function pickTarget(x: number, z: number, range: number, minRange = 0): number {
   return best;
 }
 
-/** Is a fuel-burning weapon plumbed: its line's tube seated and pouring? */
-function fuelled(u: Unit): boolean {
-  const need = WEAPONS[u.type as WeaponId].fuel;
-  if (!need) return true;
-  const run = runSeatedAt(u.id);
-  return Boolean(run && run.phase === 'flowing' && run.line.id === need);
-}
-
-/** Slew a weapon's head toward a yaw; true once it is near enough to fire. */
+/** Slew a tower's head toward a yaw; true once it is near enough to fire. */
 function slew(u: Unit, want: number, dt: number, tolerance = 0.3): boolean {
   const yaw = u.yaw ?? 0;
   const d = Math.atan2(Math.sin(want - yaw), Math.cos(want - yaw));
@@ -861,15 +567,16 @@ function tickWeapons(dt: number): void {
     u.cool = Math.max(0, (u.cool ?? 0) - dt);
     u.firedT = (u.firedT ?? 99) + dt;
     u.look = (u.look ?? 0) - dt;
-    if (!fuelled(u)) continue;
     cellCenter(u.i, u.j, _c);
-    const range = rangeOf(w);
+    const range = rangeOf(u);
     // Keep the one it has while it is alive and in reach; look again
-    // twice a second for something nearer the core.
+    // twice a second for one nearer the core.
     let ti = -1;
     const hint = u.tgtAt ?? -1;
     if (u.tgt && hint >= 0 && hint < h.n && h.uid[hint] === u.tgt && !h.dead[hint]) {
-      const d = Math.hypot(h.x[hint] - _c.x, h.z[hint] - _c.z);
+      const dx = h.x[hint] - _c.x;
+      const dz = h.z[hint] - _c.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
       if (d <= range && d >= (spec.minRange ?? 0)) ti = hint;
     }
     if (ti < 0 || u.look <= 0) {
@@ -882,7 +589,7 @@ function tickWeapons(dt: number): void {
     const want = Math.atan2(h.x[ti] - _c.x, h.z[ti] - _c.z);
     const aimed = slew(u, want, dt, w === 'flamer' || w === 'piston' ? 0.5 : 0.3);
     if (!aimed || u.cool > 0) continue;
-    u.cool = spec.cycleS * cycleFactor();
+    u.cool = spec.cycleS / lv(u).rate;
     u.firedT = 0;
     const yaw = u.yaw ?? want;
     const reach = w === 'mortar' ? 0.22 : w === 'piston' ? 0.12 : 0.18;
@@ -898,45 +605,55 @@ function tickWeapons(dt: number): void {
       continue;
     }
     fx({ kind: 'fire', x: mx, y: my, z: mz, weapon: w, unit: u.id, yaw });
-    if (w === 'tesla') arc(ti, mx, my, mz);
-    else shoot(w, mx, my, mz, ti);
+    if (w === 'tesla') arc(u, ti, mx, my, mz);
+    else shoot(u, mx, my, mz, ti);
   }
 }
 
 /** A round in flight (turret slugs, mortar shells). */
-function shoot(w: WeaponId, x: number, y: number, z: number, ti: number): void {
+function shoot(u: Unit, x: number, y: number, z: number, ti: number): void {
+  const w = u.type as WeaponId;
   const spec = WEAPONS[w];
   const sg = plant.siege;
   const h = sg.horde;
   const d = Math.hypot(h.x[ti] - x, h.z[ti] - z);
   // A shell leads its target: it lands where the crawler WILL be.
-  const lead = w === 'mortar' ? (d / (spec.speed ?? 3)) * 1.6 : 0;
-  const hd = h.heading[ti];
-  const pace = h.phase[ti] === PHASE_WALK ? SPECS[h.kind[ti]].speed : 0;
+  let tx = h.x[ti];
+  let tz = h.z[ti];
+  if (w === 'mortar' && h.breach[ti] !== NO_LANE) {
+    const lane = sg.lanes[h.breach[ti]];
+    const flight = (d / (spec.speed ?? 3)) * 1.6;
+    if (lane) {
+      laneAt(lane, h.s[ti] + SPECS[h.kind[ti]].speed * h.pace[ti] * flight, _p);
+      tx = _p.x;
+      tz = _p.z;
+    }
+  }
   sg.shots.push({
     id: sg.nextShot++,
     weapon: w,
     x0: x,
     y0: y,
     z0: z,
-    x1: h.x[ti] + Math.sin(hd) * pace * lead,
+    x1: tx,
     y1: SHOT_Y,
-    z1: h.z[ti] + Math.cos(hd) * pace * lead,
+    z1: tz,
     target: w === 'mortar' ? -1 : h.uid[ti],
     at: ti,
     t: 0,
     dur: Math.max(0.05, d / (spec.speed ?? 10)) * (w === 'mortar' ? 1.6 : 1),
+    damage: damageOf(u),
   });
 }
 
 /** TESLA: bites one, jumps to the nearest it hasn't bitten, and on. */
-function arc(ti: number, x: number, y: number, z: number): void {
+function arc(u: Unit, ti: number, x: number, y: number, z: number): void {
   const spec = WEAPONS.tesla;
   const h = plant.siege.horde;
   const hit: number[] = [];
   const path: number[] = [x, y, z];
   let cur = ti;
-  let dmg = spec.damage;
+  let dmg = damageOf(u);
   const reach = spec.chainReach ?? 0.5;
   for (let hop = 0; cur >= 0 && hop <= (spec.chain ?? 0); hop++) {
     hit.push(cur);
@@ -959,35 +676,33 @@ function arc(ti: number, x: number, y: number, z: number): void {
   fx({ kind: 'arc', x, y, z, weapon: 'tesla', path });
 }
 
+/** Throw crawler i back down its lane by `dist` over `kt` seconds. */
+function knock(i: number, dist: number, kt: number, stun: number): void {
+  const h = plant.siege.horde;
+  if (h.breach[i] === NO_LANE || dist <= 0) return;
+  h.ks[i] = dist / kt;
+  h.kT[i] = kt;
+  h.stunT[i] = Math.max(h.stunT[i], stun);
+}
+
 /** PISTON: the ram drives out and throws the whole front rank back the
  *  way it came — everything in a short cone ahead of it. */
 function punch(u: Unit, mx: number, mz: number, yaw: number): void {
   const spec = WEAPONS.piston;
   const h = plant.siege.horde;
-  const reach = rangeOf('piston');
+  const reach = rangeOf(u);
   const cone = spec.cone ?? 0.7;
+  const dmg = damageOf(u);
   cellCenter(u.i, u.j, _c);
-  let hits = 0;
   h.near(_c.x, _c.z, reach + MAX_R, (i, d) => {
     const a = Math.atan2(h.x[i] - _c.x, h.z[i] - _c.z);
     const off = Math.abs(Math.atan2(Math.sin(a - yaw), Math.cos(a - yaw)));
     if (off > cone && d > 0.12) return;
-    hits++;
-    hurt(i, spec.damage, W.piston);
+    hurt(i, dmg, W.piston);
     if (h.dead[i]) return;
     const give = SPECS[h.kind[i]].give;
-    // Thrown along the ram, a little fanned so the rank scatters.
-    const throwYaw = yaw + (a - yaw) * 0.5;
-    const dist = (spec.knock ?? 0.9) * give * (1 - (d / (reach + MAX_R)) * 0.5);
-    const kt = 0.22;
-    h.kvx[i] = (Math.sin(throwYaw) * dist) / kt;
-    h.kvz[i] = (Math.cos(throwYaw) * dist) / kt;
-    h.kT[i] = kt;
-    h.stunT[i] = (spec.stunS ?? 0.5) * give;
-    h.phase[i] = PHASE_WALK;
-    h.target[i] = -1;
+    knock(i, (spec.knock ?? 0.9) * give * (1 - (d / (reach + MAX_R)) * 0.5), 0.22, (spec.stunS ?? 0.5) * give);
   });
-  void hits;
   fx({
     kind: 'punch',
     x: mx + Math.sin(yaw) * 0.2,
@@ -1004,8 +719,10 @@ function punch(u: Unit, mx: number, mz: number, yaw: number): void {
 function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
   const spec = WEAPONS.flamer;
   const h = plant.siege.horde;
-  const reach = rangeOf('flamer');
+  const reach = rangeOf(u);
   const cone = spec.cone ?? 0.5;
+  const dmg = damageOf(u);
+  const burnDps = (spec.burn?.dps ?? 5) * lv(u).damage;
   let hits = 0;
   h.near(x, z, reach + MAX_R, (i, d) => {
     const a = Math.atan2(h.x[i] - x, h.z[i] - z);
@@ -1013,8 +730,8 @@ function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
     if (off > cone && d > 0.15) return;
     hits++;
     h.burnT[i] = Math.max(h.burnT[i], spec.burn?.s ?? 2);
-    h.burnDps[i] = Math.max(h.burnDps[i], spec.burn?.dps ?? 5);
-    hurt(i, spec.damage, W.flamer, false);
+    h.burnDps[i] = Math.max(h.burnDps[i], burnDps);
+    hurt(i, dmg, W.flamer, false);
   });
   fx({ kind: 'flame', x, y, z, weapon: 'flamer', unit: u.id, yaw, reach });
   // Every so often the flame sets the floor alight where it lands.
@@ -1027,7 +744,7 @@ function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
   }
 }
 
-/** Burning floor: anything standing in it catches. */
+/** Burning floor: anything walking through it catches. */
 function tickFires(dt: number): void {
   const sg = plant.siege;
   const h = sg.horde;
@@ -1064,18 +781,13 @@ function tickShots(dt: number): void {
     sg.shots.splice(sg.shots.indexOf(s), 1);
     const spec = WEAPONS[s.weapon];
     const cause = W[s.weapon];
+    const dmg = s.damage ?? spec.damage;
     if (spec.splash) {
       const r = spec.splash;
       h.near(s.x1, s.z1, r + MAX_R, (i, d) => {
-        hurt(i, spec.damage * (d < r * 0.5 ? 1 : 0.6), cause);
-        // The blast throws the survivors outward.
-        if (!h.dead[i] && d > 1e-3) {
-          const give = SPECS[h.kind[i]].give * (1 - d / (r + MAX_R));
-          const kt = 0.18;
-          h.kvx[i] = (((h.x[i] - s.x1) / d) * 0.35 * give) / kt;
-          h.kvz[i] = (((h.z[i] - s.z1) / d) * 0.35 * give) / kt;
-          h.kT[i] = kt;
-        }
+        hurt(i, dmg * (d < r * 0.5 ? 1 : 0.6), cause);
+        // The blast throws the survivors back down their lane.
+        if (!h.dead[i]) knock(i, 0.3 * SPECS[h.kind[i]].give * (1 - d / (r + MAX_R)), 0.18, 0);
       });
       fx({ kind: 'shell', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon, radius: r });
     } else {
@@ -1091,7 +803,7 @@ function tickShots(dt: number): void {
         });
       }
       if (ti >= 0) {
-        hurt(ti, spec.damage, cause);
+        hurt(ti, dmg, cause);
         fx({ kind: 'hit', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon });
       }
     }
@@ -1107,34 +819,20 @@ function hurt(i: number, dmg: number, cause: number, flash = true): void {
   if (h.hp[i] <= 0) die(i, cause);
 }
 
-/** It goes down: logged for the renderer, and it PAYS — a sliver of a
- *  gear each, and the big ones in whole parts. */
+/** It goes down: logged for the renderer, and its coins drop. */
 function die(i: number, cause: number): void {
   const sg = plant.siege;
   const h = sg.horde;
   if (h.dead[i]) return;
   h.kill(i, cause);
   sg.kills++;
-  const spec = SPECS[h.kind[i]];
-  sg.scrap += spec.scrap;
-  let paid = false;
-  while (sg.scrap >= 1) {
-    sg.scrap -= 1;
-    plant.bank.gear = (plant.bank.gear ?? 0) + 1;
-    paid = true;
-  }
-  for (const [item, n] of Object.entries(spec.bounty) as Array<[ItemId, number]>) {
-    plant.bank[item] = (plant.bank[item] ?? 0) + n;
-    paid = true;
-  }
-  if (paid) plant.events.push({ kind: 'bank' });
+  sg.coins += SPECS[h.kind[i]].coin;
 }
 
 /* ── tools ──────────────────────────────────────────────────────────────── */
 
 /** TOOLS ONLY. Stand the siege down: no clock, no breaches, no crawlers,
- *  and the core lifted — the look tools that shoot the shop want TUBES'
- *  free floor, not a fight going on under the camera. */
+ *  and the core lifted. */
 export function standDown(): void {
   const sg = plant.siege;
   sg.phase = 'off';
@@ -1143,16 +841,16 @@ export function standDown(): void {
   sg.shots = [];
   sg.fires = [];
   sg.breaches = [];
+  sg.lanes = [];
+  sg.open = 0;
+  sg.laneCells = new Set();
   const core = dockUnit();
   if (core) removeUnit(core);
 }
 
-/** A breach's line colour — the crack glows in the colour of the deepest
- *  line awake, because the thing in the wall has been drinking it. */
+/** The cracks and lanes glow the tide's own magenta. */
 export function breachHex(): number {
-  if (plant.feedsAwake.right) return LINES.volt.glow;
-  if (plant.feedsAwake.left) return LINES.coolant.glow;
-  return 0xff4a26;
+  return 0xff2bd6;
 }
 
 /** The core's health, 0..1 (1 with no core standing). */
@@ -1170,19 +868,19 @@ export function siegeFrozen(): boolean {
   return frozen;
 }
 
-/** TOOLS ONLY: stand a crawler anywhere, already walking. */
+/** TOOLS ONLY: stand a crawler anywhere, off every lane (it stands
+ *  still and can be shot — a sitter for a portrait). */
 export function debugPlace(kind: EnemyId, x: number, z: number, heading = 0): void {
   const h = plant.siege.horde;
-  const i = h.add(KIND_INDEX[kind], x, z, ENEMIES[kind].hp, heading, 0);
+  const i = h.add(KIND_INDEX[kind], x, z, ENEMIES[kind].hp, heading, NO_LANE);
   if (i < 0) return;
   h.phase[i] = PHASE_WALK;
+  h.fd[i] = 1e4;
 }
 
-/** Headless: everything every wave switches on, on now — every feed
- *  awake, every machine and weapon in the catalogue. */
+/** Headless: every tower in the catalogue now. */
 export function debugWakeAll(): void {
   applyWakes(WAVES.length - 1);
-  plant.generation++;
 }
 
 /** Headless: a clean floor for a portrait — every crawler, round and
@@ -1194,10 +892,13 @@ export function debugClear(): void {
   sg.shots.length = 0;
   sg.fires.length = 0;
   if (sg.phase === 'build') sg.buildT = 9999;
+  // …and the core whole again (a stress test may have let it fall).
+  const core = dockUnit();
+  if (core) core.hp = core.maxHp;
+  if (sg.phase === 'fallen') sg.phase = 'build';
 }
 
-/** Headless: every crawler on the floor this many times as hard to
- *  kill — so a portrait can wait for the shot without the sitter dying. */
+/** Headless: every crawler on the floor this many times as hard to kill. */
 export function debugTough(mult: number): void {
   const h = plant.siege.horde;
   for (let i = 0; i < h.n; i++) {
@@ -1206,8 +907,7 @@ export function debugTough(mult: number): void {
   }
 }
 
-/** Headless: jump the ladder to wave `n` (its build phase, its wakes,
- *  its breaches) — so a tool can sound a real tide. */
+/** Headless: jump the ladder to wave `n`'s build phase. */
 export function debugJump(n: number): void {
   const sg = plant.siege;
   sg.horde.clear();
@@ -1218,33 +918,40 @@ export function debugJump(n: number): void {
   beginBuild(n);
 }
 
-/** Headless: crack `n` breaches now (a flood wants more than one door). */
+/** Headless: open `n` lanes now. */
 export function debugBreaches(n: number): void {
-  plant.siege.breaches = pickBreaches(n, 0xb4ea + n);
-  for (const b of plant.siege.breaches) fx({ kind: 'breach', x: b.x, y: 0, z: b.z });
-  fieldDirty = true;
+  const sg = plant.siege;
+  const was = sg.open;
+  sg.open = Math.max(1, Math.min(n, sg.lanes.length));
+  for (let k = was; k < sg.open; k++) {
+    const b = sg.breaches[k];
+    if (b) fx({ kind: 'breach', x: b.x, y: 0, z: b.z });
+  }
 }
 
-/** Headless: drop crawlers at a breach right now. */
+/** Headless: drop crawlers onto a lane right now. */
 export function debugSpawn(kind: EnemyId, breach = 0, count = 1): void {
   for (let k = 0; k < count; k++) spawn(kind, breach);
 }
 
-/** Headless: a whole tide at once, spread over every breach, already
- *  out of the wall — for portraits and frame-time checks. */
+/** Headless: a whole tide at once, strung out along every open lane. */
 export function debugFlood(kind: EnemyId, count: number): void {
   const sg = plant.siege;
-  const nb = Math.max(1, sg.breaches.length);
   const h = sg.horde;
+  const open = Math.max(1, sg.open);
   for (let k = 0; k < count; k++) {
-    const b = k % nb;
-    const i = spawn(kind, b);
+    const i = spawn(kind, k % open);
     if (i < 0) break;
-    const br = sg.breaches[b];
-    if (!br) continue;
-    const out = SIEGE.emergeDepth + 0.15 + Math.random() * 1.6;
-    h.x[i] += br.nx * out + (Math.random() - 0.5) * 0.6;
-    h.z[i] += br.nz * out + (Math.random() - 0.5) * 0.6;
+    const lane = sg.lanes[h.breach[i]];
+    if (!lane) continue;
+    h.s[i] = SIEGE.emergeDepth + Math.random() * lane.len * 0.5;
     h.phase[i] = PHASE_WALK;
+    place(i);
   }
 }
+
+/** Headless: coins into the purse. */
+export function debugCoins(n: number): void {
+  plant.siege.coins += n;
+}
+

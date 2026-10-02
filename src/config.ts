@@ -926,19 +926,14 @@ export interface EnemySpec {
   hp: number;
   /** Plant metres per second, flat out. */
   speed: number;
-  /** One bite: damage dealt, and seconds between bites. */
-  bite: number;
-  biteS: number;
-  /** Body radius — the hit circle, the crowd spacing, the mesh's scale. */
+  /** What it does to the core if it gets there (then it is gone). */
+  leak: number;
+  /** Body radius — the hit circle and the mesh's scale. */
   radius: number;
   /** How far a piston's punch throws it (1 = all the way). */
   give: number;
-  /** GEARS banked per kill — fractional; the core keeps the change, so
-   *  every twenty-odd mites killed is a gear. The swarm pays for the
-   *  guns that kill it. */
-  scrap: number;
-  /** Whole parts dropped into the bank when it dies. */
-  bounty: Partial<Record<ItemId, number>>;
+  /** COINS it drops when it dies. */
+  coin: number;
   /** Its neon. */
   neon: number;
   /** The one line on the WAVES page. */
@@ -950,13 +945,11 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     id: 'mite',
     name: 'MITE',
     hp: 6,
-    speed: 0.5,
-    bite: 1,
-    biteS: 0.8,
+    speed: 0.45,
+    leak: 1,
     radius: 0.05,
     give: 1,
-    scrap: 0.05,
-    bounty: {},
+    coin: 1,
     neon: 0xff2bd6,
     docket: 'The tide. One hit each, and there are thousands.',
   },
@@ -965,28 +958,24 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     name: 'BEETLE',
     hp: 45,
     speed: 0.3,
-    bite: 4,
-    biteS: 0.9,
+    leak: 4,
     radius: 0.085,
     give: 0.6,
-    scrap: 0.35,
-    bounty: {},
+    coin: 5,
     neon: 0xb8ff2b,
-    docket: 'Shell on it. Shrugs off a slug and chews through rail.',
+    docket: 'Shell on it. Shrugs off a slug or five.',
   },
   hulk: {
     id: 'hulk',
     name: 'HULK',
     hp: 900,
     speed: 0.14,
-    bite: 30,
-    biteS: 1.3,
+    leak: 25,
     radius: 0.2,
     give: 0.2,
-    scrap: 0,
-    bounty: { gear: 6, cell: 2 },
+    coin: 60,
     neon: 0xff6a2a,
-    docket: 'Plate and fury, walking in the middle of the tide.',
+    docket: 'Plate and fury. A quarter of the core if it gets there.',
   },
 };
 
@@ -994,11 +983,8 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
 export const HORDE_KINDS: EnemyId[] = ['mite', 'beetle', 'hulk'];
 
 /* ── THE ARSENAL ───────────────────────────────────────────────────────────
- * Weapons COST parts to build and fire for FREE. The factory's job is to
- * fill the core's bank; the bank buys guns, and guns never run dry. Two
- * of them burn fuel instead — the FLAMETHROWER and the TESLA COIL only
- * fire while a feed's tube is seated in them (their fuel is free too,
- * but it has to be PLUMBED, which is what a factory is for).
+ * Towers cost COINS and fire for free. Coins come from kills and from
+ * every wave you clear; a tower can be upgraded twice, or sold back.
  */
 export type WeaponId = 'turret' | 'mortar' | 'tesla' | 'flamer' | 'piston';
 
@@ -1027,8 +1013,8 @@ export interface WeaponSpec {
   /** PUNCH: how far a hit is thrown back (plant m), and stunned for. */
   knock?: number;
   stunS?: number;
-  /** Must have this line's tube seated and pouring to fire. */
-  fuel?: LineId;
+  /** COINS to build one; each upgrade costs a share of this. */
+  cost: number;
   /** The colour it fires in. */
   color: number;
   /** Muzzle height (plant m). */
@@ -1044,19 +1030,20 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     cycleS: 0.14,
     damage: 8,
     speed: 10,
+    cost: 50,
     color: 0xffb347,
     muzzleY: 1.02,
   },
   flamer: {
     id: 'flamer',
     name: 'FLAMETHROWER',
-    docket: 'A cone of fire that sets crawlers burning and the floor alight. Drinks the amber feed.',
+    docket: 'A cone of fire that sets the tide burning and the floor alight.',
     range: 1.15,
     cycleS: 0.1,
     damage: 2.4,
     cone: 0.5,
     burn: { dps: 7, s: 2.5 },
-    fuel: 'mains',
+    cost: 80,
     color: 0xff7a1a,
     muzzleY: 0.82,
   },
@@ -1070,19 +1057,20 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     knock: 0.9,
     stunS: 0.6,
     cone: 0.75,
+    cost: 60,
     color: 0xb8fff4,
     muzzleY: 0.5,
   },
   tesla: {
     id: 'tesla',
     name: 'TESLA COIL',
-    docket: 'A bolt that jumps through ten of them at once. Drinks the violet feed.',
+    docket: 'A bolt that jumps through ten of them at once.',
     range: 1.7,
     cycleS: 0.7,
     damage: 16,
     chain: 10,
     chainReach: 0.5,
-    fuel: 'volt',
+    cost: 100,
     color: 0xc79bff,
     muzzleY: 1.3,
   },
@@ -1096,18 +1084,20 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     damage: 60,
     splash: 0.7,
     speed: 2.4,
+    cost: 120,
     color: 0xffd36a,
     muzzleY: 0.95,
   },
 };
 
 export const SIEGE = {
-  /** The core's hit points — the whole game is keeping this above zero. */
-  coreHp: 420,
-  /** Plant hit points by kind. Walls are the thick ones on purpose; a
-   *  rail is a snack. */
+  /** The core's hit points — the lives. Whatever reaches it takes its
+   *  `leak` off, and the core never heals. */
+  coreHp: 100,
+  /** Plant hit points by kind (towers are never chewed now; kept so a
+   *  unit always has a number). */
   hp: {
-    dock: 420,
+    dock: 100,
     maker: 70,
     belt: 18,
     combiner: 80,
@@ -1121,44 +1111,33 @@ export const SIEGE = {
     flamer: 90,
     piston: 110,
   } as Record<UnitType, number>,
-  /** Damaged plant knits itself back at this many hp/s once no bite has
-   *  landed on it for repairDelayS — a wall that held is a wall again by
-   *  the next wave, without a repair verb to learn. */
-  repairPerS: 6,
-  repairDelayS: 4,
   /** How fast a gun's head slews onto a target, radians per second. */
   slew: 7,
-  /** What standing a defence costs, out of the bank. The factory itself
-   *  is free (never charge for trying); the fight is not. Unbolting
-   *  refunds the bill in full — a wrong wall is not a tax. */
-  cost: {
-    turret: { gear: 3 },
-    wall: { gear: 1 },
-    flamer: { gear: 5 },
-    piston: { gear: 4, cell: 2 },
-    tesla: { gear: 4, chip: 3 },
-    mortar: { gear: 6, pump: 2 },
-  } as Partial<Record<UnitType, Partial<Record<ItemId, number>>>>,
-  /** The bank a siege opens with: enough for the first gun and a stub of
-   *  wall, so the first build phase is about plumbing, not saving. */
-  startBank: { gear: 5 } as Partial<Record<ItemId, number>>,
-  /** How far from a breach's mouth (into the room) a spawned enemy
-   *  steps before it starts pathing — it climbs OUT of the plaster. */
+  /** THE PURSE a siege opens with: three turrets' worth. */
+  startCoins: 150,
+  /** Clearing a wave pays this, plus `bonusPerWave` × its number. */
+  waveBonus: 40,
+  bonusPerWave: 15,
+  /** A sold tower returns this share of every coin put into it. */
+  sellBack: 0.7,
+  /** TOWER LEVELS. Level 2 and 3 cost these shares of the tower's price,
+   *  and multiply its damage, reach and rate of fire. */
+  levels: [
+    { cost: 0, damage: 1, range: 1, rate: 1 },
+    { cost: 0.8, damage: 1.6, range: 1.12, rate: 1.2 },
+    { cost: 1.4, damage: 2.6, range: 1.25, rate: 1.45 },
+  ],
+  /** The most lanes a siege lays (one per breach it will ever open). */
+  lanes: 4,
+  /** A lane's width (plant m): how far a column spreads sideways. */
+  laneWidth: 0.24,
+  /** How far along its lane a crawler is still climbing out of the
+   *  plaster (plant m). */
   emergeDepth: 0.22,
-  /** The flow field's margin round the floor and the breaches, cells. */
-  fieldPad: 3,
-  /** A cell under standing plant costs this much extra to path through,
-   *  plus hp/chewCost — so a long wall is walked round when there is a
-   *  way round, and chewed through when there isn't. */
-  chewBase: 6,
-  chewPerHp: 0.08,
   /** Endless mode: after the ladder, each wave's spawns scale by this. */
   endlessGrowth: 1.15,
-  /** THE CROWD: how hard overlapping crawlers shove apart (0..1 of the
-   *  overlap per tick), and how many neighbours each one checks. */
-  shove: 0.45,
-  shoveMax: 8,
 };
+
 
 export interface WaveSpawn {
   enemy: EnemyId;
@@ -1177,7 +1156,7 @@ export interface WaveSpec {
   name: string;
   /** What this wave TEACHES — one line, on the card while you build. */
   tip: string;
-  /** How many breaches the wall opens for this wave. */
+  /** How many lanes are open this wave (1–4). */
   breaches: number;
   /** Seconds of build time BEFORE this wave (the horn calls it early). */
   buildS: number;
@@ -1204,69 +1183,55 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'first-watch',
     name: 'FIRST WATCH',
-    tip: 'Haul amber into a MAKER, rail its GEARS to the CORE, spend them on TURRETS.',
+    tip: 'They walk the glowing lane. Put TURRETS beside it — anywhere but on it.',
     breaches: 1,
-    buildS: 100,
-    spawns: [s('mite', 50, 3), s('mite', 50, 6, 20)],
-    wakes: { feeds: ['mains'], units: ['dock', 'maker', 'belt', 'turret'] },
+    buildS: 90,
+    spawns: [s('mite', 40, 3), s('mite', 40, 6, 18)],
+    wakes: { units: ['dock', 'turret'] },
   },
   {
     id: 'two-doors',
     name: 'TWO DOORS',
-    tip: 'WALLS cost 1 GEAR. Funnel the tide past your guns.',
+    tip: 'A second lane opens. PISTONS shove the front of a column back.',
     breaches: 2,
-    buildS: 55,
-    spawns: [s('mite', 140, 8, 0, 0), s('mite', 140, 8, 4, 1)],
-    wakes: { units: ['wall'] },
+    buildS: 50,
+    spawns: [s('mite', 100, 8, 0, 0), s('mite', 100, 8, 4, 1)],
+    wakes: { units: ['piston'] },
   },
   {
     id: 'hot-work',
     name: 'HOT WORK',
-    tip: 'FLAMETHROWERS drink amber: haul the feed\'s second spout into one.',
+    tip: 'FLAMETHROWERS set the whole column burning. Beetles take more than one shot.',
     breaches: 2,
-    buildS: 55,
-    spawns: [s('mite', 260, 14, 0, 0), s('mite', 260, 14, 3, 1), s('beetle', 16, 1, 6, 0)],
-    wakes: { feeds: ['coolant'], units: ['flamer'] },
-  },
-  {
-    id: 'the-tide',
-    name: 'THE TIDE',
-    tip: 'PISTONS shove the front of the tide back into the flames.',
-    breaches: 3,
     buildS: 50,
-    spawns: [
-      s('mite', 300, 18, 0, 0),
-      s('mite', 300, 18, 2, 1),
-      s('mite', 200, 14, 5, 2),
-      s('beetle', 30, 1.5, 8, 1),
-    ],
-    wakes: { units: ['combiner', 'chest', 'piston'] },
+    spawns: [s('mite', 200, 12, 0, 0), s('mite', 200, 12, 3, 1), s('beetle', 12, 1, 6, 0)],
+    wakes: { units: ['flamer'] },
   },
   {
     id: 'live-wire',
     name: 'LIVE WIRE',
-    tip: 'TESLA COILS drink violet and arc through ten at a time.',
+    tip: 'Three lanes. TESLA COILS arc through ten at a time.',
     breaches: 3,
-    buildS: 55,
+    buildS: 50,
     spawns: [
-      s('mite', 450, 22, 0, 0),
-      s('mite', 450, 22, 2, 1),
-      s('mite', 300, 18, 4, 2),
-      s('beetle', 40, 2, 6, 0),
+      s('mite', 250, 16, 0, 0),
+      s('mite', 250, 16, 2, 1),
+      s('mite', 200, 14, 4, 2),
+      s('beetle', 25, 1.5, 6, 1),
     ],
-    wakes: { feeds: ['volt'], units: ['tesla'] },
+    wakes: { units: ['tesla'] },
   },
   {
     id: 'heavy-metal',
     name: 'HEAVY METAL',
-    tip: 'MORTARS drop shells into the thick of it. They cost PUMPS: GEAR + CELL.',
+    tip: 'MORTARS drop shells into the thick of it — and here comes a HULK.',
     breaches: 3,
-    buildS: 60,
+    buildS: 55,
     spawns: [
-      s('mite', 600, 26, 0, 0),
-      s('mite', 600, 26, 2, 1),
-      s('mite', 400, 20, 4, 2),
-      s('beetle', 60, 2.5, 5, 1),
+      s('mite', 400, 22, 0, 0),
+      s('mite', 400, 22, 2, 1),
+      s('mite', 300, 18, 4, 2),
+      s('beetle', 40, 2, 5, 1),
       s('hulk', 1, 1, 14, 0),
     ],
     wakes: { units: ['mortar'] },
@@ -1274,12 +1239,12 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'the-hulks',
     name: 'THE HULKS',
-    tip: 'Three hulks in the tide. Burn the tide, shell the hulks.',
+    tip: 'Three hulks in the tide. UPGRADE: poke a tower.',
     breaches: 3,
-    buildS: 60,
+    buildS: 55,
     spawns: [
-      s('mite', 700, 28, 0, 0),
-      s('mite', 700, 28, 2, 1),
+      s('mite', 600, 26, 0, 0),
+      s('mite', 600, 26, 2, 1),
       s('hulk', 3, 0.15, 6, 2),
       s('beetle', 80, 3, 8, 2),
     ],
@@ -1288,7 +1253,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'swarm',
     name: 'SWARM',
-    tip: 'Two and a half thousand. All at once.',
+    tip: 'All four lanes. Two and a half thousand.',
     breaches: 4,
     buildS: 55,
     spawns: [
@@ -1302,9 +1267,9 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'siege-engine',
     name: 'SIEGE ENGINE',
-    tip: 'Beetles in the front rank, hulks behind. Hold the core.',
+    tip: 'Beetles in the front rank, hulks behind.',
     breaches: 4,
-    buildS: 60,
+    buildS: 55,
     spawns: [
       s('beetle', 160, 6, 0, 0),
       s('mite', 700, 30, 2, 1),
@@ -1315,11 +1280,27 @@ export const WAVES: WaveSpec[] = [
     wakes: {},
   },
   {
+    id: 'flood',
+    name: 'FLOOD',
+    tip: 'Three thousand, and the beetles are thicker.',
+    breaches: 4,
+    buildS: 55,
+    spawns: [
+      s('mite', 800, 45, 0, 0),
+      s('mite', 800, 45, 0, 1),
+      s('mite', 800, 45, 0, 2),
+      s('mite', 800, 45, 0, 3),
+      s('beetle', 120, 5, 4, 1),
+      s('beetle', 120, 5, 4, 3),
+    ],
+    wakes: {},
+  },
+  {
     id: 'last-shift',
     name: 'THE LAST SHIFT',
     tip: 'Everything, everywhere, at once.',
     breaches: 4,
-    buildS: 70,
+    buildS: 60,
     spawns: [
       s('mite', 900, 40, 0, 0),
       s('mite', 900, 40, 0, 1),

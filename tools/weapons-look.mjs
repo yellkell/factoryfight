@@ -8,8 +8,7 @@
  * A core in the middle of a bare floor, one weapon out along each road
  * to it, and a crawler set walking in down that road. The camera stands
  * behind the gun, low, looking out at what is coming — and the shutter
- * waits for the gun to fire. The burners are plumbed first: the flamer
- * off the amber feed's twin spout, the coil off the volt feed.
+ * waits for the gun to fire.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -79,34 +78,6 @@ async function lookAt(px, pz, py, tx, ty, tz) {
   });
 }
 
-async function seatRun(key, unit) {
-  const g = (await page.evaluate((s) => window.__tubes.plant.glands(s), key)).find((x) => x.unit === unit);
-  if (!g) return false;
-  await page.evaluate((s) => window.__tubes.plant.grab(s), key);
-  const head = (await page.evaluate(() => window.__tubes.plant.state())).runs.find((r) => r.key === key).head;
-  const seat = { x: g.x + g.nx * 0.1, y: g.y, z: g.z + g.nz * 0.1 };
-  for (let k = 1; k <= 6; k++) {
-    await page.evaluate(
-      ({ a, b, k }) =>
-        window.__tubes.plant.dragTo(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k),
-      { a: head, b: seat, k: k / 6 },
-    );
-    await page.waitForTimeout(140);
-  }
-  const ok = await page
-    .waitForFunction(
-      ({ s, u }) => {
-        const r = window.__tubes.plant.state().runs.find((x) => x.key === s);
-        return r && r.phase === 'flowing' && r.target === u;
-      },
-      { s: key, u: unit },
-      { timeout: 10000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  await page.evaluate(() => window.__tubes.plant.release());
-  return ok;
-}
 
 // The core, every feed awake, a fat bank — then the five guns, one per
 // road. (dx, dz) is the road's direction out from the core, in cells.
@@ -114,7 +85,7 @@ await page.evaluate(() => {
   const t = window.__tubes;
   t.siege.core();
   t.siege.wakeAll();
-  t.plant.grantBank({ gear: 60, cell: 8, chip: 8, pump: 6 });
+  t.siege.coins(1000);
 });
 await page.waitForTimeout(300);
 const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
@@ -127,24 +98,35 @@ const roads = {
   tesla: { at: [0, -2], d: [0, -1], far: 1.0, kind: 'beetle', more: 'mite', crowd: 30 },
   mortar: { at: [-5, -3], d: [1, 0], far: 1.6, kind: 'hulk', more: 'mite', crowd: 60, flip: -1, eye: -0.6 },
 };
-const feedOf = { flamer: 'far:1', tesla: 'right:0' };
 for (const [w, r] of Object.entries(roads)) {
   await page.evaluate(() => {
     const t = window.__tubes;
     t.siege.clear();
     for (const u of t.plant.plan()) if (u.type !== 'dock') t.build.removeAt(u.i, u.j);
-    t.plant.grantBank({ gear: 10, cell: 2, chip: 3, pump: 2 });
+    t.siege.coins(500);
   });
-  const i = core.i + r.at[0];
-  const j = core.j + r.at[1];
-  const stood = await page.evaluate(({ i, j, w }) => window.__tubes.build.placeAt(i, j, w, 0), { i, j, w });
+  const at = await page.evaluate(
+    ({ i, j, w }) => {
+      const near = (w, i, j) => {
+    // The cell asked for, or the nearest free one off every lane.
+    for (let r = 0; r < 4; r++) {
+      for (let di = -r; di <= r; di++) {
+        for (let dj = -r; dj <= r; dj++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+          if (window.__tubes.build.placeAt(i + di, j + dj, w, 0)) return [i + di, j + dj];
+        }
+      }
+    }
+    return null;
+  };
+      return near(w, i, j);
+    },
+    { i: core.i + r.at[0], j: core.j + r.at[1], w },
+  );
+  const stood = Boolean(at);
+  const i = at ? at[0] : core.i + r.at[0];
+  const j = at ? at[1] : core.j + r.at[1];
   const g = { x: (i + 0.5) * CELL, z: (j + 0.5) * CELL };
-  let plumbed = true;
-  if (feedOf[w]) {
-    await page.waitForTimeout(400);
-    const uid = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === w).id;
-    plumbed = await seatRun(feedOf[w], uid);
-  }
   const len = Math.hypot(r.d[0], r.d[1]);
   const ux = r.d[0] / len;
   const uz = r.d[1] / len;
@@ -207,7 +189,7 @@ for (const [w, r] of Object.entries(roads)) {
   await page.waitForTimeout(w === 'piston' ? 400 : 60);
   await page.screenshot({ path: `shots/weapons/${w}.png` });
   await page.evaluate(() => window.__tubes.plant.timeScale(1));
-  console.log(`  ${stood && plumbed && fired ? '✓' : '✗'} ${w} (stood ${stood}, plumbed ${plumbed}, fired ${fired}) · shots/weapons/${w}.png`);
+  console.log(`  ${stood && fired ? '✓' : '✗'} ${w} (stood ${stood}, fired ${fired}) · shots/weapons/${w}.png`);
 }
 
 // The whole ring round the core, from above and behind, mid-wave.
@@ -215,16 +197,23 @@ await page.evaluate(({ ci, cj }) => {
   const t = window.__tubes;
   t.siege.clear();
   for (const u of t.plant.plan()) if (u.type !== 'dock') t.build.removeAt(u.i, u.j);
-  t.plant.grantBank({ gear: 40, cell: 4, chip: 6, pump: 4 });
+  t.siege.coins(1000);
+  const near = (w, i, j) => {
+    // The cell asked for, or the nearest free one off every lane.
+    for (let r = 0; r < 4; r++) {
+      for (let di = -r; di <= r; di++) {
+        for (let dj = -r; dj <= r; dj++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+          if (window.__tubes.build.placeAt(i + di, j + dj, w, 0)) return [i + di, j + dj];
+        }
+      }
+    }
+    return null;
+  };
   const ring = { flamer: [0, -2], piston: [-1, -1], turret: [2, -1], tesla: [-2, 1], mortar: [1, 2] };
-  for (const [w, [di, dj]] of Object.entries(ring)) t.build.placeAt(ci + di, cj + dj, w, 0);
+  for (const [w, [di, dj]] of Object.entries(ring)) near(w, ci + di, cj + dj);
 }, { ci: core.i, cj: core.j });
 await page.waitForTimeout(400);
-{
-  const pl = await page.evaluate(() => window.__tubes.plant.plan());
-  await seatRun('far:1', pl.find((u) => u.type === 'flamer').id);
-  await seatRun('right:0', pl.find((u) => u.type === 'tesla').id);
-}
 await page.evaluate(() => {
   const t = window.__tubes;
   t.siege.breaches(4);

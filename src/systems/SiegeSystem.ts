@@ -52,7 +52,7 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { ENEMIES, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
+import { ENEMIES, HORDE_KINDS, LINES, SIEGE, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { site } from '../game/state.js';
@@ -65,9 +65,12 @@ import {
   coreHealth,
   debugFreeze,
   debugWakeAll,
+  levelOf,
+  rangeOf,
   debugClear,
   debugTough,
   debugBreaches,
+  debugCoins,
   debugJump,
   debugFlood,
   debugPlace,
@@ -80,15 +83,7 @@ import {
   waveSpec,
 } from '../factory/siege.js';
 import { dockUnit, isWeapon } from '../factory/sim.js';
-import { runSeatedAt } from '../factory/state.js';
-
-/** Is a fuel-burner plumbed with its own line, pouring? */
-function fuelledNow(unitId: number, type: string): boolean {
-  const need = WEAPONS[type as WeaponId]?.fuel;
-  if (!need) return true;
-  const run = runSeatedAt(unitId);
-  return Boolean(run && run.phase === 'flowing' && run.line.id === need);
-}
+import { LaneStrips } from './laneStrips.js';
 import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
@@ -110,7 +105,10 @@ export const siegeView: {
     core: number;
     won: boolean;
     breaches: Array<{ x: number; z: number }>;
-    bank: Partial<Record<ItemId, number>>;
+    /** How many lanes are open, and every lane: its length and cells. */
+    open: number;
+    lanes: Array<{ len: number; cells: Array<{ i: number; j: number }>; pts: number[] }>;
+    coins: number;
   };
   horn?: () => void;
   /** TOOLS ONLY: stand the core in the middle of the floor. */
@@ -136,7 +134,9 @@ export const siegeView: {
   enemies?: () => Array<{ id: number; kind: string; x: number; z: number; hp: number; phase: string }>;
   /** Every weapon: what it is, seconds since it last fired, its aim, and
    *  whether it is plumbed (the fuel-burners). */
-  turrets?: () => Array<{ id: number; type: string; fired: number; yaw: number; fuelled: boolean }>;
+  turrets?: () => Array<{ id: number; type: string; fired: number; yaw: number; fuelled: boolean; level: number }>;
+  /** TOOLS ONLY: coins into the purse. */
+  coins?: (n: number) => void;
 } = {};
 
 /** What each round glows. Base parts wear their line; deep parts wear
@@ -409,6 +409,12 @@ interface ArcHw {
 export class SiegeSystem extends createSystem({}) {
   private root!: Group;
   private swarm!: SwarmMesh;
+  private laneStrips!: LaneStrips;
+  /** Level rings round upgraded towers, and the reach of the one whose
+   *  panel is open. */
+  private levelRings!: InstancedMesh;
+  private reach!: Mesh;
+  private reachMat!: MeshBasicMaterial;
   private shards!: Shards;
   private splats!: Splats;
   /** Smoothed milliseconds spent drawing the swarm (tools read it). */
@@ -449,6 +455,29 @@ export class SiegeSystem extends createSystem({}) {
     ensurePlantRoot(this.scene).add(this.root);
     bindRoom(walls);
 
+    this.laneStrips = new LaneStrips(this.root);
+    {
+      const ringGeo = new RingGeometry(0.9, 1, 48);
+      ringGeo.rotateX(-Math.PI / 2);
+      this.levelRings = new InstancedMesh(
+        ringGeo,
+        new MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: AdditiveBlending, depthWrite: false }),
+        96,
+      );
+      this.levelRings.instanceMatrix.setUsage(DynamicDrawUsage);
+      for (let k = 0; k < 96; k++) this.levelRings.setColorAt(k, _col.set(0xffffff));
+      this.levelRings.count = 0;
+      this.levelRings.frustumCulled = false;
+      this.levelRings.renderOrder = 4;
+      this.root.add(this.levelRings);
+      const reachGeo = new RingGeometry(0.985, 1, 96);
+      reachGeo.rotateX(-Math.PI / 2);
+      this.reachMat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: AdditiveBlending, depthWrite: false, opacity: 0.5 });
+      this.reach = new Mesh(reachGeo, this.reachMat);
+      this.reach.visible = false;
+      this.reach.renderOrder = 4;
+      this.root.add(this.reach);
+    }
     this.swarm = new SwarmMesh(this.root);
     this.shards = new Shards(this.root);
     this.splats = new Splats(this.root);
@@ -577,7 +606,9 @@ export class SiegeSystem extends createSystem({}) {
         core: coreHealth(),
         won: sg.won,
         breaches: sg.breaches.map((b) => ({ x: b.x, z: b.z })),
-        bank: { ...plant.bank },
+        open: sg.open,
+        lanes: sg.lanes.map((l) => ({ len: l.len, cells: l.cells.map((c) => ({ ...c })), pts: [...l.pts] })),
+        coins: sg.coins,
       };
     };
     siegeView.horn = () => soundHorn();
@@ -586,6 +617,7 @@ export class SiegeSystem extends createSystem({}) {
     siegeView.flood = (kind, count) => debugFlood(kind, count);
     siegeView.breaches = (n) => debugBreaches(n);
     siegeView.jump = (n) => debugJump(n);
+    siegeView.coins = (n) => debugCoins(n);
     siegeView.perf = () => ({ sim: simMs(), draw: this.drawMs, alive: plant.siege.horde.n, shards: this.shards.live });
     siegeView.place = (kind, x, z, heading = 0) => debugPlace(kind, x, z, heading);
     siegeView.freeze = (on) => debugFreeze(on);
@@ -616,7 +648,8 @@ export class SiegeSystem extends createSystem({}) {
           type: u.type,
           fired: u.firedT ?? 99,
           yaw: u.yaw ?? 0,
-          fuelled: u.type === 'flamer' || u.type === 'tesla' ? fuelledNow(u.id, u.type) : true,
+          fuelled: true,
+          level: u.level ?? 1,
         }));
   }
 
@@ -645,6 +678,7 @@ export class SiegeSystem extends createSystem({}) {
     }
 
     this.drainFx();
+    this.laneStrips.sync(sg.lanes, sg.open, this.clock, SIEGE.laneWidth * 0.65, breachHex());
     this.syncBreaches(false);
     this.tickBreaches(delta);
     const t0 = performance.now();
@@ -657,6 +691,7 @@ export class SiegeSystem extends createSystem({}) {
     this.drawFire(dt);
     this.drawBars();
     this.tickGuns(delta);
+    this.tickLevels();
     this.tickFlares(dt);
     this.sparks.tick(dt);
     this.flames.tick(dt);
@@ -760,6 +795,16 @@ export class SiegeSystem extends createSystem({}) {
         sfx.coreAlarm();
         buzz(this.world, 'both', 0.25, 40);
         break;
+      case 'upgrade': {
+        // A level bought: a ring rises off the floor round it, sparks fly.
+        const hex = f.weapon ? WEAPONS[f.weapon].color : 0xffffff;
+        this.ring(f.x, f.z, hex, 0.42, 0.55);
+        this.ring(f.x, f.z, 0xffffff, 0.26, 0.4);
+        this.sparks.burst(f.x, 0.5, f.z, 40, hex, 1.6, 0.6, 2, 1.3);
+        sfx.stampDone();
+        sfx.ceremonyChord();
+        break;
+      }
       case 'breach':
         this.breachFlare = 1;
         break;
@@ -1067,6 +1112,47 @@ export class SiegeSystem extends createSystem({}) {
     if (this.bars.instanceColor) this.bars.instanceColor.needsUpdate = true;
   }
 
+  /* ── tower levels ───────────────────────────────────────────────────── */
+
+  private tickLevels(): void {
+    let n = 0;
+    for (const u of plant.units) {
+      if (!isWeapon(u.type)) continue;
+      const level = levelOf(u);
+      const refs = liveUnitRefs.get(u.id);
+      // A levelled tower stands a little bigger…
+      if (refs) refs.group.scale.setScalar(1 + (level - 1) * 0.09);
+      if (level < 2) continue;
+      // …and wears a neon ring on the floor per level above the first.
+      cellCenter(u.i, u.j, _c);
+      const hex = WEAPONS[u.type as WeaponId].color;
+      for (let k = 0; k < level - 1 && n < 96; k++) {
+        const r = 0.2 + k * 0.035;
+        trs(_m, _c.x, 0.008 + k * 0.001, _c.z, _q.identity(), r, 1, r);
+        this.levelRings.setMatrixAt(n, _m);
+        this.levelRings.setColorAt(n, _col.set(hex));
+        n++;
+      }
+    }
+    this.levelRings.count = n;
+    this.levelRings.visible = n > 0;
+    this.levelRings.instanceMatrix.needsUpdate = true;
+    if (this.levelRings.instanceColor) this.levelRings.instanceColor.needsUpdate = true;
+    // THE REACH of the tower whose panel is open: a circle on the floor.
+    const u = site.inspect >= 0 ? plant.units.find((x) => x.id === site.inspect) : undefined;
+    if (u && isWeapon(u.type)) {
+      cellCenter(u.i, u.j, _c);
+      const r = rangeOf(u);
+      this.reach.position.set(_c.x, 0.01, _c.z);
+      this.reach.scale.set(r, 1, r);
+      this.reachMat.color.set(WEAPONS[u.type as WeaponId].color);
+      this.reachMat.opacity = 0.45 + 0.15 * Math.sin(this.clock * 4);
+      this.reach.visible = true;
+    } else {
+      this.reach.visible = false;
+    }
+  }
+
   /* ── the guns ───────────────────────────────────────────────────────── */
 
   private tickGuns(delta: number): void {
@@ -1113,7 +1199,7 @@ export class SiegeSystem extends createSystem({}) {
       if (gun.pilot) {
         // The pilot is lit while the weapon can fire: plumbed (for the
         // fuel-burners) and on a live siege. The coil's crown crackles.
-        const live = u.type === 'flamer' || u.type === 'tesla' ? fuelledNow(u.id, u.type) : true;
+        const live = u.type === 'flamer' || u.type === 'tesla' ? true : true;
         const flicker =
           u.type === 'tesla' ? 0.6 + 0.4 * Math.random() : u.type === 'flamer' ? 0.75 + 0.25 * Math.sin(this.clock * 31) : 1;
         gun.pilot.opacity = live ? flicker : 0.08;
@@ -1178,7 +1264,14 @@ export class SiegeSystem extends createSystem({}) {
     this.breachFlare = Math.max(0, this.breachFlare - delta * 0.8);
     const fighting = sg.phase === 'wave';
     const hex = breachHex();
-    for (const hw of this.breachHw) {
+    this.breachHw.forEach((hw, k) => {
+      // A SEALED crack (a later wave's) is a faint scar in the plaster.
+      if (k >= sg.open) {
+        hw.crack.opacity = 0.1;
+        hw.pool.opacity = 0.03;
+        hw.hole.scale.set(0.04, 0.05, 1);
+        return;
+      }
       // Build phase: the crack breathes — a warning, not yet a door.
       // Wave: it is OPEN, the hole yawns, the light is steady and hot.
       const breathe = 0.5 + 0.5 * Math.sin(this.clock * (fighting ? 9 : 2.4));
@@ -1190,7 +1283,7 @@ export class SiegeSystem extends createSystem({}) {
       const s = hw.hole.scale;
       s.x += (0.24 * open + 0.02 - s.x) * Math.min(1, delta * 4);
       s.y += (0.3 * open + 0.02 - s.y) * Math.min(1, delta * 4);
-    }
+    });
   }
 
   /* ── the core ───────────────────────────────────────────────────────── */
@@ -1230,8 +1323,7 @@ export class SiegeSystem extends createSystem({}) {
     const spec = waveSpec(sg.wave);
     const secs = sg.phase === 'build' ? Math.ceil(sg.buildT) : Math.floor(sg.waveT);
     const left = siegeLeft();
-    const bank = plant.bank;
-    const key = `${sg.phase}|${sg.wave}|${secs}|${left}|${sg.kills}|${Math.round(coreHealth() * 100)}|${JSON.stringify(bank)}`;
+    const key = `${sg.phase}|${sg.wave}|${secs}|${left}|${sg.kills}|${Math.round(coreHealth() * 100)}|${sg.coins}`;
     if (key === this.plateKey) return;
     // In a tide the counts change every frame: repaint (and re-upload)
     // the plate at most four times a second.
@@ -1289,25 +1381,19 @@ export class SiegeSystem extends createSystem({}) {
     g.fillStyle = '#0b0a07';
     g.font = font(700, 18);
     g.fillText('CORE', 36, 136);
-    // THE BANK — what you have to build with.
-    let x = 28;
-    g.font = font(700, 26);
-    const items: ItemId[] = ['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'];
-    // The body count owns the right-hand end of the row.
-    const maxX = sg.kills > 0 ? W - 150 : W - 28;
-    for (const item of items) {
-      const n = bank[item] ?? 0;
-      if (n <= 0 && item !== 'gear') continue;
-      if (x + 26 + g.measureText(`${item.toUpperCase()} ${n}`).width > maxX) break;
-      g.fillStyle = `#${ITEM_COLOR[item].toString(16).padStart(6, '0')}`;
-      g.beginPath();
-      g.arc(x + 10, 186, 9, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#fdf6ec';
-      const label = `${item.toUpperCase()} ${n}`;
-      g.fillText(label, x + 26, 197);
-      x += 34 + g.measureText(label).width;
-    }
+    // THE PURSE — what you have to build with.
+    g.fillStyle = '#ffd36a';
+    g.beginPath();
+    g.arc(38, 186, 11, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#0b0a07';
+    g.font = font(700, 14);
+    g.textAlign = 'center';
+    g.fillText('C', 38, 191);
+    g.textAlign = 'left';
+    g.fillStyle = '#fdf6ec';
+    g.font = font(700, 30);
+    g.fillText(`${sg.coins.toLocaleString('en-US')}`, 58, 197);
     // THE BODY COUNT, bottom right — the number a tide is measured in.
     if (sg.kills > 0) {
       g.textAlign = 'right';
