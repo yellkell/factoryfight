@@ -26,12 +26,10 @@
 import { createSystem } from '@iwsdk/core';
 import {
   AdditiveBlending,
-  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   type Texture,
-  CircleGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
@@ -43,7 +41,6 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
   PlaneGeometry,
   Points,
   Quaternion,
@@ -60,6 +57,7 @@ import { siegeFallen } from '../game/flow.js';
 import { CELL, cellCenter } from '../floor/grid.js';
 import { ensurePlantRoot, toPlant } from '../factory/frame.js';
 import { NEON } from '../factory/neon.js';
+import { buildGate, type GateRefs } from '../factory/crystal.js';
 import {
   bindRoom,
   breachHex,
@@ -165,8 +163,6 @@ const Z = new Vector3(0, 0, 1);
 
 let _sphere: SphereGeometry | null = null;
 const sphereGeo = (): SphereGeometry => (_sphere ??= new SphereGeometry(1, 14, 10));
-let _box: BoxGeometry | null = null;
-const boxGeo = (): BoxGeometry => (_box ??= new BoxGeometry(1, 1, 1));
 
 function glow(color: number): MeshBasicMaterial {
   return new MeshBasicMaterial({
@@ -193,55 +189,8 @@ function trs(
 
 /* ── THE BREACH ─────────────────────────────────────────────────────────── */
 
-let _crackTex: CanvasTexture | null = null;
-/** A crack in plaster: a jagged trunk from the floor up, branching, drawn
- *  white so the material colour lights it. */
-function crackTexture(): CanvasTexture {
-  if (_crackTex) return _crackTex;
-  const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 256;
-  const g = c.getContext('2d')!;
-  g.strokeStyle = '#ffffff';
-  g.lineCap = 'round';
-  g.lineJoin = 'round';
-  g.shadowColor = '#ffffff';
-  g.shadowBlur = 10;
-  let seed = 7;
-  const rnd = (): number => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-  const branch = (x: number, y: number, ang: number, len: number, w: number, depth: number): void => {
-    g.lineWidth = w;
-    g.beginPath();
-    g.moveTo(x, y);
-    let px = x;
-    let py = y;
-    const steps = 6;
-    for (let k = 0; k < steps; k++) {
-      ang += (rnd() - 0.5) * 0.9;
-      px += Math.sin(ang) * (len / steps);
-      py -= Math.cos(ang) * (len / steps);
-      g.lineTo(px, py);
-      if (depth > 0 && rnd() < 0.35) branch(px, py, ang + (rnd() < 0.5 ? -1 : 1) * 0.9, len * 0.45, w * 0.6, depth - 1);
-    }
-    g.stroke();
-  };
-  branch(128, 256, 0, 200, 7, 2);
-  branch(110, 256, -0.7, 120, 4, 1);
-  branch(146, 256, 0.7, 120, 4, 1);
-  _crackTex = new CanvasTexture(c);
-  _crackTex.colorSpace = SRGBColorSpace;
-  return _crackTex;
-}
-
-interface BreachHw {
-  group: Group;
-  crack: MeshBasicMaterial;
-  hole: Mesh;
-  pool: MeshBasicMaterial;
-}
+/** A gate's moving parts (factory/crystal.ts builds it). */
+type BreachHw = GateRefs;
 
 /* ── particles ──────────────────────────────────────────────────────────── */
 
@@ -1266,45 +1215,11 @@ export class SiegeSystem extends createSystem({}) {
     for (const hw of this.breachHw) hw.group.removeFromParent();
     this.breachHw = [];
     for (const b of list) {
-      const group = new Group();
-      group.position.set(b.x + b.nx * 0.012, 0, b.z + b.nz * 0.012);
-      group.rotation.y = Math.atan2(b.nx, b.nz);
-      // The hole: dark, an arch at the foot of the plaster.
-      const hole = new Mesh(new CircleGeometry(1, 24, 0, Math.PI), new MeshBasicMaterial({ color: 0x050403 }));
-      hole.scale.set(0.24, 0.3, 1);
-      hole.position.z = 0.002;
-      group.add(hole);
-      const crack = new MeshBasicMaterial({
-        map: crackTexture(),
-        color: breachHex(),
-        transparent: true,
-        blending: AdditiveBlending,
-        depthWrite: false,
-      });
-      const crackMesh = new Mesh(new PlaneGeometry(0.9, 0.9), crack);
-      crackMesh.position.set(0, 0.45, 0.006);
-      crackMesh.renderOrder = 13;
-      group.add(crackMesh);
-      // The glow it throws on the floor in front of it.
-      const pool = glow(breachHex());
-      pool.side = DoubleSide;
-      const poolMesh = new Mesh(new CircleGeometry(1, 28), pool);
-      poolMesh.rotation.x = -Math.PI / 2;
-      poolMesh.scale.set(0.42, 0.3, 1);
-      poolMesh.position.set(0, 0.004, 0.18);
-      group.add(poolMesh);
-      // Rubble: broken plaster on the boards.
-      const rubbleMat = new MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.9, metalness: 0 });
-      for (let k = 0; k < 7; k++) {
-        const chunk = new Mesh(boxGeo(), rubbleMat);
-        const s = 0.025 + Math.random() * 0.035;
-        chunk.scale.set(s, s * 0.6, s * 1.2);
-        chunk.position.set((Math.random() - 0.5) * 0.5, s * 0.3, 0.05 + Math.random() * 0.22);
-        chunk.rotation.set(Math.random(), Math.random() * 3, Math.random());
-        group.add(chunk);
-      }
-      this.root.add(group);
-      this.breachHw.push({ group, crack, hole, pool });
+      const gate = buildGate(breachHex());
+      gate.group.position.set(b.x + b.nx * 0.004, 0, b.z + b.nz * 0.004);
+      gate.group.rotation.y = Math.atan2(b.nx, b.nz);
+      this.root.add(gate.group);
+      this.breachHw.push(gate);
     }
   }
 
@@ -1313,25 +1228,32 @@ export class SiegeSystem extends createSystem({}) {
     this.breachFlare = Math.max(0, this.breachFlare - delta * 0.8);
     const fighting = sg.phase === 'wave';
     const hex = breachHex();
-    this.breachHw.forEach((hw, k) => {
-      // A SEALED crack (a later wave's) is a faint scar in the plaster.
+    this.breachHw.forEach((g, k) => {
+      const u = g.voidMat.uniforms;
+      u.uTime.value = this.clock;
+      // SEALED (a later wave's): a dim frame, no void, nothing turning.
       if (k >= sg.open) {
-        hw.crack.opacity = 0.1;
-        hw.pool.opacity = 0.03;
-        hw.hole.scale.set(0.04, 0.05, 1);
+        g.voidMesh.visible = false;
+        g.tube.color.setHex(hex).multiplyScalar(0.25);
+        g.halo.opacity = 0.05;
+        g.glass.emissiveIntensity = 0.05;
+        g.pool.opacity = 0.02;
         return;
       }
-      // Build phase: the crack breathes — a warning, not yet a door.
-      // Wave: it is OPEN, the hole yawns, the light is steady and hot.
+      // Build phase: the void gathers, slow, breathing — a warning.
+      // Wave: it pours — fast, hot, flaring as each one comes through.
       const breathe = 0.5 + 0.5 * Math.sin(this.clock * (fighting ? 9 : 2.4));
-      hw.crack.color.set(hex);
-      hw.pool.color.set(hex);
-      hw.crack.opacity = Math.min(1, (fighting ? 0.75 : 0.35) + breathe * 0.25 + this.breachFlare * 0.5);
-      hw.pool.opacity = (fighting ? 0.35 : 0.12) + breathe * 0.1 + this.breachFlare * 0.2;
-      const open = fighting ? 1 : 0.25;
-      const s = hw.hole.scale;
-      s.x += (0.24 * open + 0.02 - s.x) * Math.min(1, delta * 4);
-      s.y += (0.3 * open + 0.02 - s.y) * Math.min(1, delta * 4);
+      const want = fighting ? 1 : 0.35;
+      u.uOpen.value += (Math.min(1.4, want + this.breachFlare * 0.4) - u.uOpen.value) * Math.min(1, delta * 3);
+      g.voidMesh.visible = true;
+      const lit = Math.min(1, (fighting ? 0.8 : 0.5) + breathe * 0.2 + this.breachFlare * 0.4);
+      g.tube.color.setHex(hex).multiplyScalar(lit);
+      g.halo.opacity = 0.12 + 0.2 * lit;
+      g.glass.emissiveIntensity = 0.12 + 0.25 * lit;
+      g.pool.opacity = (fighting ? 0.3 : 0.1) + breathe * 0.08 + this.breachFlare * 0.2;
+      const spin = (fighting ? 1.6 : 0.4) * delta;
+      g.rings[0].rotation.z += spin;
+      g.rings[1].rotation.z -= spin * 1.4;
     });
   }
 

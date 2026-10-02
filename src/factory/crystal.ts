@@ -18,6 +18,7 @@ import {
   AdditiveBlending,
   BufferGeometry,
   CircleGeometry,
+  Color,
   ConeGeometry,
   CylinderGeometry,
   DoubleSide,
@@ -27,6 +28,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   OctahedronGeometry,
+  ShaderMaterial,
   SphereGeometry,
   type Object3D,
 } from 'three';
@@ -529,4 +531,198 @@ export function buildCore(group: Group): CoreRefs {
     rings.push(ring);
   }
   return { spin, rings, glass: glassMat, heart, ringMat, edge, cracks };
+}
+
+/* ── the gates ──────────────────────────────────────────────────────────── */
+
+const VOID_VERT = /* glsl */ `
+varying vec2 vP;
+void main() {
+  vP = position.xy;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const VOID_FRAG = /* glsl */ `
+uniform vec3 uColor;
+uniform float uTime;
+uniform float uOpen;   // 0 shut .. 1 pouring
+uniform float uR;
+varying vec2 vP;
+void main() {
+  vec2 p = vP / uR;
+  float r = length(p);
+  float a = atan(p.y, p.x);
+  // Three arms winding in toward the middle, turning faster as it opens.
+  float arms = sin(a * 3.0 + r * 11.0 - uTime * (1.5 + 4.0 * uOpen));
+  arms = smoothstep(0.35, 1.0, arms) * (1.0 - r * 0.6);
+  // A hot eye in the centre and a rim of light at the frame.
+  float eye = pow(max(0.0, 1.0 - r * 1.6), 3.0);
+  float rim = smoothstep(0.7, 1.0, r);
+  float glow = (arms * 0.75 + eye * 0.9 + rim * 0.35) * (0.25 + 0.75 * uOpen);
+  vec3 col = mix(vec3(0.02, 0.0, 0.03), uColor, clamp(glow, 0.0, 1.0));
+  gl_FragColor = vec4(col, 1.0);
+  #include <colorspace_fragment>
+}
+`;
+
+/** What SiegeSystem drives on a gate every frame. */
+export interface GateRefs {
+  group: Group;
+  /** The swirling void inside the frame (uTime, uOpen, uColor). */
+  voidMat: ShaderMaterial;
+  voidMesh: Mesh;
+  /** The gate's own glass, neon and halo — it dims when sealed. */
+  glass: MeshStandardMaterial;
+  tube: MeshBasicMaterial;
+  halo: MeshBasicMaterial;
+  /** The glow it throws on the floor in front of it. */
+  pool: MeshBasicMaterial;
+  /** Two hex rings inside the frame, turned against each other. */
+  rings: Group[];
+}
+
+/**
+ * THE GATE — where the tide comes through your wall. A hexagonal portal
+ * standing flush against the plaster, its flat foot on the floor: a
+ * frame of dark crystal beams traced in the tide's magenta, two hex
+ * rings turning against each other inside it, and in the middle a void
+ * that swirls — slow while it gathers, hard and bright while they pour
+ * out. A crystal pylon stands at each side, and a half-hex of light
+ * spills across the floor in front. Built facing +Z (into the room),
+ * with the wall at z = 0.
+ */
+export function buildGate(hex: number): GateRefs {
+  const group = new Group();
+  const R = 0.27;
+  const cy = R * Math.sin(Math.PI / 3) + 0.012;
+  const glassMat = new MeshStandardMaterial({
+    color: 0x0c0a12,
+    emissive: hex,
+    emissiveIntensity: 0.2,
+    roughness: 0.15,
+    metalness: 0.5,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.92,
+  });
+  const tube = new MeshBasicMaterial({ color: hex, toneMapped: false });
+  const halo = new MeshBasicMaterial({
+    color: hex,
+    transparent: true,
+    opacity: 0.22,
+    blending: AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const own = (g: Object3D): void =>
+    g.traverse((o) => {
+      if (!(o as Mesh).isMesh) return;
+      if (o.name === 'neon') (o as Mesh).material = tube;
+      else if (o.name === 'neon-halo') (o as Mesh).material = halo;
+    });
+
+  const frame = new Group();
+  frame.position.set(0, cy, 0.03);
+  group.add(frame);
+  const W = 0.045;
+  const D = 0.06;
+  const beam = new CylinderGeometry(1, 1, 1, 4).toNonIndexed();
+  beam.rotateY(Math.PI / 4);
+  for (let k = 0; k < 6; k++) {
+    const a0 = (k / 6) * Math.PI * 2;
+    const a1 = ((k + 1) / 6) * Math.PI * 2;
+    const x0 = Math.cos(a0) * R;
+    const y0 = Math.sin(a0) * R;
+    const x1 = Math.cos(a1) * R;
+    const y1 = Math.sin(a1) * R;
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const g = new Group();
+    g.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0);
+    g.rotation.z = Math.atan2(y1 - y0, x1 - x0) - Math.PI / 2;
+    const m = new Mesh(beam, glassMat);
+    m.scale.set(W / Math.SQRT2, len + W * 0.6, D / Math.SQRT2);
+    g.add(m);
+    new Trim().box(0, 0, 0, W, len + W * 0.6, D, 0.005).into(g, hex);
+    frame.add(g);
+  }
+  // A gem at each corner of the frame.
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    const gem = new Mesh(new OctahedronGeometry(0.03, 0), glassMat);
+    gem.position.set(Math.cos(a) * R, Math.sin(a) * R, 0);
+    frame.add(gem);
+    const t = new Group();
+    t.position.copy(gem.position);
+    traceEdges(new Trim(), new OctahedronGeometry(0.03, 0), 0.003).into(t, hex);
+    frame.add(t);
+  }
+
+  // The rings: hex outlines inside the frame, each on its own turn.
+  const rings: Group[] = [];
+  for (const [rr, z, w] of [
+    [R * 0.8, 0.02, 0.0045],
+    [R * 0.6, 0.035, 0.0035],
+  ] as Array<[number, number, number]>) {
+    const ring = new Group();
+    ring.position.set(0, cy, z);
+    const t = new Trim();
+    for (let k = 0; k < 6; k++) {
+      const a0 = (k / 6) * Math.PI * 2;
+      const a1 = ((k + 1) / 6) * Math.PI * 2;
+      t.line(Math.cos(a0) * rr, Math.sin(a0) * rr, 0, Math.cos(a1) * rr, Math.sin(a1) * rr, 0, w);
+    }
+    t.into(ring, hex);
+    group.add(ring);
+    rings.push(ring);
+  }
+
+  // The void.
+  const voidMat = new ShaderMaterial({
+    vertexShader: VOID_VERT,
+    fragmentShader: VOID_FRAG,
+    uniforms: {
+      uColor: { value: new Color(hex) },
+      uTime: { value: 0 },
+      uOpen: { value: 0 },
+      uR: { value: R * 0.95 },
+    },
+  });
+  const voidMesh = new Mesh(new CircleGeometry(R * 0.95, 6), voidMat);
+  voidMesh.position.set(0, cy, 0.012);
+  group.add(voidMesh);
+
+  // The pylons, one either side, sunk into the floor and leaning out.
+  for (const sx of [-1, 1]) {
+    const geo = shardGeo(0.036, 0.26, 0.03);
+    const p = new Mesh(geo, glassMat);
+    p.position.set(sx * (R + 0.08), 0.02, 0.06);
+    p.rotation.z = -sx * 0.14;
+    group.add(p);
+    const t = new Group();
+    t.position.copy(p.position);
+    t.rotation.copy(p.rotation);
+    traceEdges(new Trim(), geo, 0.0035).into(t, hex);
+    group.add(t);
+  }
+
+  // The threshold: a half-hex of light on the floor in front.
+  const pool = new MeshBasicMaterial({
+    color: hex,
+    transparent: true,
+    opacity: 0.15,
+    blending: AdditiveBlending,
+    depthWrite: false,
+    side: DoubleSide,
+    toneMapped: false,
+  });
+  const poolMesh = new Mesh(new CircleGeometry(R * 1.5, 6, 0, Math.PI), pool);
+  poolMesh.rotation.x = -Math.PI / 2;
+  poolMesh.rotation.z = Math.PI;
+  poolMesh.position.set(0, 0.004, 0.02);
+  poolMesh.renderOrder = 8;
+  group.add(poolMesh);
+
+  own(group);
+  return { group, voidMat, voidMesh, glass: glassMat, tube, halo, pool, rings };
 }

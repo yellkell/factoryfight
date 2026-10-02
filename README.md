@@ -76,6 +76,11 @@ top of it.
   hexagonal tube cocked up at the sky.
 - **THE CORE** (gold): a big crystal hovering over its pad, turning inside
   three orbiting halo rings.
+- **THE GATES** (magenta), where the tide comes through your wall: a
+  hexagonal portal flush against the plaster, its frame of dark crystal beams,
+  two hex rings turning against each other inside it, and a void that swirls
+  slowly while it gathers (build) and hard and bright while they pour out. A
+  gate that hasn't opened yet is an empty, dim frame.
 
 The tide and its lanes are magenta. The menus
 use no drawings: at load, a small studio (`src/ui/pictures.ts`) photographs
@@ -128,7 +133,7 @@ node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a towe
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
-node tools/lane-look.mjs    # the lanes from straight above, and a crowd going round a bend
+node tools/lane-look.mjs    # the lanes from above, a crowd going round a bend, a gate open and sealed
 node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
 ```

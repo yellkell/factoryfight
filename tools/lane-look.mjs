@@ -98,4 +98,30 @@ await lookAt(cx, cz + 0.02, 1.2, cx, 0, cz);
 await page.waitForTimeout(200);
 await page.screenshot({ path: 'shots/lanes/above-crowd.png' });
 console.log('  · shots/lanes/above-crowd.png');
+// THE GATES: one pouring, close, from the room; and the same one
+// gathering (build phase) for comparison.
+{
+  // Which way a gate faces: along its lane's first step into the room.
+  const facing = (k) => {
+    const p = st.lanes[k].pts;
+    const dx = p[2] - p[0];
+    const dz = p[3] - p[1];
+    const l = Math.hypot(dx, dz) || 1;
+    return { x: p[0], z: p[1], nx: dx / l, nz: dz / l };
+  };
+  const b = facing(0);
+  const gx = b.x * S;
+  const gz = b.z * S;
+  await lookAt(gx + b.nx * 0.9 + b.nz * 0.25, gz + b.nz * 0.9 - b.nx * 0.25, -0.95, gx, 0.18, gz);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: 'shots/lanes/gate-open.png' });
+  console.log('  · shots/lanes/gate-open.png');
+  const b3 = facing(3);
+  await page.evaluate(() => window.__tubes.siege.breaches(1));
+  await page.waitForTimeout(400);
+  await lookAt(b3.x * S + b3.nx * 0.9, b3.z * S + b3.nz * 0.9, -0.95, b3.x * S, 0.18, b3.z * S);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: 'shots/lanes/gate-sealed.png' });
+  console.log('  · shots/lanes/gate-sealed.png');
+}
 await browser.close();
