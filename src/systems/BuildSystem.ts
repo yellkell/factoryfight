@@ -43,6 +43,7 @@
  * belong to FactorySystem.
  */
 
+import { laneBlocked } from '../factory/siege.js';
 import { intents } from '../input/intents.js';
 import { createSystem } from '@iwsdk/core';
 import {
@@ -482,7 +483,12 @@ export class BuildSystem extends createSystem({}) {
     }
     const rot = this.forced ?? bestRot(this.armed, cell.i, cell.j, handRot);
     const placeable =
-      inFloor && occupied === undefined && unitAvailable(this.armed) && canAfford(this.armed);
+      inFloor &&
+      occupied === undefined &&
+      unitAvailable(this.armed) &&
+      canAfford(this.armed) &&
+      // Nothing stands on a lane — the core included (it is where they end).
+      (this.armed === 'dock' || !laneBlocked(cell.i, cell.j));
 
     // What would this piece feed, and what would feed it?
     let feeds: Cell | null = null;

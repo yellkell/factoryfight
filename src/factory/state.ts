@@ -12,6 +12,7 @@
  */
 
 import { Horde } from './horde.js';
+import type { Lane } from './lanes.js';
 import { Vector3 } from 'three';
 import {
   FACTORY,
@@ -74,6 +75,9 @@ export interface Unit {
   tgt?: number;
   tgtAt?: number;
   look?: number;
+  /** TOWER LEVEL (1–3), and every coin put into it (sells for a share). */
+  level?: number;
+  spent?: number;
 }
 
 /** One supply run off a feed's spout. Field names deliberately mirror
@@ -261,6 +265,8 @@ export interface Shot {
    *  and where in the horde it was when fired (an index hint). */
   target: number;
   at?: number;
+  /** What it does when it lands (the tower's level is in it). */
+  damage?: number;
   t: number;
   dur: number;
 }
@@ -284,7 +290,8 @@ export interface SiegeFx {
     | 'fallen'
     | 'flame'
     | 'punch'
-    | 'shell';
+    | 'shell'
+    | 'upgrade';
   x: number;
   y: number;
   z: number;
@@ -319,12 +326,18 @@ export interface Siege {
   nextShot: number;
   /** Burning floor. */
   fires: Fire[];
-  /** The breaches the NEXT (or current) wave comes out of — telegraphed
-   *  through the whole build phase so you can wall the right side. */
+  /** Every breach the siege will ever open — one per lane, laid when the
+   *  core lands. Only the first `open` of them pour this wave. */
   breaches: Breach[];
+  /** The roads from each breach to the core (factory/lanes.ts). */
+  lanes: Lane[];
+  /** How many lanes are open this wave (the rest are sealed, but drawn). */
+  open: number;
+  /** Every lane cell — nothing can be built on a lane. */
+  laneCells: Set<number>;
   kills: number;
-  /** Fractional GEARS earned by kills, waiting to make a whole one. */
-  scrap: number;
+  /** THE PURSE: coins, earned by kills and cleared waves, spent on towers. */
+  coins: number;
   /** The ladder has been cleared at least once (endless from here). */
   won: boolean;
   fx: SiegeFx[];
@@ -365,8 +378,11 @@ export function freshSiege(): Siege {
     nextShot: 1,
     fires: [],
     breaches: [],
+    lanes: [],
+    open: 0,
+    laneCells: new Set(),
     kills: 0,
-    scrap: 0,
+    coins: 0,
     won: false,
     fx: [],
   };

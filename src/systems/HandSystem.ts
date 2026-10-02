@@ -6,29 +6,31 @@
  * or a tracked hand's pinch and fist. Nothing downstream ever asks which.
  *
  * On hands, there is no card to open to build. Turn your left hand open
- * toward you and two things come up off it:
+ * toward you and ONE panel comes up off it, floating over the palm and
+ * turned to your eyes — one plane, so nothing on it can hide anything
+ * else on it (the watch used to sit on the wrist, and the palm's tiles
+ * floated in front of it):
  *
- *   THE TOOLBELT — over the palm: every piece of plant you can stand
- *     right now, each tile wearing its machine's drawing and its price,
- *     dimmed when the bank can't pay. Poke one with your right index
- *     finger and it is in your hand (aim, pinch to place); poke it again
- *     to put it down. On a fresh floor it holds exactly one tile — the
- *     CORE — because nothing else can stand until the core does.
+ *   THE TOWERS — every tower you can build right now, each tile wearing
+ *     its drawing and its price in coins, dimmed when the purse can't pay.
+ *     Poke one with your right index finger and it is in your hand (aim,
+ *     pinch to place); poke it again to put it down. On a fresh floor it
+ *     holds exactly one tile — the CORE — because nothing else can stand
+ *     until the core does.
  *
- *   THE WATCH — on the inside of the wrist: the wave and the clock to the
- *     horn, and under them the studs a hand has no buttons for —
+ *   THE HEADER — across the top: the wave, the clock to the horn (or how
+ *     many are left), the coins, and the studs a hand has no buttons for —
  *       HORN   call the wave now (build phase only)
  *       PAUSE  the pause plate (BACK while it, or the core, is open)
  *       TURN   a quarter turn for the piece in hand   ┐ only while
  *       DOWN   put the tool away                      ┘ holding one
  *       DONE   while you are marking out the floor
  *
- * Both only take pokes while you are looking at them, and both go away
- * while the left hand is closed — a fist on a tube collar is not a hand
- * asking for a menu.
+ * It only takes pokes while you are looking at it, and goes away while
+ * the left hand is closed.
  *
- * And the money lives on THE CORE: poke the core itself (walk up and
- * touch it) and its panel opens — the bank, and the upgrades it buys.
+ * And a TOWER is touched to be upgraded: reach out and poke one (either
+ * hand), and its panel opens — UPGRADE, SELL.
  */
 
 import { createSystem, InputComponent } from '@iwsdk/core';
@@ -55,7 +57,7 @@ import { cellCenter } from '../floor/grid.js';
 import { PLANT_SCALE } from '../factory/frame.js';
 import { plant } from '../factory/state.js';
 import { siegeLeft, soundHorn, waveSpec } from '../factory/siege.js';
-import { canAfford, dockUnit, unitCost } from '../factory/sim.js';
+import { canAfford, isWeapon, unitCost } from '../factory/sim.js';
 import { font } from '../ui/fonts.js';
 import { GLYPH_DEAD, GLYPH_LIVE, unitGlyph, type GlyphId } from '../ui/icons.js';
 import { UI } from '../ui/panel.js';
@@ -120,31 +122,20 @@ const BELT = {
    *  you can't feel anything through. */
   tile: 0.04,
   pitch: 0.047,
-  perRow: 4,
+  perRow: 3,
   /** How high over the palm the belt floats. */
   lift: 0.075,
 };
 
-/** THE CORE's touchable body (room metres): a drum on a leg. */
-const CORE_TOUCH = { r: 0.12, y0: 0.28, y1: 0.66 };
+/** A tower's (or the core's) touchable body (room metres): a column. */
+const TOWER_TOUCH = { r: 0.1, y0: 0.12, y1: 1.0 };
 
-// Factory first, then the defences, closest-in to farthest-out: a row
-// of plant and a row (or two) of guns, so the palm reads as two trades.
-const TOOL_ORDER: BuildTool[] = [
-  'dock',
-  'maker',
-  'belt',
-  'combiner',
-  'chest',
-  'post',
-  'wall',
-  'piston',
-  'flamer',
-  'turret',
-  'tesla',
-  'mortar',
-  'delete',
-];
+/** The header strip sits this far above the first row of tiles. */
+const HEADER_UP = BELT.tile * 0.6 + 0.01 + CUFF.h / 2;
+
+// The core (alone, until it stands), then the towers in the order the
+// ladder hands them out.
+const TOOL_ORDER: BuildTool[] = ['dock', 'turret', 'piston', 'flamer', 'tesla', 'mortar'];
 const TOOL_NAME: Record<string, string> = {
   dock: 'CORE',
   maker: 'MAKER',
@@ -217,11 +208,11 @@ export class HandSystem extends createSystem({}) {
     right: { point: null, grab: null },
   };
   private pokeCool = 0;
-  private coreArmed: Record<HandSide, boolean> = { left: true, right: true };
+  private towerArmed: Record<HandSide, boolean> = { left: true, right: true };
 
   init(): void {
     this.cuff = new Group();
-    this.cuff.name = 'wrist-cuff';
+    this.cuff.name = 'hand-header';
     this.cuff.visible = false;
     this.cuff.matrixAutoUpdate = false;
     this.scene.add(this.cuff);
@@ -350,7 +341,7 @@ export class HandSystem extends createSystem({}) {
     this.queued.clear();
 
     this.tickLeftHand(delta);
-    this.tickCoreTouch();
+    this.tickTowerTouch();
   }
 
   /* ── THE LEFT HAND: watch + toolbelt ──────────────────────────────────── */
@@ -384,11 +375,16 @@ export class HandSystem extends createSystem({}) {
     this.camera.getWorldPosition(_cam);
     _up.set(0, 1, 0).applyQuaternion(this.camera.getWorldQuaternion(_q));
 
-    // THE WATCH sits on the wrist, upright as you read it: its "up" is
-    // the HEAD's up, projected onto the face.
-    _c.copy(_w).addScaledVector(_f, -CUFF.back).addScaledVector(_n, CUFF.lift);
-    faceBasis(_n, _up, _m, _c);
-    this.cuff.matrix.copy(_m);
+    // THE PANEL floats over the palm and turns to face you, upright as
+    // you read it (its up is the HEAD's up, projected onto the face). The
+    // header rides along the top of it, in the same plane.
+    _c.copy(_pc).addScaledVector(_pn, BELT.lift);
+    _x.copy(_cam).sub(_c).normalize();
+    faceBasis(_x, _up, _m, _c);
+    this.belt.matrix.copy(_m);
+    this.belt.matrixWorldNeedsUpdate = true;
+    _c.set(0, HEADER_UP, 0).applyMatrix4(_m);
+    this.cuff.matrix.copy(_m).setPosition(_c);
     this.cuff.matrixWorldNeedsUpdate = true;
 
     _p.copy(_cam).sub(_pc).normalize();
@@ -400,16 +396,9 @@ export class HandSystem extends createSystem({}) {
     this.cuff.visible = vis;
     this.cuffMat.opacity = this.shown;
 
-    // THE TOOLBELT floats over the palm and turns to face you.
+    // The tiles: only while there is a floor to build on.
     const factory = site.screen === 'factory' && !site.paused && plant.siege.phase !== 'fallen';
     this.belt.visible = vis && factory;
-    if (this.belt.visible) {
-      _c.copy(_pc).addScaledVector(_pn, BELT.lift);
-      _x.copy(_cam).sub(_c).normalize();
-      faceBasis(_x, _up, _m, _c);
-      this.belt.matrix.copy(_m);
-      this.belt.matrixWorldNeedsUpdate = true;
-    }
 
     this.layoutStuds(delta);
     this.layoutBelt(delta);
@@ -502,7 +491,7 @@ export class HandSystem extends createSystem({}) {
   private layoutBelt(delta: number): void {
     if (!this.belt.visible) return;
     const armed = buildView.armed?.() ?? null;
-    const tools = TOOL_ORDER.filter((t) => t === 'delete' ? plant.siege.phase !== 'core' : typeAvailable(t as UnitType));
+    const tools = TOOL_ORDER.filter((t) => typeAvailable(t as UnitType));
     // Same law as the studs: tiles that move under a finger wait for it.
     const sig = tools.join(',');
     if (sig !== this.beltSig) {
@@ -525,8 +514,8 @@ export class HandSystem extends createSystem({}) {
       // toward the fingers — never back over the watch on the wrist.
       t.group.position.set((col - (inRow - 1) / 2) * BELT.pitch, -row * BELT.pitch * 1.12, 0);
       t.group.visible = true;
-      const afford = tool === 'delete' || canAfford(tool as UnitType);
-      const cost = tool === 'delete' ? '' : costLabel(tool as UnitType);
+      const afford = canAfford(tool as UnitType);
+      const cost = costLabel(tool as UnitType);
       // The CORE tile breathes until it is placed: it is the only move.
       const urgent = tool === 'dock';
       const key = `${armed === tool}|${afford}|${cost}|${urgent}`;
@@ -548,7 +537,7 @@ export class HandSystem extends createSystem({}) {
       intents.stow = true; // the same tile again puts it down
       return;
     }
-    if (tool !== 'delete' && !canAfford(tool as UnitType)) {
+    if (!canAfford(tool as UnitType)) {
       sfx.oneHandRattle();
       return;
     }
@@ -564,13 +553,11 @@ export class HandSystem extends createSystem({}) {
     else if (act === 'horn') soundHorn();
   }
 
-  /* ── THE CORE, touched ────────────────────────────────────────────────── */
+  /* ── A TOWER, touched ─────────────────────────────────────────────── */
 
-  /** Walk up to the core and touch it: its panel opens. */
-  private tickCoreTouch(): void {
-    const core = dockUnit();
+  /** Reach out and touch a tower (or the core): its panel opens. */
+  private tickTowerTouch(): void {
     const can =
-      core &&
       intents.handMode &&
       site.screen === 'factory' &&
       !site.paused &&
@@ -578,21 +565,28 @@ export class HandSystem extends createSystem({}) {
       (buildView.armed?.() ?? null) === null;
     for (const hand of ['left', 'right'] as const) {
       const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.[hand]?.object3D as Object3D | undefined;
-      if (!can || !core || intents[hand].mode !== 'hand' || !tipObj) {
-        this.coreArmed[hand] = true;
+      if (!can || intents[hand].mode !== 'hand' || !tipObj) {
+        this.towerArmed[hand] = true;
         continue;
       }
       tipObj.getWorldPosition(_tip);
-      cellCenter(core.i, core.j, _cc);
-      const r = Math.hypot(_tip.x - _cc.x * PLANT_SCALE, _tip.z - _cc.z * PLANT_SCALE);
-      const inside = r < CORE_TOUCH.r && _tip.y > CORE_TOUCH.y0 && _tip.y < CORE_TOUCH.y1;
-      if (inside && this.coreArmed[hand]) {
-        this.coreArmed[hand] = false;
-        site.inspect = core.id;
-        site.paused = true;
+      let hit: number = -1;
+      let near = Infinity;
+      for (const u of plant.units) {
+        if (u.type !== 'dock' && !isWeapon(u.type)) continue;
+        cellCenter(u.i, u.j, _cc);
+        const r = Math.hypot(_tip.x - _cc.x * PLANT_SCALE, _tip.z - _cc.z * PLANT_SCALE);
+        if (r < near) {
+          near = r;
+          if (r < TOWER_TOUCH.r && _tip.y > TOWER_TOUCH.y0 && _tip.y < TOWER_TOUCH.y1) hit = u.id;
+        }
+      }
+      if (hit >= 0 && this.towerArmed[hand]) {
+        this.towerArmed[hand] = false;
+        site.inspect = hit;
         sfx.uiClick();
-      } else if (!inside && r > CORE_TOUCH.r + 0.05) {
-        this.coreArmed[hand] = true;
+      } else if (hit < 0 && near > TOWER_TOUCH.r + 0.05) {
+        this.towerArmed[hand] = true;
       }
     }
   }
@@ -611,8 +605,10 @@ export class HandSystem extends createSystem({}) {
       } else if (sg.phase === 'build') {
         const s = Math.ceil(sg.buildT);
         big = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        top = `W${sg.wave + 1} · ${sg.coins} COINS`;
       } else if (sg.phase === 'wave') {
         big = `${siegeLeft()} LEFT`;
+        top = `W${sg.wave + 1} · ${sg.coins} COINS`;
         tone = UI.danger;
       } else {
         big = 'FALLEN';
@@ -698,9 +694,8 @@ function makePoke(
 }
 
 function costLabel(type: UnitType): string {
-  return Object.entries(unitCost(type))
-    .map(([item, n]) => `${n} ${item.toUpperCase()}`)
-    .join(' ');
+  const n = unitCost(type);
+  return n > 0 ? `${n} COINS` : '';
 }
 
 function paintStud(s: Poke, label: string, hot: boolean): void {

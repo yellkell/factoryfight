@@ -19,9 +19,11 @@ import {
   MAKES,
   SIEGE,
   UNITS,
+  WEAPONS,
   combineKey,
   type ItemId,
   type UnitType,
+  type WeaponId,
 } from '../config.js';
 import { CELL, cellCenter, cellInFloor, occupy, vacate, type Cell } from '../floor/grid.js';
 import { chestBonus, craftFactor, hpFactor, postsUnlocked, railFactor } from '../game/progress.js';
@@ -724,10 +726,12 @@ export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit 
   // the lattice is asked so a refusal claims nothing.
   if (!canAfford(type)) return null;
   rot = facing;
+  // Nothing stands on a lane.
+  if (type !== 'dock' && plant.siege.laneCells.has((i + 4096) * 8192 + (j + 4096))) return null;
   const id = plant.nextUnit;
   if (!occupy(i, j, id)) return null;
   plant.nextUnit++;
-  payFor(type);
+  const spent = payFor(type);
   const hp = SIEGE.hp[type] * hpFactor(type);
   const unit: Unit = {
     id,
@@ -743,6 +747,8 @@ export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit 
     hurtT: 99,
   };
   if (isWeapon(type)) {
+    unit.level = 1;
+    unit.spent = spent;
     unit.cool = 0;
     unit.firedT = 99;
     unit.yaw = Math.atan2(DIRS[rot].di, DIRS[rot].dj);
@@ -755,32 +761,25 @@ export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit 
 
 /* ── THE BILL — what a defence costs, out of the bank ──────────────────── */
 
-/** The parts a unit costs to stand (empty for the free factory). */
-export function unitCost(type: UnitType): Partial<Record<ItemId, number>> {
-  return plant.mode === 'idle' ? {} : (SIEGE.cost[type] ?? {});
+/** What a unit costs to stand, in COINS (the core is free). */
+export function unitCost(type: UnitType): number {
+  if (plant.mode === 'idle' || !isWeapon(type)) return 0;
+  return WEAPONS[type as WeaponId].cost;
 }
 
 export function canAfford(type: UnitType, times = 1): boolean {
-  for (const [item, n] of Object.entries(unitCost(type)) as Array<[ItemId, number]>) {
-    if ((plant.bank[item] ?? 0) < n * times) return false;
-  }
-  return true;
+  return plant.siege.coins >= unitCost(type) * times;
 }
 
-function payFor(type: UnitType): void {
-  for (const [item, n] of Object.entries(unitCost(type)) as Array<[ItemId, number]>) {
-    const left = (plant.bank[item] ?? 0) - n;
-    if (left > 0) plant.bank[item] = left;
-    else delete plant.bank[item];
-  }
+function payFor(type: UnitType): number {
+  const cost = unitCost(type);
+  plant.siege.coins -= cost;
+  return cost;
 }
 
-/** Unbolted by your own hand: the bill comes back in full (a wrong wall
- *  is not a tax). A wreck refunds nothing — that is what it cost you. */
+/** A tower taken off the floor returns a share of what went into it. */
 export function refundUnit(unit: Unit): void {
-  for (const [item, n] of Object.entries(unitCost(unit.type)) as Array<[ItemId, number]>) {
-    plant.bank[item] = (plant.bank[item] ?? 0) + n;
-  }
+  plant.siege.coins += Math.round((unit.spent ?? 0) * SIEGE.sellBack);
 }
 
 /** The arsenal: plant that fights. */

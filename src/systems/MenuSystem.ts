@@ -53,13 +53,11 @@ import { createSystem } from '@iwsdk/core';
 import { Raycaster, Vector3, type Intersection, type Object3D } from 'three';
 import {
   BOARD,
-  FACTORY,
   GAME_TITLE,
-  ITEMS,
   JOBS,
   LINES,
   ORDERS,
-  UNITS,
+  SIEGE,
   UPGRADES,
   WAVES,
   WEAPONS,
@@ -87,7 +85,6 @@ import {
   bestMs,
   bestWave,
   bookFinished,
-  chestBonus,
   orderBestMs,
   ordersUnlocked,
   ownedUpgrades,
@@ -102,19 +99,17 @@ import {
   chuteParts,
   plant,
   runSeatedAt,
-  takesTube,
   unitById,
 } from '../factory/state.js';
 import { canAfford, isWeapon, refundUnit, removeUnit, unitCost } from '../factory/sim.js';
 
-/** "4 GEAR + 2 CELL" — what a machine costs out of the core's bank. */
+/** "50 COINS" — what a tower costs out of the purse. */
 function costText(type: UnitType): string {
-  const parts = Object.entries(unitCost(type)).map(([item, n]) => `${n} ${item.toUpperCase()}`);
-  return parts.length ? parts.join(' + ') : 'free';
+  const n = unitCost(type);
+  return n > 0 ? `${n} COINS` : 'free';
 }
-import { coreHealth, siegeLeft, soundHorn, waveSpec } from '../factory/siege.js';
+import { coreHealth, levelOf, sellValue, siegeLeft, soundHorn, upgradeCost, upgradeTower, waveSpec } from '../factory/siege.js';
 import { buildView, typeAvailable, type BuildTool } from './BuildSystem.js';
-import { factoryView } from './FactorySystem.js';
 import { goopView } from './GoopSystem.js';
 import { font } from '../ui/fonts.js';
 import {
@@ -160,18 +155,18 @@ export const UNIT_NAME: Record<UnitType, string> = {
 /** One line on what each piece of plant is FOR — the box panel's
  *  subtitle, and the catalogue's tooltip line. */
 const UNIT_DOCKET: Record<UnitType, string> = {
-  dock: 'The heart of the works. Banks every part. Lose it, lose the siege.',
+  dock: 'What they are coming for. Every one that reaches it takes a bite. Lose it, lose the siege.',
   maker: 'Turns a supply feed into parts. Feed colour sets the recipe.',
   belt: 'Carries parts between machines. Hold trigger to extend.',
   combiner: 'Combines two parts. Inputs on the sides; output at the front.',
   chest: 'Stores parts from rails. Grip a part to take it out.',
   post: 'Guides a rail route. Place where you want it to bend.',
   vat: 'Takes the green feed. Fill it to complete the final goal.',
-  turret: 'Rapid rounds at one target. Costs 3 GEAR; never runs dry.',
-  mortar: 'Lobs shells over your walls. Long reach, blind up close.',
-  tesla: 'Arcs through a crowd. Haul the VIOLET feed into it.',
-  flamer: 'A cone of fire; crawlers burn. Haul the AMBER feed into it.',
-  piston: 'Punches crawlers back the way they came.',
+  turret: 'Rapid rounds, a mite a shot. The workhorse.',
+  mortar: 'Lobs shells into the thick of a lane. Long reach, blind up close.',
+  tesla: 'A bolt that jumps through ten of them at once.',
+  flamer: 'A cone of fire: a whole column burns. Short reach — put it right by a lane.',
+  piston: 'Shoves the front of a column back down its lane. Best at a corner.',
   wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
 };
 
@@ -263,7 +258,7 @@ function waveSummary(w: WaveSpec): string {
   const n = new Map<string, number>();
   for (const sp of w.spawns) n.set(sp.enemy, (n.get(sp.enemy) ?? 0) + sp.count);
   const parts = [...n.entries()].map(([e, c]) => `${c} ${ENEMIES[e as keyof typeof ENEMIES].name}`);
-  parts.push(`${w.breaches} BREACH${w.breaches === 1 ? '' : 'ES'}`);
+  parts.push(`${w.breaches} LANE${w.breaches === 1 ? '' : 'S'}`);
   return parts.join(' \u00b7 ');
 }
 
@@ -625,7 +620,7 @@ export class MenuSystem extends createSystem({}) {
     const cardUp = site.paused && midShift && !boxUp && !finaleUp;
     // THE CORE, on hands, opens its own panel: the bank and the upgrades
     // — poked, so the things you spend live on the thing you defend.
-    const coreUp = boxUp && intents.handMode && unitById(site.inspect)?.type === 'dock';
+    const coreUp = false;
     const boxShow = boxUp && !coreUp;
     // Switching between hands and controllers re-plants the board, so it
     // is always at the distance (and size) the input in hand wants.
@@ -938,9 +933,9 @@ export class MenuSystem extends createSystem({}) {
       this.closeBox();
       return;
     }
-    if (what === 'unplug') {
-      if (factoryView.unseat?.(unit.id)) sfx.boltSpin();
-      else sfx.oneHandRattle();
+    if (what === 'upgrade') {
+      if (!upgradeTower(unit)) sfx.oneHandRattle();
+      this.lastKey = '';
       return;
     }
     if (what === 'turn') {
@@ -1008,6 +1003,7 @@ export class MenuSystem extends createSystem({}) {
       // the chest you are looking at has to appear, so the contents are
       // part of the key.
       boxUp ? this.boxKey() : '',
+      plant.siege.coins,
       site.finale,
       intents.handMode,
       plant.siege.phase,
@@ -1020,8 +1016,7 @@ export class MenuSystem extends createSystem({}) {
     this.lastKey = key;
     if (boardUp) this.paintBoard();
     if (cardUp) this.paintCard();
-    if (boxUp && !(intents.handMode && unitById(site.inspect)?.type === 'dock')) this.paintBox();
-    else if (boxUp) this.paintCore();
+    if (boxUp) this.paintBox();
     if (finaleUp) this.paintFinale();
     if (coachUp) this.paintCoach();
   }
@@ -1134,7 +1129,7 @@ export class MenuSystem extends createSystem({}) {
     g.fill();
     g.font = font(500, 22);
     g.fillStyle = UI.faint;
-    g.fillText('BUILD THE WORKS. HOLD THE CORE.', RAIL_X + Math.max(226, wmW + 26), 100);
+    g.fillText('BUILD THE TOWERS. HOLD THE CORE.', RAIL_X + Math.max(226, wmW + 26), 100);
 
     // Room status, top right: what the scan gave us. Walls only — the
     // floor and ceiling are registry citizens too, but "6 WALLS" over a
@@ -1349,7 +1344,7 @@ export class MenuSystem extends createSystem({}) {
         // THE ONE CONTROL NOBODY CAN GUESS: every verb in the siege lives
         // on the Ⓐ card, so the first thing to know is that Ⓐ exists.
         id: 'shop-note',
-        label: say('\u24b6 MENU', 'TURN YOUR LEFT WRIST \u00b7 MENU'),
+        label: say('\u24b6 MENU', 'TURN YOUR LEFT PALM \u00b7 MENU'),
         display: true,
         small: true,
         x: SHEET_X + 10,
@@ -1411,7 +1406,7 @@ export class MenuSystem extends createSystem({}) {
         28 *
           wrapText(
             g,
-            'Something lives behind your walls, and it heard the works start. Between waves, haul feeds into MAKERS and rail their parts to the CORE. The bank buys guns, walls and traps — and guns never run dry. When the horn goes, they crack the plaster and come for it.',
+            'Something lives behind your walls. Place your CORE, and glowing lanes run from cracks in the plaster to it. Build towers beside the lanes, anywhere but on them. When the horn goes they pour out in their thousands and march for the core. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
             SHEET_X + 26,
             y,
             SHEET_W - 52,
@@ -1486,7 +1481,7 @@ export class MenuSystem extends createSystem({}) {
         hand: 'right hand',
         cells: [
           'Aim at a wall and pull: the flange mounts there.',
-          'Place the piece in hand. Keep it held to haul a rail out. Empty-handed on a box: open its panel.',
+          'Place the tower in hand. Empty-handed on a tower: open its panel (UPGRADE, SELL).',
           'Squeeze near a tape side to take it, drag, let go to save. It snaps to your walls.',
         ],
       },
@@ -1495,7 +1490,7 @@ export class MenuSystem extends createSystem({}) {
         hand: 'both hands',
         cells: [
           'Both hands on the collar: haul the tube. One hand only rattles it. Let go and it parks.',
-          'The same haul for a supply tube. One hand near a loose part: carry it. Open the hand to drop it.',
+          '—',
           '—',
         ],
       },
@@ -1504,7 +1499,7 @@ export class MenuSystem extends createSystem({}) {
         hand: 'right hand',
         cells: [
           'The job card: the lines, the clock, RESUME or QUIT.',
-          'The shift card: BUILD · GOALS · UPGRADES · CONTROLS. Also puts the box panel away.',
+          'The siege card: BUILD · WAVES · CONTROLS. Also puts a tower panel away.',
           'Done. The floor saves and the board comes back.',
         ],
       },
@@ -1513,7 +1508,7 @@ export class MenuSystem extends createSystem({}) {
         hand: 'right hand',
         cells: [
           '—',
-          'Holding a piece: turn it a quarter. Empty-handed on a box: unplug it, or take a bare one out.',
+          'Holding a tower: turn it a quarter.',
           '—',
         ],
       },
@@ -1910,95 +1905,6 @@ export class MenuSystem extends createSystem({}) {
     );
   }
 
-  /**
-   * THE CORE PANEL — poke the core and its bank opens: what it is
-   * holding, and the upgrades those parts can buy. On hands this is the
-   * ONLY place money is spent, and it is on the thing they are all
-   * coming to kill.
-   */
-  private paintCore(): void {
-    const W = 620;
-    const H = 700;
-    const ROW0 = 262;
-    const PITCH = 56;
-    const buttons: PanelButton[] = UPGRADES.map((u, k) => ({
-      id: `buy:${u.id}`,
-      label: '',
-      ghost: true,
-      disabled: upgradeOwned(u.id) || !this.canAfford(u.id),
-      x: 26,
-      y: ROW0 + k * PITCH,
-      w: W - 52,
-      h: PITCH - 6,
-    }));
-    buttons.push({ id: 'box:close', label: 'CLOSE', small: true, x: 26, y: H - 86, w: W - 52, h: 64 });
-    const health = coreHealth();
-    this.core.paint(
-      'THE CORE',
-      (g) => {
-        // Its health.
-        g.fillStyle = 'rgba(255,255,255,0.08)';
-        g.beginPath();
-        g.roundRect(26, 104, W - 52, 18, 9);
-        g.fill();
-        g.fillStyle = health > 0.5 ? UI.positive : health > 0.25 ? UI.warn : UI.danger;
-        g.beginPath();
-        g.roundRect(26, 104, Math.max(9, (W - 52) * health), 18, 9);
-        g.fill();
-        // The bank.
-        g.textAlign = 'left';
-        g.textBaseline = 'middle';
-        g.font = font(600, 20);
-        g.fillStyle = UI.faint;
-        g.fillText('THE BANK', 28, 150);
-        const items: ItemId[] = ['gear', 'cell', 'chip', 'pump', 'lamp', 'servo'];
-        items.forEach((item, k) => {
-          const x = 28 + k * 96;
-          itemGlyph(g, item, x, 168, 40, (plant.bank[item] ?? 0) <= 0 ? GLYPH_DEAD : GLYPH_LIVE);
-          g.font = font(700, 24);
-          g.fillStyle = (plant.bank[item] ?? 0) > 0 ? UI.textHi : UI.disabled;
-          g.fillText(`${plant.bank[item] ?? 0}`, x + 46, 190);
-        });
-        g.font = font(600, 20);
-        g.fillStyle = UI.faint;
-        g.fillText('UPGRADES', 28, 240);
-        UPGRADES.forEach((u, k) => {
-          const y = ROW0 + k * PITCH;
-          const owned = upgradeOwned(u.id);
-          const afford = this.canAfford(u.id);
-          const hot = this.hover === `buy:${u.id}` && afford && !owned;
-          g.fillStyle = hot ? UI.accentFaint : 'rgba(255,255,255,0.03)';
-          g.beginPath();
-          g.roundRect(26, y, W - 52, PITCH - 6, 10);
-          g.fill();
-          g.strokeStyle = afford && !owned ? 'rgba(255,162,46,0.7)' : 'rgba(255,255,255,0.08)';
-          g.lineWidth = 2;
-          g.stroke();
-          g.textAlign = 'left';
-          g.font = font(700, 21);
-          g.fillStyle = owned ? UI.positive : afford ? UI.textHi : UI.faint;
-          g.fillText(owned ? `\u2713 ${u.name}` : u.name, 42, y + 16);
-          g.font = font(500, 15);
-          g.fillStyle = UI.faint;
-          g.fillText(u.effect, 42, y + 36, 300);
-          // The bill, right-aligned: a glyph and a count per part.
-          let x = W - 44;
-          for (const [item, n] of Object.entries(u.bill).reverse() as Array<[ItemId, number]>) {
-            g.textAlign = 'right';
-            g.font = font(700, 20);
-            g.fillStyle = (plant.bank[item] ?? 0) >= n ? UI.accent : UI.faint;
-            g.fillText(`${n}`, x, y + 25);
-            x -= g.measureText(`${n}`).width + 6;
-            itemGlyph(g, item, x - 28, y + 11, 28, GLYPH_LIVE);
-            x -= 44;
-          }
-        });
-      },
-      buttons,
-      this.hover,
-    );
-  }
-
   private canAfford(id: UpgradeId): boolean {
     const spec = UPGRADES.find((u) => u.id === id);
     if (!spec) return false;
@@ -2026,9 +1932,8 @@ export class MenuSystem extends createSystem({}) {
     // the card grew and every hard-coded 166 would have left a gutter.
     const colW = (cw - 2 * CARD_PAD - 2 * CARD_GAP) / 3;
     const colX = (c: number): number => CARD_PAD + c * (colW + CARD_GAP);
-    // The page tabs are FOUR across (CONTROLS joined late), on their own
-    // measure — the catalogue below keeps its three columns.
-    const tabW = (cw - 2 * CARD_PAD - 3 * CARD_GAP) / 4;
+    // The page tabs are THREE across, on their own measure.
+    const tabW = (cw - 2 * CARD_PAD - 2 * CARD_GAP) / 3;
     const tab = (id: string, label: string, on: boolean, c: number): PanelButton => ({
       id,
       label,
@@ -2043,8 +1948,7 @@ export class MenuSystem extends createSystem({}) {
     const buttons: PanelButton[] = [
       tab('card:build', 'BUILD', this.cardMode === 'build', 0),
       tab('card:goals', 'WAVES', this.cardMode === 'goals', 1),
-      tab('card:supply', 'UPGRADES', this.cardMode === 'supply', 2),
-      tab('card:controls', 'CONTROLS', this.cardMode === 'controls', 3),
+      tab('card:controls', 'CONTROLS', this.cardMode === 'controls', 2),
       {
         id: 'resume',
         label: 'RESUME',
@@ -2076,18 +1980,11 @@ export class MenuSystem extends createSystem({}) {
       // playtest went looking for a delete and found nothing.
       const kit: Array<{ tool: BuildTool; label: string }> = [
         { tool: 'dock', label: 'CORE' },
-        { tool: 'maker', label: 'MAKER' },
-        { tool: 'belt', label: 'RAIL' },
-        { tool: 'wall', label: 'WALL' },
+        { tool: 'turret', label: 'TURRET' },
         { tool: 'piston', label: 'PISTON' },
         { tool: 'flamer', label: 'FLAMER' },
-        { tool: 'turret', label: 'TURRET' },
         { tool: 'tesla', label: 'TESLA' },
         { tool: 'mortar', label: 'MORTAR' },
-        { tool: 'combiner', label: 'COMBINER' },
-        { tool: 'chest', label: 'CHEST' },
-        { tool: 'post', label: 'POST' },
-        { tool: 'delete', label: 'DELETE' },
       ].filter((e) => e.tool !== 'dock' || typeAvailable('dock')) as Array<{ tool: BuildTool; label: string }>;
       kit.forEach((entry, i) => {
         buttons.push({
@@ -2178,7 +2075,7 @@ export class MenuSystem extends createSystem({}) {
         g.font = font(600, 16);
         g.fillStyle = UI.faint;
         g.textAlign = 'right';
-        g.fillText(`CORE ${Math.round(core * 100)}%  \u00b7  GEAR ${plant.bank.gear ?? 0}`, 36 + barW, 124);
+        g.fillText(`CORE ${Math.round(core * 100)}%  \u00b7  ${sg.coins} COINS`, 36 + barW, 124);
         g.textAlign = 'left';
 
         if (this.cardMode === 'goals') this.paintWaves(g, cw, ch);
@@ -2199,19 +2096,15 @@ export class MenuSystem extends createSystem({}) {
             armed === 'delete'
               ? say('Aim at a machine; trigger to remove (refunds its cost)', 'Aim at a machine; pinch to remove (refunds its cost)')
               : armed === 'belt'
-                ? say('Place a rail; hold trigger and drag to extend', 'Pinch to place a rail; keep pinching and drag to extend')
-                : armed === 'wall'
-                  ? say('Place a wall; hold trigger and drag a run (1 GEAR each)', 'Pinch a wall down; keep pinching and drag a run (1 GEAR each)')
-                  : armed && isWeapon(armed as UnitType)
-                    ? say(
-                        `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) · it fires on its own`,
-                        `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) · it fires on its own`,
-                      ) + (WEAPONS[armed as WeaponId].fuel ? say(' · tube its feed in', ' · tube its feed in') : '')
-                : armed === 'post'
-                  ? say('Place a post where the rail should bend', 'Pinch a post down where the rail should bend')
-                    : armed
-                      ? say('Aim at floor · Trigger: place · \u24b7: rotate', 'Aim at the floor · Pinch: place · Cuff TURN: rotate')
-                      : say('Choose a machine to build. Empty-handed: trigger to inspect.', 'Choose a machine to build. Empty-handed: pinch a machine to inspect it.'),
+                ? ''
+                : armed && isWeapon(armed as UnitType)
+                  ? say(
+                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) beside a lane · it fires on its own`,
+                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) beside a lane · it fires on its own`,
+                    )
+                  : armed
+                    ? say('Aim at the floor · Trigger: place', 'Aim at the floor · Pinch: place')
+                    : say('Choose a tower. Empty-handed: trigger a tower to upgrade or sell it.', 'Choose a tower. Touch a tower to upgrade or sell it.'),
             cw / 2,
             ch - CARD_FOOT - 34,
           );
@@ -2222,7 +2115,7 @@ export class MenuSystem extends createSystem({}) {
           if (armed) {
             g.font = font(600, 19);
             g.fillStyle = UI.dim;
-            g.fillText(say('\u24cd / \u24ce PUT TOOL AWAY', 'CUFF \u00b7 DOWN PUTS THE TOOL AWAY'), cw / 2, ch - CARD_FOOT - 8);
+            g.fillText(say('\u24cd / \u24ce PUT TOOL AWAY', 'PALM \u00b7 DOWN PUTS THE TOOL AWAY'), cw / 2, ch - CARD_FOOT - 8);
           }
         }
       },
@@ -2238,10 +2131,9 @@ export class MenuSystem extends createSystem({}) {
    */
   private paintHandControls(g: CanvasRenderingContext2D, x0: number, y0: number, w: number, pitch: number): void {
     const rows: Array<{ shape: 'pinch' | 'fist' | 'fists' | 'cuff'; name: string; does: string }> = [
-      { shape: 'pinch', name: 'PINCH', does: 'Aim with your hand, pinch to place, press this card, or inspect a box. Keep pinching to drag out a rail or wall.' },
-      { shape: 'fists', name: 'TWO FISTS', does: 'Close both hands on a tube collar to haul it out of a feed. Walk it to a maker and it seats itself.' },
-      { shape: 'fist', name: 'FIST', does: 'Lift a part off a rail. Open your hand over a turret, rail or the core to drop it in.' },
-      { shape: 'cuff', name: 'THE CUFF', does: 'Turn your left wrist toward you. Poke it with your right index finger: MENU, TURN, DOWN.' },
+      { shape: 'cuff', name: 'YOUR PALM', does: 'Turn your left palm toward you: the towers, the wave, the coins. Poke a tower with your right index finger to pick it up.' },
+      { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down — anywhere but on a lane.' },
+      { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s HORN calls the wave early.' },
     ];
     let y = y0;
     for (const row of rows) {
@@ -2348,13 +2240,13 @@ export class MenuSystem extends createSystem({}) {
     const r = (c: Control): { x: number; y: number } => aR[c];
     const l = (c: Control): { x: number; y: number } => aL[c];
     callout(g, r('trigger'), LBL, RY + 12, 'right', 'TRIGGER',
-      'Place the piece. Hold it to haul a rail. On a box: inspect.');
+      'Place the tower. Empty-handed on a tower: upgrade or sell.');
     callout(g, r('upper'), LBL, RY + 60, 'right', faceGlyph('right', 'upper'),
-      'Turn the piece a quarter. On a box: unplug, or remove.');
+      'Turn the tower in hand a quarter.');
     callout(g, r('lower'), LBL, RY + 108, 'right', faceGlyph('right', 'lower'),
-      'This card. Also puts the box panel away.');
+      'This card. Also puts a tower panel away.');
     callout(g, r('grip'), LBL, RY + 156, 'right', 'GRIP',
-      'Carry a loose part. Both hands on a collar: haul the tube.');
+      'Not used.');
     callout(
       g,
       l('lower'),
@@ -2386,208 +2278,92 @@ export class MenuSystem extends createSystem({}) {
     const unit = unitById(site.inspect);
     if (!unit) return;
     const [cw, ch] = BOARD.boxPx;
-    const run = runSeatedAt(unit.id);
-    const cap = FACTORY.chestCap + chestBonus();
-    // WHAT IS IN IT depends entirely on what it is: a crate has a stack,
-    // a maker has a chute, a combiner has two ports, a rail has whatever
-    // is riding it, the bank has the whole vault, and the vat has a
-    // level rather than any parts at all. One shape, per machine.
-    const stack =
-      unit.type === 'combiner'
-        ? (unit.ports
-            .map((id) => (id >= 0 ? plant.parts.find((p) => p.id === id) : undefined))
-            .filter(Boolean) as Array<{ item: ItemId }>)
-        : unit.type === 'chest'
-          ? chestParts(unit.id)
-          : unit.type === 'belt'
-            ? plant.parts.filter((p) => p.at.kind === 'belt' && p.at.unit === unit.id)
-            : unit.type === 'dock'
-              ? (Object.entries(plant.bank) as Array<[ItemId, number]>)
-                  .filter(([, n]) => (n ?? 0) > 0)
-                  .flatMap(([item, n]) => Array.from({ length: n ?? 0 }, () => ({ item })))
-              : chuteParts(unit.id);
-    const heading =
-      unit.type === 'combiner'
-        ? 'IN THE PORTS'
-        : unit.type === 'chest'
-          ? `IN THE CRATE \u00b7 ${stack.length} / ${cap}`
-          : unit.type === 'belt'
-            ? 'ON THE RAIL'
-            : unit.type === 'dock'
-              ? 'IN THE VAULT'
-              : unit.type === 'vat'
-                ? 'IN THE TANK'
-                : unit.type === 'post'
-                  ? ''
-                  : 'ON THE CHUTE';
-    const emptyLine =
-      unit.type === 'dock'
-        ? 'No surplus parts'
-        : unit.type === 'belt'
-          ? 'nothing riding it'
-          : 'empty';
-
     const PAD = 26;
-    const footY = ch - 74;
-    const third = (cw - PAD * 2 - 16) / 3;
-    const buttons: PanelButton[] = [
-      {
-        id: 'box:unplug',
-        label: 'UNPLUG',
-        small: true,
-        px: 20,
-        disabled: !run,
-        tone: run ? UI.warn : undefined,
-        x: PAD,
-        y: footY,
-        w: third,
-        h: 54,
-      },
-      {
-        id: 'box:turn',
-        label: 'TURN',
-        small: true,
-        px: 20,
-        // Sinks have no out face to turn, and a turn on one would look
-        // like a bug rather than a choice.
-        disabled: unit.type === 'dock' || unit.type === 'chest' || unit.type === 'vat',
-        x: PAD + third + 8,
-        y: footY,
-        w: third,
-        h: 54,
-      },
-      {
-        id: 'box:remove',
-        label: 'REMOVE',
-        small: true,
-        px: 20,
-        tone: UI.danger,
-        x: PAD + (third + 8) * 2,
-        y: footY,
-        w: third,
-        h: 54,
-      },
-      {
-        // CLOSE lives in the corner, away from the three verbs — one of
-        // which takes the machine off the floor. Nobody should be able
-        // to reach for "put this away" and hit "TAKE IT OUT".
-        id: 'box:close',
-        label: 'CLOSE',
-        small: true,
-        px: 19,
-        x: cw - PAD - 92,
-        y: 22,
-        w: 92,
-        h: 42,
-      },
-    ];
+    const footY = ch - 78;
+    const tower = isWeapon(unit.type);
+    const level = levelOf(unit);
+    const next = tower ? upgradeCost(unit) : null;
+    const coins = plant.siege.coins;
+    const half = (cw - PAD * 2 - 12) / 2;
+    const buttons: PanelButton[] = [];
+    if (tower) {
+      buttons.push(
+        {
+          id: 'box:upgrade',
+          label: next === null ? 'MAX LEVEL' : `UPGRADE · ${next}`,
+          small: true,
+          px: 22,
+          disabled: next === null || coins < next,
+          tone: next !== null && coins >= next ? UI.positive : undefined,
+          x: PAD,
+          y: footY,
+          w: half,
+          h: 58,
+        },
+        {
+          id: 'box:remove',
+          label: `SELL · ${sellValue(unit)}`,
+          small: true,
+          px: 22,
+          tone: UI.danger,
+          x: PAD + half + 12,
+          y: footY,
+          w: half,
+          h: 58,
+        },
+      );
+    }
+    // CLOSE lives in the corner, away from SELL.
+    buttons.push({ id: 'box:close', label: 'CLOSE', small: true, px: 19, x: cw - PAD - 92, y: 22, w: 92, h: 42 });
 
     this.box.paint(
-      UNIT_NAME[unit.type],
+      unit.type === 'dock' ? 'THE CORE' : `${UNIT_NAME[unit.type]} · LEVEL ${level}`,
       (g) => {
         g.textAlign = 'left';
         g.textBaseline = 'middle';
-        // The machine's own drawing, top left, at a size worth looking at.
         unitGlyph(g, unit.type, PAD, 108, 74);
         wrapText(g, UNIT_DOCKET[unit.type], PAD + 92, 126, cw - PAD * 2 - 96, 24, font(500, 19), UI.dim);
-
-        // THE PLUMBING — what line is in it, and how it is doing.
-        let y = 206;
-        g.font = font(500, 19);
-        g.fillStyle = UI.faint;
-        g.fillText('PLUMBING', PAD, y);
-        y += 30;
-        if (run) {
-          g.fillStyle = run.line.hex;
-          g.beginPath();
-          g.arc(PAD + 10, y, 9, 0, Math.PI * 2);
-          g.fill();
-          g.font = font(600, 23);
+        let y = 214;
+        if (!tower) {
+          // The core: its health and the purse.
+          g.font = font(600, 22);
           g.fillStyle = UI.text;
-          g.fillText(run.line.name, PAD + 30, y);
+          g.fillText(`CORE ${Math.round(coreHealth() * 100)}%  ·  ${coins} COINS`, PAD, y);
+          return;
+        }
+        // THE LEVEL PIPS.
+        for (let k = 0; k < SIEGE.levels.length; k++) {
+          g.fillStyle = k < level ? UI.accent : 'rgba(255,255,255,0.12)';
+          g.beginPath();
+          g.roundRect(PAD + k * 54, y - 9, 46, 18, 9);
+          g.fill();
+        }
+        g.font = font(600, 20);
+        g.fillStyle = UI.faint;
+        g.fillText(`${coins} COINS`, PAD + SIEGE.levels.length * 54 + 14, y);
+        // NOW → NEXT: what the upgrade buys.
+        y += 44;
+        const spec = WEAPONS[unit.type as WeaponId];
+        const cur = SIEGE.levels[level - 1];
+        const nxt = SIEGE.levels[level];
+        const rows: Array<[string, (l: typeof cur) => string]> = [
+          ['DAMAGE', (l) => `${Math.round(spec.damage * l.damage)}`],
+          ['REACH', (l) => `${(spec.range * l.range * 0.7).toFixed(2)} m`],
+          ['RATE', (l) => `${((1 / spec.cycleS) * l.rate).toFixed(1)}/s`],
+        ];
+        for (const [name, f] of rows) {
           g.font = font(500, 19);
-          g.fillStyle = run.phase === 'flowing' ? UI.positive : UI.dim;
-          g.fillText(run.phase === 'flowing' ? 'FLOWING' : 'CHARGING', PAD + 158, y);
-          if (unit.type === 'vat') {
-            const p = Math.min(1, plant.brewT / UNITS.vat.brewS);
-            g.fillStyle = 'rgba(255,255,255,0.08)';
-            g.beginPath();
-            g.roundRect(PAD + 250, y - 7, cw - PAD * 2 - 250, 14, 7);
-            g.fill();
-            g.fillStyle = LINES.pearl.hex;
-            g.beginPath();
-            g.roundRect(PAD + 250, y - 7, Math.max(8, (cw - PAD * 2 - 250) * p), 14, 7);
-            g.fill();
-          }
-        } else {
-          g.font = font(500, 20);
           g.fillStyle = UI.faint;
-          g.fillText(
-            takesTube(unit)
-              ? 'Use both grips to connect a supply tube'
-              : unit.type === 'post'
-                ? 'Drag a rail route through this post'
-                : 'Connect rails to deliver parts',
-            PAD,
-            y,
-          );
-        }
-
-        // WHAT IS IN IT.
-        if (!heading) return;
-        y += 48;
-        g.textAlign = 'left';
-        g.font = font(500, 19);
-        g.fillStyle = UI.faint;
-        g.fillText(heading, PAD, y);
-        y += 22;
-        if (unit.type === 'vat') {
-          // The vat holds no parts, ever — it holds a LEVEL, and that is
-          // the only number about it worth reading.
-          const p = Math.min(1, plant.brewT / UNITS.vat.brewS);
-          g.fillStyle = 'rgba(255,255,255,0.07)';
-          g.beginPath();
-          g.roundRect(PAD, y + 10, cw - PAD * 2, 26, 13);
-          g.fill();
-          g.fillStyle = LINES.pearl.hex;
-          g.beginPath();
-          g.roundRect(PAD, y + 10, Math.max(10, (cw - PAD * 2) * p), 26, 13);
-          g.fill();
-          g.font = font(600, 20);
-          // The label rides INSIDE the track, clear of the fill's own
-          // minimum nub — a dry tank should not print its first letter
-          // over a sliver of green.
-          g.fillStyle = p > 0.45 ? UI.onAccent : UI.dim;
-          g.fillText(
-            plant.goop === 'none'
-              ? 'Connect the green feed'
-              : plant.goop === 'brewing'
-                ? `${Math.round(p * 100)}% full`
-                : 'Brew complete',
-            PAD + 24,
-            y + 24,
-          );
-          return;
-        }
-        if (stack.length === 0) {
-          g.font = font(500, 20);
-          g.fillStyle = UI.faint;
-          g.fillText(emptyLine, PAD, y + 22);
-          return;
-        }
-        const counts = new Map<ItemId, number>();
-        for (const part of stack) counts.set(part.item, (counts.get(part.item) ?? 0) + 1);
-        [...counts.entries()].slice(0, 5).forEach(([item, n], i) => {
-          const x = PAD + i * 96;
-          itemGlyph(g, item, x, y, 42);
-          g.textAlign = 'left';
-          g.font = font(600, 21);
+          g.fillText(name, PAD, y);
+          g.font = font(600, 22);
           g.fillStyle = UI.text;
-          g.fillText(`\u00d7${n}`, x + 48, y + 26);
-          g.font = font(500, 15);
-          g.fillStyle = UI.faint;
-          g.fillText(ITEMS[item].name, x + 2, y + 56);
-        });
+          g.fillText(f(cur), PAD + 120, y);
+          if (nxt) {
+            g.fillStyle = UI.positive;
+            g.fillText(`→ ${f(nxt)}`, PAD + 260, y);
+          }
+          y += 34;
+        }
       },
       buttons,
       this.hover,
