@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0b0a07" />
+    <title>FACTORY FIGHT</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🔧%3C/text%3E%3C/svg%3E"
+    />
+    <style>
+      /*
+       * THE DOOR — the one flatscreen page in FACTORY FIGHT (forked whole from
+       * TUBES: the runs below are the same tubes that feed the guns).
+       *
+       * IT SHOWS THE TUBES. Three runs cross the frame, one per LINE, in
+       * the lines' own colours straight off config.ts: MAINS furnace
+       * amber, COOLANT glacier cyan, VOLT violet plasma. Each is a real
+       * telescoping run — five sections stepping DOWN in bore toward the
+       * head, GLASS full of lit liquid, a rubber joiner over every joint
+       * — and each pours at its own line's pace (MAINS slow and
+       * heavy, COOLANT fast, VOLT fastest), which is the one thing the
+       * three lines are actually different at.
+       *
+       * The word sits over the run, the key sits under it, and that is
+       * the whole page. It has no plate and no tagline: a page for a game
+       * about hauling pipe should be pipe.
+       *
+       * The contract with main.ts is unchanged: #enter-ar is the one
+       * control, and .landing hides itself the moment body carries
+       * .app-entered.
+       */
+      :root {
+        color-scheme: dark;
+        --iron: #0b0a07;
+        --stencil: #fdf6ec;
+        --tape-dark: #171216;
+        /* THE LINES — config.ts LINES, glow / deep / foam, unchanged. */
+        --mains: #ffa22e;
+        --coolant: #46e0ff;
+        --volt: #b46bff;
+        --on-amber: #221103;
+        /* Rajdhani arrives with the bundle (ui/fonts.ts puts the faces on
+           the document), so the page paints in the same Arial Black
+           fallback every canvas panel does and swaps with them. */
+        --face: 'Rajdhani', 'Arial Black', system-ui, sans-serif;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--iron);
+        font-family: var(--face);
+      }
+      #scene-container {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        background:
+          radial-gradient(circle at 28% 22%, rgba(255, 162, 46, 0.14), transparent 28rem),
+          radial-gradient(circle at 74% 72%, rgba(70, 224, 255, 0.1), transparent 24rem),
+          linear-gradient(150deg, #0a0906 0%, #12100a 55%, #0a0d0e 100%);
+      }
+
+      /* ── the shop wall ─────────────────────────────────────────────── */
+      .landing {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: clamp(20px, 4vh, 44px);
+        padding: clamp(16px, 5vw, 48px) 0;
+        box-sizing: border-box;
+        overflow: hidden;
+        background: linear-gradient(180deg, #100d09 0%, #0b0a07 46%, #060504 100%);
+        transition:
+          opacity 220ms ease,
+          visibility 220ms ease;
+      }
+      body.app-entered .landing {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      /* A hidden element is not painted, so the pour costs nothing once
+         you are inside — but say it outright anyway: this page sits
+         behind a 90 fps session and has no business holding a frame. */
+      body.app-entered .sec > i {
+        animation-play-state: paused;
+      }
+      /* The corners sink away, so the lit run is the only thing here. */
+      .landing::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(122% 92% at 50% 46%, transparent 40%, rgba(0, 0, 0, 0.66));
+      }
+
+      /* ── the word ──────────────────────────────────────────────────── */
+      .landing__word {
+        position: relative;
+        z-index: 2;
+        display: block;
+        font-family: var(--face);
+        font-weight: 700;
+        font-size: clamp(44px, 10.5vw, 150px);
+        text-align: center;
+        line-height: 0.9;
+        letter-spacing: 0.14em;
+        text-indent: 0.14em;
+        color: var(--stencil);
+        user-select: none;
+        text-shadow:
+          0 3px 0 rgba(0, 0, 0, 0.55),
+          0 4px 18px rgba(0, 0, 0, 0.6);
+      }
+
+      /* ── the runs ──────────────────────────────────────────────────── */
+      /* Full-bleed: pipe enters the frame and leaves it, the way plant
+         does. Nothing here is ever capped on screen. */
+      .runs {
+        position: relative;
+        z-index: 1;
+        width: 100vw;
+        display: flex;
+        flex-direction: column;
+        gap: clamp(10px, 1.7vh, 20px);
+        pointer-events: none;
+      }
+      .run {
+        display: flex;
+        align-items: center;
+        width: 112%;
+        margin-left: -6%;
+      }
+      /* COOLANT runs the other way — three runs all tapering to the same
+         side reads as a chart, not a shop. */
+      .run--coolant {
+        flex-direction: row-reverse;
+        margin-left: -6%;
+      }
+      .run--mains {
+        --glow: var(--mains);
+        --deep: #571f02;
+        --foam: #ffe9c4;
+        --halo: rgba(255, 162, 46, 0.62);
+        --bore: clamp(52px, 9.2vh, 104px);
+        --pace: 1.2s; /* MAINS is slow and heavy */
+      }
+      .run--coolant {
+        --glow: var(--coolant);
+        --deep: #043346;
+        --foam: #dcf8ff;
+        --halo: rgba(70, 224, 255, 0.55);
+        --bore: clamp(44px, 7.8vh, 88px);
+        --pace: 0.66s; /* COOLANT is fast and bright */
+      }
+      .run--volt {
+        --glow: var(--volt);
+        --deep: #2a0b4e;
+        --foam: #efe0ff;
+        --halo: rgba(180, 107, 255, 0.58);
+        --bore: clamp(37px, 6.6vh, 74px);
+        --pace: 0.51s; /* VOLT travels in packets, and bites */
+      }
+
+      /* ONE SECTION of a telescoping run. The bore steps down toward the
+         head (--f), and the section is GLASS FULL OF LIQUID — which is
+         what the real shell is: a translucent barrel with the pour lit
+         behind it, so on the headset the whole tube reads as a column of
+         light with a skin, never a pipe with a slot in it. (The first cut
+         here was an opaque metal cylinder with a narrow lit window; wrong
+         hardware.) Three layers, bottom up: the liquid itself, filling
+         the barrel — deep at the rims where it thins, the line's glow
+         through the body, foam-white along the hottest centre; the
+         travelling pour riding on it; and the GLASS over both — dark at
+         both rims where it turns away, one sharp specular high up where
+         the work light hits it, a softer reflection low down. */
+      .sec {
+        position: relative;
+        isolation: isolate;
+        flex: 1 1 0;
+        height: calc(var(--bore) * var(--f));
+        background: linear-gradient(
+          180deg,
+          var(--deep) 0%,
+          var(--glow) 22%,
+          var(--glow) 40%,
+          var(--foam) 49%,
+          var(--glow) 58%,
+          var(--glow) 76%,
+          var(--deep) 100%
+        );
+        box-shadow: 0 0 52px -4px var(--halo);
+      }
+      /* THE GLASS. */
+      .sec::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        background: linear-gradient(
+          180deg,
+          rgba(0, 0, 0, 0.78) 0%,
+          rgba(0, 0, 0, 0.42) 5%,
+          rgba(0, 0, 0, 0.1) 10%,
+          rgba(255, 255, 255, 0.58) 14%,
+          rgba(255, 255, 255, 0.22) 17%,
+          rgba(0, 0, 0, 0.14) 24%,
+          rgba(0, 0, 0, 0.04) 32%,
+          rgba(255, 255, 255, 0) 44%,
+          rgba(0, 0, 0, 0.08) 64%,
+          rgba(255, 255, 255, 0.12) 79%,
+          rgba(0, 0, 0, 0.3) 88%,
+          rgba(0, 0, 0, 0.6) 95%,
+          rgba(0, 0, 0, 0.82) 100%
+        );
+      }
+      /* THE POUR rides the liquid, under the glass, and fades toward the
+         rims where the liquid thins — the currents live in its body. */
+      .sec > i {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: block;
+        -webkit-mask-image: linear-gradient(180deg, transparent 12%, #000 34%, #000 68%, transparent 90%);
+        mask-image: linear-gradient(180deg, transparent 12%, #000 34%, #000 68%, transparent 90%);
+      }
+
+      /*
+       * THE POUR, MOVING — and it is ONE COLUMN, not five.
+       *
+       * Two travelling waves ride the liquid, which is what the real
+       * shader runs (materials/flow.ts: sin(travel*6) and sin(travel*13)
+       * over one `travel` term): the same SPEED, different WAVELENGTHS —
+       * a broad swell with finer currents running on it. One is half the
+       * frequency of the other, so they beat against each other and the
+       * flow never visibly loops.
+       *
+       * It stays continuous across every joint because the maths makes
+       * it: the sections are equal width (flex: 1 1 0), the tiles are a
+       * fraction OF that width, and both layers shift exactly a whole
+       * number of tiles per cycle — 0.5 of a section each, so the phase
+       * at any joint is identical on both sides of it. (A single
+       * no-repeat band per section was what this replaced: it appeared
+       * at each section's left edge, crossed it and vanished, so the run
+       * read as five blips rather than a column with something in it.)
+       *
+       * The percentages are load-bearing. For a tile t of the element's
+       * width, background-position p% moves it p/100 × (1 − t) of the
+       * width, so a whole tile lands at p = 100·k·t/(1 − t): 66.667% for
+       * two tiles of a quarter, 100% for one tile of a half. Both come
+       * to half a section, which is why the two waves travel together.
+       */
+      .sec > i {
+        background-image:
+          /* the currents */
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.03) 22%,
+            rgba(255, 255, 255, 0.17) 44%,
+            rgba(255, 255, 255, 0.2) 50%,
+            rgba(255, 255, 255, 0.17) 56%,
+            rgba(255, 255, 255, 0.03) 78%,
+            rgba(255, 255, 255, 0) 100%
+          ),
+          /* the swell under them */
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.11) 50%,
+            rgba(255, 255, 255, 0) 100%
+          );
+        background-size:
+          25% 100%,
+          50% 100%;
+        animation: pour var(--pace) linear infinite;
+      }
+      @keyframes pour {
+        to {
+          background-position:
+            66.667% 0,
+            100% 0;
+        }
+      }
+      /* VOLT does not flow, it ARRIVES: the shader squares its wave into
+         plasma packets with dark water between them (uChop), and so does
+         this — slugs rather than currents, with the water between them
+         genuinely darker. Their shoulders stay soft on purpose: cut hard,
+         a packet stops reading as plasma and starts reading as a dashed
+         rule, which is what the first cut of this looked like. */
+      .run--volt > .sec > i {
+        background-image:
+          linear-gradient(
+            90deg,
+            rgba(12, 0, 26, 0.3) 0%,
+            rgba(12, 0, 26, 0.3) 18%,
+            rgba(255, 255, 255, 0.08) 33%,
+            rgba(255, 255, 255, 0.3) 45%,
+            rgba(255, 255, 255, 0.3) 55%,
+            rgba(255, 255, 255, 0.08) 67%,
+            rgba(12, 0, 26, 0.3) 82%,
+            rgba(12, 0, 26, 0.3) 100%
+          ),
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0) 100%
+          );
+      }
+      /* Liquid runs root to head — and COOLANT's head is the other way. */
+      .run--coolant > .sec > i {
+        animation-direction: reverse;
+      }
+
+      /* THE JOINER over every joint — RUBBER: matte black, soft-edged, a
+         dull sheen rather than a specular, standing a touch proud of the
+         glass either side of it. It covers the step in bore and it is the
+         one part of a run that is not lit. */
+      .sec::after {
+        content: '';
+        position: absolute;
+        right: -8px;
+        top: 50%;
+        z-index: 3;
+        translate: 0 -50%;
+        width: 16px;
+        height: calc(100% + 14px);
+        border-radius: 5px;
+        background: linear-gradient(
+          180deg,
+          #050505 0%,
+          #1d1d1d 12%,
+          #333232 28%,
+          #2a2929 46%,
+          #1c1b1b 66%,
+          #0e0e0e 86%,
+          #040404 100%
+        );
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.07),
+          0 3px 8px rgba(0, 0, 0, 0.7);
+      }
+      .run > .sec:last-child::after {
+        display: none;
+      }
+      .run--coolant > .sec::after {
+        right: auto;
+        left: -8px;
+      }
+      .run--coolant > .sec:last-child::after {
+        display: none;
+      }
+
+      /* ── the key ───────────────────────────────────────────────────── */
+      /* Solid amber on dark text: the board's own primary button, the one
+         it uses inside for START JOB. */
+      #enter-ar {
+        position: relative;
+        z-index: 2;
+        appearance: none;
+        border: 0;
+        border-radius: 2px;
+        padding: clamp(16px, 2.1vh, 20px) clamp(46px, 8vw, 76px);
+        font-family: var(--face);
+        font-weight: 700;
+        font-size: clamp(18px, 2.3vw, 25px);
+        letter-spacing: 0.22em;
+        text-indent: 0.22em;
+        color: var(--on-amber);
+        background: linear-gradient(180deg, #ffc470 0%, var(--mains) 52%, #e0810f 100%);
+        cursor: pointer;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.42),
+          0 4px 0 #7d430b,
+          0 12px 32px rgba(255, 162, 46, 0.26);
+        transition:
+          filter 120ms ease,
+          translate 90ms ease,
+          box-shadow 90ms ease;
+      }
+      #enter-ar:hover:not([disabled]) {
+        filter: brightness(1.08);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.48),
+          0 4px 0 #7d430b,
+          0 14px 40px rgba(255, 162, 46, 0.4);
+      }
+      #enter-ar:active:not([disabled]) {
+        translate: 0 3px;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.35),
+          0 1px 0 #7d430b,
+          0 6px 18px rgba(255, 162, 46, 0.24);
+      }
+      #enter-ar:focus-visible {
+        outline: 2px solid var(--stencil);
+        outline-offset: 4px;
+      }
+      /* THE MACHINE IS OFF, not broken: a browser with no headset gets
+         "XR unavailable" here (main.ts), and a dimmed amber key reads as
+         a fault where cold iron reads as a control that isn't live. */
+      #enter-ar[disabled] {
+        background: linear-gradient(180deg, #241f18 0%, #191510 100%);
+        color: rgba(250, 244, 235, 0.42);
+        cursor: default;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.05),
+          0 4px 0 #0a0806;
+      }
+
+      /* ── the site boundary ─────────────────────────────────────────── */
+      /* The hazard tape the shop floor gets marked out with, run across
+         the bottom of the frame: the floor starts here. Same 45°
+         amber/black cycle floor/tape.ts paints onto the real bands. */
+      .landing__tape {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: clamp(11px, 1.9vh, 18px);
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          45deg,
+          var(--tape-dark) 0 15px,
+          var(--mains) 15px 30px
+        );
+        opacity: 0.72;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.14),
+          0 -16px 34px rgba(0, 0, 0, 0.5);
+      }
+
+      /* A phone's width can't carry five sections without the collars
+         reading as a zip. Three, and the telescope still tells. */
+      @media (max-width: 560px) {
+        .run > .sec:nth-child(n + 4) {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .sec > i {
+          animation: none;
+        }
+        #enter-ar {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="scene-container"></div>
+    <div class="landing">
+      <span class="landing__word">FACTORY<br />FIGHT</span>
+      <div class="runs" aria-hidden="true">
+        <div class="run run--mains">
+          <span class="sec" style="--f: 1"><i></i></span>
+          <span class="sec" style="--f: 0.86"><i></i></span>
+          <span class="sec" style="--f: 0.73"><i></i></span>
+          <span class="sec" style="--f: 0.62"><i></i></span>
+          <span class="sec" style="--f: 0.53"><i></i></span>
+        </div>
+        <div class="run run--coolant">
+          <span class="sec" style="--f: 1"><i></i></span>
+          <span class="sec" style="--f: 0.85"><i></i></span>
+          <span class="sec" style="--f: 0.72"><i></i></span>
+          <span class="sec" style="--f: 0.61"><i></i></span>
+          <span class="sec" style="--f: 0.52"><i></i></span>
+        </div>
+        <div class="run run--volt">
+          <span class="sec" style="--f: 1"><i></i></span>
+          <span class="sec" style="--f: 0.84"><i></i></span>
+          <span class="sec" style="--f: 0.71"><i></i></span>
+          <span class="sec" style="--f: 0.6"><i></i></span>
+          <span class="sec" style="--f: 0.51"><i></i></span>
+        </div>
+      </div>
+      <button id="enter-ar">PLAY</button>
+      <div class="landing__tape" aria-hidden="true"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

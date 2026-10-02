@@ -1,0 +1,22 @@
+import { defineConfig } from 'vite';
+import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
+
+// IWSDK's dev plugin injects the IWER WebXR emulator so the site can be
+// walked in a desktop browser (WASD + mouse) without a headset. On a real
+// Quest browser it stays out of the way and the native WebXR session —
+// passthrough, room planes and all — is used.
+export default defineConfig({
+  base: './',
+  plugins: [
+    iwsdkDev({
+      emulator: { device: 'metaQuest3' },
+    }),
+  ],
+  server: {
+    host: true,
+    port: 5173,
+  },
+  build: {
+    target: 'esnext',
+  },
+});
