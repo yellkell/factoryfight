@@ -16,7 +16,9 @@ Something lives behind your walls. Place your core, and it comes for it.
   see where it will come.
 - **Build TOWERS beside the lanes,** anywhere on the floor except on a lane
   or in the core's **clearing** (the faint gold square two cells round it):
-  you defend the lanes, not the doorstep. Towers aim and fire on their own:
+  you defend the lanes, not the doorstep. While a tower is in your hand, the
+  circle it will shoot within is drawn on the floor under it (the mortar's
+  blind spot left dark). Towers aim and fire on their own:
 
   | Tower | Coins | What it does |
   | --- | --- | --- |
@@ -59,18 +61,19 @@ Something lives behind your walls. Place your core, and it comes for it.
 
 Every tower is holographic geometry: faceted prisms of dark glass, their edges
 traced in neon, standing on a glowing **hex pad** flat on your floor (no legs,
-nothing plugged in), with whatever does the shooting **floating** above it.
+nothing plugged in), with whatever does the shooting mounted on a turntable on
+top of it.
 
-- **TURRET** (red): a cut obelisk, and a crystal lance floating over it that
-  turns to its target.
+- **TURRET** (red): a cut obelisk with a turntable on top, and a crystal lance
+  in its yoke that turns to its target.
 - **HAMMER** (white): a crystal pylon with a long arm and a great hex-prism
   head that heaves up and slams down.
-- **FLAMER** (orange): a brazier of three leaning shards, and a cut cone of
-  glass floating in their crown that pours the fire.
-- **TESLA COIL** (violet): a twisted spire of stacked prisms, and an orb held
-  in two crossed rings above it.
-- **MORTAR** (teal): six standing shards round a fat hexagonal tube cocked up
-  at the sky.
+- **FLAMER** (orange): a brazier of three leaning shards round a stem, and a
+  cut cone of glass on the stem's turntable that pours the fire.
+- **TESLA COIL** (violet): a twisted spire of stacked prisms, its point run up
+  into an orb held in two crossed rings.
+- **MORTAR** (teal): six standing shards round a pedestal, and on it a fat
+  hexagonal tube cocked up at the sky.
 - **THE CORE** (gold): a big crystal hovering over its pad, turning inside
   three orbiting halo rings.
 

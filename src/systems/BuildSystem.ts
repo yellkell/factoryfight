@@ -50,6 +50,7 @@ import {
   AdditiveBlending,
   BoxGeometry,
   BufferGeometry,
+  DoubleSide,
   EdgesGeometry,
   Float32BufferAttribute,
   Group,
@@ -57,9 +58,12 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  RingGeometry,
   Vector3,
 } from 'three';
-import { UNITS, type UnitType } from '../config.js';
+import { UNITS, WEAPONS, type UnitType, type WeaponId } from '../config.js';
+import { isWeapon } from '../factory/sim.js';
+import { NEON } from '../factory/neon.js';
 import { PLANT_SCALE, ensurePlantRoot, plantRoot } from '../factory/frame.js';
 import { buildUnit, setBeltForm, type UnitRefs } from '../factory/units.js';
 import * as sfx from '../audio/sfx.js';
@@ -150,6 +154,9 @@ export const buildView: {
    *  be one anonymous crate for everything; this is how a walk proves it
    *  wears the machine now, and keeps wearing it. */
   ghostParts?: () => Record<string, number>;
+  /** The reach circle drawn under the ghost: shown, and its radius
+   *  (plant m). */
+  reach?: () => { shown: boolean; radius: number };
   /**
    * Ⓧ'S OWN DOOR — put the armed tool away and drop any haul in
    * progress. The button calls exactly this, so a walk pressing `stow()`
@@ -180,6 +187,14 @@ export class BuildSystem extends createSystem({}) {
   private pointer!: PointerRay;
   private ghost!: Group;
   private ghostMat!: MeshBasicMaterial;
+  /** THE REACH of the tower in your hand: its edge, a faint fill, and
+   *  (the mortar) the blind spot it can't drop a shell into. */
+  private reachG!: Group;
+  private reachEdge!: Mesh;
+  private reachFill!: Mesh;
+  private reachEdgeMat!: MeshBasicMaterial;
+  private reachFillMat!: MeshBasicMaterial;
+  private reachFor: UnitType | null = null;
   private arrowMat!: MeshBasicMaterial;
   private focus!: LineSegments;
   private focusMat!: LineBasicMaterial;
@@ -270,6 +285,31 @@ export class BuildSystem extends createSystem({}) {
     this.ghost.visible = false;
     plantRoot.add(this.ghost);
 
+    const glow = (opacity: number): MeshBasicMaterial =>
+      new MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        side: DoubleSide,
+        toneMapped: false,
+      });
+    this.reachEdgeMat = glow(0.7);
+    this.reachFillMat = glow(0.05);
+    this.reachG = new Group();
+    this.reachEdge = new Mesh(new RingGeometry(0.98, 1, 96), this.reachEdgeMat);
+    this.reachFill = new Mesh(new RingGeometry(0, 0.98, 96), this.reachFillMat);
+    for (const m of [this.reachEdge, this.reachFill]) {
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 5;
+      this.reachG.add(m);
+    }
+    this.reachEdge.position.y = 0.006;
+    this.reachFill.position.y = 0.005;
+    this.reachG.visible = false;
+    plantRoot.add(this.reachG);
+
     this.focusMat = new LineBasicMaterial({
       color: 0xffa22e,
       transparent: true,
@@ -340,6 +380,7 @@ export class BuildSystem extends createSystem({}) {
      *  choosing again. A walk reads this to prove Ⓑ is per-piece. */
     buildView.forcedRot = () => this.forced;
     buildView.armed = () => this.armed;
+    buildView.reach = () => ({ shown: this.reachG.visible && this.ghost.visible, radius: this.reachG.scale.x });
     buildView.ghostParts = () => {
       const out: Record<string, number> = {};
       for (const [type, body] of this.bodies) {
@@ -444,6 +485,7 @@ export class BuildSystem extends createSystem({}) {
     this.forced = null;
     this.view = null;
     this.ghost.visible = false;
+    this.reachG.visible = false;
     for (const m of this.links) m.visible = false;
     sfx.toolStow();
     buzz(this.world, 'left', 0.25, 30);
@@ -598,25 +640,31 @@ export class BuildSystem extends createSystem({}) {
       this.stow();
     }
 
-    const rayObj = this.world.playerSpaceEntities?.raySpaces?.right?.object3D;
-    if (!rayObj) {
-      this.hideAim();
-      return;
-    }
-    rayObj.getWorldPosition(_origin);
-    rayObj.getWorldDirection(_dir).negate();
-
-    // The ray onto the floor plane.
+    // The cell under the aim: the right ray onto the floor — or, in a
+    // walk, the headless aim (so a walk sees the same ghost and reach).
     let cell: Cell | null = null;
-    if (_dir.y < -0.05) {
-      const t = -_origin.y / _dir.y;
-      if (t > 0.05 && t < 9) {
-        _hit.copy(_origin).addScaledVector(_dir, t);
-        cell = worldToCell(_hit.x / PLANT_SCALE, _hit.z / PLANT_SCALE);
+    let handRot: Rot = 0;
+    if (this.headless) {
+      cell = worldToCell(this.headless.x, this.headless.z);
+      handRot = this.headless.handRot;
+    } else {
+      const rayObj = this.world.playerSpaceEntities?.raySpaces?.right?.object3D;
+      if (!rayObj) {
+        this.hideAim();
+        return;
       }
+      rayObj.getWorldPosition(_origin);
+      rayObj.getWorldDirection(_dir).negate();
+      if (_dir.y < -0.05) {
+        const t = -_origin.y / _dir.y;
+        if (t > 0.05 && t < 9) {
+          _hit.copy(_origin).addScaledVector(_dir, t);
+          cell = worldToCell(_hit.x / PLANT_SCALE, _hit.z / PLANT_SCALE);
+        }
+      }
+      const yaw = Math.atan2(_dir.x, _dir.z);
+      handRot = ((((2 - Math.round(yaw / (Math.PI / 2))) % 4) + 4) % 4) as Rot;
     }
-    const yaw = Math.atan2(_dir.x, _dir.z);
-    const handRot = ((((2 - Math.round(yaw / (Math.PI / 2))) % 4) + 4) % 4) as Rot;
     this.view = cell ? this.resolve(cell, handRot) : null;
 
     const occupied = cell ? unitAtCell(cell.i, cell.j) : undefined;
@@ -652,6 +700,7 @@ export class BuildSystem extends createSystem({}) {
       this.ghost.visible = true;
       const breathe = 0.5 + 0.5 * Math.sin(this.clock * 3.2);
       this.ghostMat.opacity = 0.12 + 0.08 * breathe;
+      this.showReach(this.armed, _c.x, _c.z, breathe);
       // A HELD OVERRIDE HAS TO SHOW. The arrow breathes while the plant
       // is choosing and burns steady the moment you take the wheel with
       // Ⓑ — otherwise a turn you made two cells ago quietly rides along
@@ -659,6 +708,7 @@ export class BuildSystem extends createSystem({}) {
       this.arrowMat.opacity = this.forced === null ? 0.6 + 0.3 * breathe : 1;
     } else {
       this.ghost.visible = false;
+      this.reachG.visible = false;
     }
 
     // The focus frame: amber over standing plant, RED under the bar.
@@ -874,6 +924,31 @@ export class BuildSystem extends createSystem({}) {
     }
   }
 
+  /** The reach of the tower about to stand at (x, z): the circle it will
+   *  shoot within (its level-1 range, from its cell's centre, as the sim
+   *  measures it), in its own colour. */
+  private showReach(type: UnitType, x: number, z: number, breathe: number): void {
+    if (!isWeapon(type)) {
+      this.reachG.visible = false;
+      return;
+    }
+    const spec = WEAPONS[type as WeaponId];
+    if (this.reachFor !== type) {
+      this.reachFor = type;
+      // The mortar can't shell its own doorstep: the fill starts at its
+      // blind spot, which is left dark.
+      const inner = (spec.minRange ?? 0) / spec.range;
+      this.reachFill.geometry.dispose();
+      this.reachFill.geometry = new RingGeometry(inner, 0.98, 96);
+      this.reachEdgeMat.color.setHex(NEON[type]);
+      this.reachFillMat.color.setHex(NEON[type]);
+    }
+    this.reachG.position.set(x, 0, z);
+    this.reachG.scale.setScalar(spec.range);
+    this.reachEdgeMat.opacity = 0.55 + 0.25 * breathe;
+    this.reachG.visible = true;
+  }
+
   /** Draw the chevrons for what the ghost would join. */
   private showLinks(cell: Cell | null): void {
     for (const m of this.links) m.visible = false;
@@ -900,6 +975,7 @@ export class BuildSystem extends createSystem({}) {
 
   private hideAim(): void {
     this.ghost.visible = false;
+    this.reachG.visible = false;
     this.focus.visible = false;
     for (const m of this.links) m.visible = false;
     if (!this.haulDriven) {

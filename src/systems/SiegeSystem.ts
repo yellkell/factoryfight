@@ -1188,7 +1188,7 @@ export class SiegeSystem extends createSystem({}) {
       const r = rangeOf(u);
       this.reach.position.set(_c.x, 0.01, _c.z);
       this.reach.scale.set(r, 1, r);
-      this.reachMat.color.set(WEAPONS[u.type as WeaponId].color);
+      this.reachMat.color.set(NEON[u.type]);
       this.reachMat.opacity = 0.45 + 0.15 * Math.sin(this.clock * 4);
       this.reach.visible = true;
     } else {

@@ -4,7 +4,8 @@
  * Every tower stands on a glowing HEX PAD flat on your floor (no legs, no
  * bench, nothing plugged into it) and is built from FACETED PRISMS: dark
  * glass with its edges traced in its trade's neon. Whatever does the
- * shooting FLOATS above the pad and turns on nothing at all. The core is
+ * shooting is MOUNTED on the body — a head that floated over its column
+ * read as unattached, so every head now sits on a turntable. The core is
  * the biggest crystal in the room: it hovers over its pad, turns slowly
  * inside three orbiting halo rings, and cracks and dims as the tide gets
  * into it (SiegeSystem drives that from the core's health).
@@ -148,47 +149,40 @@ const pilotMat = (hex: number): MeshBasicMaterial =>
 /** A short-lived flash of light (opacity driven by SiegeSystem). */
 const flashMat = (hex: number): MeshBasicMaterial => additive(hex, 0);
 
-/** A small floating gem that bobs and turns on its own (idle life). */
-function gem(parent: Object3D, hex: number, size: number, x: number, y: number, z: number): Mesh {
-  const g = crystal(parent, new OctahedronGeometry(size, 0), hex, 0.003);
-  g.position.set(x, y, z);
-  g.scale.y = 1.6;
-  return g;
-}
-
 /* ── the towers ─────────────────────────────────────────────────────────── */
 
 /**
- * THE TURRET — a cut obelisk on its pad and, floating over it, a long
- * lance of crystal that slews to its target and spits slugs from its
- * point. Muzzle at 0.62.
+ * THE TURRET — a cut obelisk on its pad with a turntable on its top, and
+ * in the turntable's yoke a long lance of crystal that slews to its
+ * target and spits slugs from its point. Muzzle at 0.48.
  */
 export function buildTurret(group: Group): GunRefs {
   const hex = NEON.turret;
   hexPad(group, hex);
-  const ob = crystal(group, prismGeo(0.075, 0.045, 0.34), hex);
-  ob.position.y = 0.2;
-  const cap = crystal(group, new ConeGeometry(0.045, 0.05, 6).toNonIndexed(), hex, 0.004);
-  cap.position.y = 0.395;
+  const ob = crystal(group, prismGeo(0.075, 0.05, 0.36), hex);
+  ob.position.y = 0.21;
   const head = new Group();
-  head.position.y = 0.55;
+  head.position.y = 0.39;
   group.add(head);
+  // The turntable: a squat hex collar riding the obelisk's top.
+  const table = crystal(head, prismGeo(0.062, 0.056, 0.03), hex, 0.004);
+  table.position.y = 0.015;
+  // The yoke: two cheek plates standing off the turntable, holding the
+  // lance between them.
+  for (const sx of [-1, 1]) {
+    const cheek = crystal(head, prismGeo(0.012, 0.01, 0.09, 4), hex, 0.0035);
+    cheek.scale.set(1, 1, 3.2);
+    cheek.position.set(sx * 0.05, 0.075, 0);
+  }
   const barrel = new Group();
-  barrel.position.y = 0.07;
+  barrel.position.y = 0.09;
   head.add(barrel);
   // The lance lies along +Z: a bipyramid on its side, its long point out.
-  const lanceGeo = shardGeo(0.05, 0.22, 0.1);
+  const lanceGeo = shardGeo(0.042, 0.22, 0.09);
   lanceGeo.rotateX(Math.PI / 2);
   crystal(barrel, lanceGeo, hex);
-  // Two fins either side, so the head reads as a turning thing.
-  for (const sx of [-1, 1]) {
-    const fin = crystal(barrel, new OctahedronGeometry(0.03, 0), hex, 0.003);
-    fin.scale.set(0.5, 1.6, 2.2);
-    fin.position.set(sx * 0.07, 0, -0.02);
-  }
   const pilot = pilotMat(hex);
-  const eye = new Mesh(new SphereGeometry(0.018, 10, 8), pilot);
-  eye.position.z = 0.0;
+  const eye = new Mesh(new SphereGeometry(0.016, 10, 8), pilot);
   barrel.add(eye);
   const flash = flashMat(0xffd0d8);
   const flashMesh = new Mesh(new CylinderGeometry(0, 1, 1, 10, 1, true), flash);
@@ -197,7 +191,7 @@ export function buildTurret(group: Group): GunRefs {
   flashMesh.position.z = 0.29;
   flashMesh.renderOrder = 14;
   barrel.add(flashMesh);
-  return { head, barrel, kick: 0.045, flash, flashMesh, pilot, bob: [head] };
+  return { head, barrel, kick: 0.04, flash, flashMesh, pilot };
 }
 
 /**
@@ -215,6 +209,9 @@ export function buildMortar(group: Group): GunRefs {
     s.position.set(Math.sin(a) * 0.135, 0.05, Math.cos(a) * 0.135);
     s.rotation.set(Math.cos(a) * 0.25, 0, -Math.sin(a) * 0.25);
   }
+  // The pedestal the gun turns on.
+  const ped = crystal(group, prismGeo(0.1, 0.085, 0.14), hex);
+  ped.position.y = 0.1;
   const head = new Group();
   head.position.y = 0.2;
   group.add(head);
@@ -251,14 +248,13 @@ export function buildMortar(group: Group): GunRefs {
   const core = new Mesh(new SphereGeometry(0.03, 10, 8), pilot);
   core.position.z = -0.02;
   barrel.add(core);
-  const sight = gem(head, hex, 0.016, 0.1, 0.16, 0.0);
-  return { head, barrel, kick: 0.06, flash, flashMesh, pilot, bob: [sight] };
+  return { head, barrel, kick: 0.06, flash, flashMesh, pilot };
 }
 
 /**
- * THE TESLA COIL — a tall twisted spire of three stacked prisms, and over
- * it, floating, a bright orb held inside two crossed rings. The arcs
- * leave the orb. Doesn't turn. Muzzle at 0.95.
+ * THE TESLA COIL — a tall twisted spire of three stacked prisms, its
+ * point run up into a bright orb held inside two crossed rings. The arcs
+ * leave the orb. Doesn't turn. Muzzle at 0.72.
  */
 export function buildTesla(group: Group): GunRefs {
   const hex = NEON.tesla;
@@ -273,10 +269,10 @@ export function buildTesla(group: Group): GunRefs {
     const p = crystal(group, prismGeo(r0, r1, h), hex);
     p.position.y = y + h / 2;
     p.rotation.y = k * 0.35;
-    y += h + 0.02;
+    y += h; // stacked flush: no gaps between the segments
   });
   const crown = new Group();
-  crown.position.y = 0.95;
+  crown.position.y = 0.72; // the orb sits on the spire's point (0.69)
   group.add(crown);
   for (const [rx, rz] of [
     [Math.PI / 2, 0.5],
@@ -294,13 +290,13 @@ export function buildTesla(group: Group): GunRefs {
   const flashMesh = new Mesh(new SphereGeometry(1, 14, 10), flash);
   flashMesh.scale.setScalar(0.12);
   crown.add(flashMesh);
-  return { head: null, barrel: null, kick: 0, flash, flashMesh, pilot, bob: [crown], spin: [crown] };
+  return { head: null, barrel: null, kick: 0, flash, flashMesh, pilot, spin: [crown] };
 }
 
 /**
- * THE FLAMER — three crystals leaning out of the pad like a brazier and,
- * floating in their crown, a cut cone of glass pointing at the lane: the
- * fire pours from its tip. Muzzle at 0.5.
+ * THE FLAMER — three crystals leaning out of the pad like a brazier round
+ * a central stem, and on the stem's turntable a cut cone of glass
+ * pointing at the lane: the fire pours from its tip. Muzzle at 0.44.
  */
 export function buildFlamer(group: Group): GunRefs {
   const hex = NEON.flamer;
@@ -311,9 +307,13 @@ export function buildFlamer(group: Group): GunRefs {
     s.position.set(Math.sin(a) * 0.06, 0.04, Math.cos(a) * 0.06);
     s.rotation.set(Math.cos(a) * 0.3, 0, -Math.sin(a) * 0.3);
   }
+  const stem = crystal(group, prismGeo(0.035, 0.028, 0.34), hex, 0.004);
+  stem.position.y = 0.2;
   const head = new Group();
   head.position.y = 0.44;
   group.add(head);
+  const table = crystal(head, prismGeo(0.045, 0.04, 0.03), hex, 0.004);
+  table.position.y = -0.055;
   const barrel = new Group();
   head.add(barrel);
   const nozzleGeo = new ConeGeometry(0.06, 0.2, 6, 1).toNonIndexed();
@@ -356,7 +356,7 @@ export function buildFlamer(group: Group): GunRefs {
     barrel.add(m);
     jet.push(m);
   }
-  return { head, barrel, kick: 0.006, flash: null, flashMesh: null, pilot, jet, bob: [head] };
+  return { head, barrel, kick: 0.006, flash: null, flashMesh: null, pilot, jet };
 }
 
 /**

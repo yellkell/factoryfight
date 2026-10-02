@@ -183,6 +183,34 @@ await studio();
 
 console.log('FIRST WATCH');
 const lane0 = sg.lanes[0].cells;
+{
+  // THE REACH, while you place: arm a turret, aim beside the lane, and
+  // the circle it will shoot within lies on the floor under the ghost.
+  await arm('turret');
+  let spot = null;
+  for (let k = 2; k < lane0.length && !spot; k++) {
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const v = await aim(lane0[k].i + di, lane0[k].j + dj);
+      if (v?.placeable) {
+        spot = { i: lane0[k].i + di, j: lane0[k].j + dj };
+        break;
+      }
+    }
+  }
+  await page.waitForTimeout(150);
+  let r = await page.evaluate(() => window.__tubes.build.reach());
+  // (WEAPONS.turret.range, plant m: what the sim measures from a cell.)
+  check(r.shown && Math.abs(r.radius - 2.1) < 1e-6, `placing a TURRET shows its reach on the floor (${r.radius.toFixed(2)} m)`);
+  const S = 0.7;
+  const p = cellXZ(spot.i, spot.j);
+  await lookAt(p.x * S + 0.3, p.z * S + 1.6, 0.1, p.x * S, 0, p.z * S);
+  await studio();
+  await shot('01b-placing-reach');
+  await arm(null);
+  await page.waitForTimeout(100);
+  r = await page.evaluate(() => window.__tubes.build.reach());
+  check(!r.shown, 'and it goes when the tool is put down');
+}
 const stood = [];
 // Out along the lane from the core — past its clearing, where nothing
 // may stand — one turret by each of two cells, three cells apart.
