@@ -128,6 +128,7 @@ node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a towe
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
+node tools/lane-look.mjs    # the lanes from straight above, and a crowd going round a bend
 node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
 ```
@@ -135,7 +136,7 @@ node tools/floor-walk.mjs   # the hazard-tape floor
 ## Map of the parts
 
 ```
-src/factory/lanes.ts      THE LANES: routed over the grid from each crack to the core
+src/factory/lanes.ts      THE LANES: routed over the grid from each crack to the core, corners rounded
 src/factory/horde.ts      THE HORDE: every crawler as typed-array columns (cap 4,096),
                           walking its lane, and a spatial hash for splash and chains
 src/factory/crystal.ts    CRYSTAL & HEX: the core and the five towers' models

@@ -11,7 +11,8 @@
  * ROUTING. Dijkstra over the lattice from the breach's first cell to the
  * core's, four-way, where every cell has a seeded bit of noise and every
  * turn a small price — so a lane wanders a little and bends a few times
- * instead of running dead straight or zig-zagging. Cells another lane
+ * instead of running dead straight or zig-zagging. Its corners are then
+ * rounded into arcs (fillet), so the crowd and the road both curve. Cells another lane
  * already uses cost extra (lanes run separately and only meet near the
  * core).
  *
@@ -63,7 +64,7 @@ export function layLanes(breaches: Breach[], core: { i: number; j: number }, see
     const raw: number[] = [b.x, b.z];
     for (const c of cells) raw.push((c.i + 0.5) * CELL, (c.j + 0.5) * CELL);
     raw.push((core.i + 0.5) * CELL, (core.j + 0.5) * CELL);
-    const pts = simplify(raw);
+    const pts = fillet(simplify(raw));
     const cum = new Float32Array(pts.length / 2);
     for (let k = 1; k < cum.length; k++) {
       cum[k] = cum[k - 1] + Math.hypot(pts[k * 2] - pts[k * 2 - 2], pts[k * 2 + 1] - pts[k * 2 - 1]);
@@ -186,6 +187,71 @@ function simplify(raw: number[]): Float32Array {
     if (Math.abs(cross) > 1e-6) out.push(bx, bz);
   }
   out.push(raw[raw.length - 2], raw[raw.length - 1]);
+  return new Float32Array(out);
+}
+
+/** How round a lane's corners are (plant m), where the runs allow it. */
+const CORNER_R = 0.28;
+
+/**
+ * ROUND THE CORNERS. The route turns square at cell centres; a crowd
+ * marching a square corner snaps through 90° and the road drawn under it
+ * folds over itself. Each corner becomes a circular arc tangent to both
+ * runs (radius CORNER_R, or less where a run is short: an arc never eats
+ * more than half a run, or most of the first and last), sampled finely
+ * enough that the walk and the ribbon both read as a curve.
+ */
+function fillet(p: Float32Array): Float32Array {
+  const n = p.length / 2;
+  if (n < 3) return p;
+  const out: number[] = [p[0], p[1]];
+  for (let k = 1; k < n - 1; k++) {
+    const ax = p[k * 2 - 2];
+    const az = p[k * 2 - 1];
+    const bx = p[k * 2];
+    const bz = p[k * 2 + 1];
+    const cx = p[k * 2 + 2];
+    const cz = p[k * 2 + 3];
+    const l1 = Math.hypot(bx - ax, bz - az);
+    const l2 = Math.hypot(cx - bx, cz - bz);
+    const d1x = (bx - ax) / l1;
+    const d1z = (bz - az) / l1;
+    const d2x = (cx - bx) / l2;
+    const d2z = (cz - bz) / l2;
+    const cos = Math.max(-1, Math.min(1, d1x * d2x + d1z * d2z));
+    const turn = Math.acos(cos);
+    if (turn < 0.02 || turn > Math.PI - 0.05) {
+      out.push(bx, bz);
+      continue;
+    }
+    const half = Math.tan(turn / 2);
+    const room = Math.min(l1 * (k === 1 ? 0.8 : 0.5), l2 * (k === n - 2 ? 0.8 : 0.5));
+    const t = Math.min(CORNER_R * half, room);
+    const r = t / half;
+    const p1x = bx - d1x * t;
+    const p1z = bz - d1z * t;
+    // The centre lies off the first run, on the side the lane turns to.
+    let nx = -d1z;
+    let nz = d1x;
+    if (nx * d2x + nz * d2z < 0) {
+      nx = -nx;
+      nz = -nz;
+    }
+    const ox = p1x + nx * r;
+    const oz = p1z + nz * r;
+    const a1 = Math.atan2(p1x - ox, p1z - oz);
+    const p2x = bx + d2x * t;
+    const p2z = bz + d2z * t;
+    let da = Math.atan2(p2x - ox, p2z - oz) - a1;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    const steps = Math.max(3, Math.ceil(Math.abs(da) / (Math.PI / 16)));
+    for (let m = 0; m <= steps; m++) {
+      const a = a1 + (da * m) / steps;
+      out.push(ox + Math.sin(a) * r, oz + Math.cos(a) * r);
+    }
+  }
+  out.push(p[n * 2 - 2], p[n * 2 - 1]);
   return new Float32Array(out);
 }
 
