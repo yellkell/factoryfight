@@ -293,7 +293,9 @@ export interface SiegeFx {
     | 'flame'
     | 'punch'
     | 'shell'
-    | 'upgrade';
+    | 'upgrade'
+    | 'grab' // a fist closed on one
+    | 'slam'; // a thrown one hit the floor
   x: number;
   y: number;
   z: number;

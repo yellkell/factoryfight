@@ -32,6 +32,12 @@ export const DEATH_CAP = 2048;
 
 export const PHASE_EMERGE = 0;
 export const PHASE_WALK = 1;
+/** In your fist: it goes where the hand goes and nothing else moves it. */
+export const PHASE_HELD = 2;
+/** Thrown: a ballistic arc until it hits the floor. */
+export const PHASE_FLY = 3;
+/** Landed and alive: scrabbling back to its lane. */
+export const PHASE_RETURN = 4;
 
 export class Horde {
   n = 0;
@@ -68,6 +74,11 @@ export class Horde {
   readonly burnDps = new Float32Array(HORDE_CAP);
   /** How far it still has to go to the core (targeting: least = first). */
   readonly fd = new Float32Array(HORDE_CAP);
+  /** Off the floor (held or thrown): height, and velocity (plant m, m/s). */
+  readonly y = new Float32Array(HORDE_CAP);
+  readonly vx = new Float32Array(HORDE_CAP);
+  readonly vy = new Float32Array(HORDE_CAP);
+  readonly vz = new Float32Array(HORDE_CAP);
 
   /** This tick's deaths: x, z, kind, cause (weapon index; −1 = none). */
   readonly deaths = new Float32Array(DEATH_CAP * 4);
@@ -107,6 +118,10 @@ export class Horde {
     this.burnT[i] = 0;
     this.burnDps[i] = 0;
     this.fd[i] = Infinity;
+    this.y[i] = 0;
+    this.vx[i] = 0;
+    this.vy[i] = 0;
+    this.vz[i] = 0;
     return i;
   }
 
@@ -160,6 +175,10 @@ export class Horde {
     this.burnT[to] = this.burnT[from];
     this.burnDps[to] = this.burnDps[from];
     this.fd[to] = this.fd[from];
+    this.y[to] = this.y[from];
+    this.vx[to] = this.vx[from];
+    this.vy[to] = this.vy[from];
+    this.vz[to] = this.vz[from];
   }
 
   /** Where a uid lives now (−1 gone). `hint` is where it was last seen. */

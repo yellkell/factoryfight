@@ -48,6 +48,11 @@ Something lives behind your walls. Place your core, and it comes for it.
   - **MITE:** the tide itself. Tiny and quick.
   - **BEETLE:** a lime-green shell that takes a few hits.
   - **HULK:** a big orange bruiser in the middle of the tide.
+- **Pick them up and throw them.** Close a fist (or squeeze the grip) on a
+  MITE or a BEETLE and it's yours, thrashing in your hand; the towers hold
+  their fire on it. Open your hand and it flies with your hand's speed. Thrown
+  hard, it breaks where it lands and takes the ones it lands on with it; set
+  down gently, it lives and scrabbles back to its lane. A HULK is too big.
 - **Whatever reaches the core takes a bite and is gone** (1 for a mite, 5 for
   a beetle, 30 for a hulk, out of 100). The core never heals: its crystal
   cracks, dims, slows and sinks as it is hurt.
@@ -133,6 +138,7 @@ node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a towe
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
+node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
 node tools/lane-look.mjs    # the lanes from above, a crowd going round a bend, a gate open and sealed
 node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor

@@ -52,6 +52,7 @@ import {
 import { ENEMIES, HORDE_KINDS, LINES, SIEGE, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
+import { intents } from '../input/intents.js';
 import { site } from '../game/state.js';
 import { siegeFallen } from '../game/flow.js';
 import { CELL, cellCenter } from '../floor/grid.js';
@@ -60,6 +61,10 @@ import { NEON } from '../factory/neon.js';
 import { buildGate, type GateRefs } from '../factory/crystal.js';
 import {
   bindRoom,
+  grabEnemy,
+  holdEnemy,
+  holding,
+  throwEnemy,
   breachHex,
   coreHealth,
   debugFreeze,
@@ -113,6 +118,13 @@ export const siegeView: {
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
   spawn?: (kind: EnemyId, breach?: number, count?: number) => void;
+  /** THE THROW, headless: a fist closing at a plant point, carrying,
+   *  and opening with a velocity (plant m, m/s). */
+  grab?: (hand: 0 | 1, x: number, y: number, z: number) => boolean;
+  hold?: (hand: 0 | 1, x: number, y: number, z: number) => boolean;
+  throw?: (hand: 0 | 1, vx: number, vy: number, vz: number) => boolean;
+  /** Every live crawler, for a walk to look at. */
+  crawlers?: () => Array<{ uid: number; kind: number; x: number; y: number; z: number; phase: number; hp: number }>;
   /** TOOLS ONLY: a whole tide at once, already out of the walls. */
   flood?: (kind: EnemyId, count: number) => void;
   /** TOOLS ONLY: crack n breaches right now. */
@@ -160,6 +172,7 @@ const _cam = new Vector3();
 const _c = { x: 0, z: 0 };
 const Y = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
+const _hand = new Vector3();
 
 let _sphere: SphereGeometry | null = null;
 const sphereGeo = (): SphereGeometry => (_sphere ??= new SphereGeometry(1, 14, 10));
@@ -417,6 +430,11 @@ export class SiegeSystem extends createSystem({}) {
   private clearingMat!: MeshBasicMaterial;
   private coreHit = 0;
   private coreSpin = 0;
+  /** Each hand's recent path (plant m, with the clock), for the throw. */
+  private fistTrail: Array<Array<[number, number, number, number]>> = [[], []];
+  /** Whether each fist took what it holds (a walk's headless grab is
+   *  left to the walk). */
+  private fistOwns = [false, false];
   private plate!: Mesh;
   private plateCtx!: CanvasRenderingContext2D;
   private plateTex!: CanvasTexture;
@@ -602,6 +620,18 @@ export class SiegeSystem extends createSystem({}) {
     siegeView.horn = () => soundHorn();
     siegeView.core = () => standCore();
     siegeView.spawn = (kind, breach = 0, count = 1) => debugSpawn(kind, breach, count);
+    siegeView.grab = (hand, x, y, z) => grabEnemy(hand, x, y, z);
+    siegeView.hold = (hand, x, y, z) => holdEnemy(hand, x, y, z);
+    siegeView.throw = (hand, vx, vy, vz) => throwEnemy(hand, vx, vy, vz);
+    siegeView.crawlers = () => {
+      const h = plant.siege.horde;
+      const out = [];
+      for (let i = 0; i < h.n; i++) {
+        if (h.dead[i]) continue;
+        out.push({ uid: h.uid[i], kind: h.kind[i], x: h.x[i], y: h.y[i], z: h.z[i], phase: h.phase[i], hp: h.hp[i] });
+      }
+      return out;
+    };
     siegeView.flood = (kind, count) => debugFlood(kind, count);
     siegeView.breaches = (n) => debugBreaches(n);
     siegeView.jump = (n) => debugJump(n);
@@ -665,6 +695,7 @@ export class SiegeSystem extends createSystem({}) {
       if (this.fallenT > 2.6) siegeFallen();
     }
 
+    this.tickFists(delta);
     this.drainFx();
     this.laneStrips.sync(sg.lanes, sg.open, this.clock, SIEGE.laneWidth * 0.65, breachHex());
     this.syncBreaches(false);
@@ -738,6 +769,19 @@ export class SiegeSystem extends createSystem({}) {
         this.sparks.burst(f.x, 0.04, f.z, 10, 0xffffff, 1.4, 0.3, 3, 0.8);
         sfx.hammerSlam();
         buzz(this.world, 'both', 0.25, 50);
+        break;
+      }
+      case 'grab':
+        // A fist closes on one: a pinch of its neon squeezed out.
+        this.sparks.burst(f.x, f.y, f.z, 6, breachHex(), 0.6, 0.2, 0, 0.5);
+        sfx.grabLatch();
+        break;
+      case 'slam': {
+        // A thrown one hits the floor.
+        const r = f.radius ?? 0.12;
+        this.ring(f.x, f.z, breachHex(), r * 1.6, 0.3);
+        this.sparks.burst(f.x, 0.03, f.z, 14, 0xffffff, 1.3, 0.3, 3, 0.8);
+        sfx.scrapCrunch(r > 0.15);
         break;
       }
       case 'shell': {
@@ -1203,6 +1247,55 @@ export class SiegeSystem extends createSystem({}) {
         gun.pilot.opacity = live ? flicker : 0.08;
       }
     }
+  }
+
+  /* ── the fists ──────────────────────────────────────────────────────
+   * Close a fist (or squeeze the grip) on a mite or a beetle and it is
+   * yours; open it and the thing flies with your hand's speed — taken
+   * over the last few frames, so a flick of the wrist counts.
+   */
+  private tickFists(delta: number): void {
+    const grips = this.world.playerSpaceEntities?.gripSpaces;
+    (['left', 'right'] as const).forEach((side, k) => {
+      const hand = k as 0 | 1;
+      const obj = grips?.[side]?.object3D;
+      const trail = this.fistTrail[k];
+      if (!obj || site.paused) {
+        trail.length = 0;
+        // A hand the headset lost lets go of what it held: it drops.
+        if (this.fistOwns[k] && holding(hand)) throwEnemy(hand, 0, 0, 0);
+        this.fistOwns[k] = false;
+        return;
+      }
+      toPlant(obj.getWorldPosition(_hand));
+      trail.push([this.clock, _hand.x, _hand.y, _hand.z]);
+      while (trail.length > 2 && this.clock - trail[0][0] > 0.1) trail.shift();
+      const grab = intents[side].grab;
+      if (grab.down && grabEnemy(hand, _hand.x, _hand.y, _hand.z)) {
+        this.fistOwns[k] = true;
+        buzz(this.world, side, 0.45, 35);
+      } else if (this.fistOwns[k] && !holding(hand)) {
+        this.fistOwns[k] = false; // it died in your hand
+      } else if (this.fistOwns[k]) {
+        if (grab.pressed) {
+          holdEnemy(hand, _hand.x, _hand.y, _hand.z);
+        } else {
+          // Opened: throw with the hand's velocity over the trail.
+          const a = trail[0];
+          const span = Math.max(1 / 90, this.clock - a[0]);
+          const boost = 1.25;
+          throwEnemy(
+            hand,
+            ((_hand.x - a[1]) / span) * boost,
+            ((_hand.y - a[2]) / span) * boost,
+            ((_hand.z - a[3]) / span) * boost,
+          );
+          this.fistOwns[k] = false;
+          buzz(this.world, side, 0.25, 20);
+        }
+      }
+    });
+    void delta;
   }
 
   /* ── the breaches ───────────────────────────────────────────────────── */
