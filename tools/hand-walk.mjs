@@ -247,7 +247,7 @@ await page.evaluate(() => {
 });
 await frames(8);
 const full = (await cuff()).studs.filter((s) => s.id.startsWith('tool:'));
-const want = ['turret', 'piston', 'flamer', 'tesla', 'mortar'];
+const want = ['turret', 'hammer', 'flamer', 'tesla', 'mortar'];
 check(
   want.every((t) => full.some((s) => s.id === `tool:${t}`)),
   `the full arsenal is on the palm: ${full.length} tiles (${full.map((s) => s.id.slice(5)).join(', ')})`,
@@ -299,9 +299,9 @@ ids = (await cuff()).studs.map((s) => s.id);
 check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
 await poke(await stud('stow'));
 check((await armed()) === null, 'POKE DOWN: the tool is put away');
-await poke(await stud('tool:piston'));
-check((await armed()) === 'piston', 'pick the PISTON');
-await poke(await stud('tool:piston'));
+await poke(await stud('tool:hammer'));
+check((await armed()) === 'hammer', 'pick the HAMMER');
+await poke(await stud('tool:hammer'));
 check((await armed()) === null, 'and poke the same tile again to put it down');
 
 /* ── TOUCH A TOWER ───────────────────────────────────────────────────── */

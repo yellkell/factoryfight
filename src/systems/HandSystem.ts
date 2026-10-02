@@ -135,14 +135,14 @@ const HEADER_UP = BELT.tile * 0.6 + 0.01 + CUFF.h / 2;
 
 // The core (alone, until it stands), then the towers in the order the
 // ladder hands them out.
-const TOOL_ORDER: BuildTool[] = ['dock', 'turret', 'piston', 'flamer', 'tesla', 'mortar'];
+const TOOL_ORDER: BuildTool[] = ['dock', 'turret', 'hammer', 'flamer', 'tesla', 'mortar'];
 const TOOL_NAME: Record<string, string> = {
   dock: 'CORE',
   maker: 'MAKER',
   belt: 'RAIL',
   turret: 'TURRET',
   flamer: 'FLAMER',
-  piston: 'PISTON',
+  hammer: 'HAMMER',
   tesla: 'TESLA',
   mortar: 'MORTAR',
   wall: 'WALL',

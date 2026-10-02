@@ -149,7 +149,7 @@ export const UNIT_NAME: Record<UnitType, string> = {
   mortar: 'MORTAR',
   tesla: 'TESLA COIL',
   flamer: 'FLAMETHROWER',
-  piston: 'PISTON',
+  hammer: 'HAMMER',
 };
 
 /** One line on what each piece of plant is FOR — the box panel's
@@ -162,11 +162,11 @@ const UNIT_DOCKET: Record<UnitType, string> = {
   chest: 'Stores parts from rails. Grip a part to take it out.',
   post: 'Guides a rail route. Place where you want it to bend.',
   vat: 'Takes the green feed. Fill it to complete the final goal.',
-  turret: 'Rapid rounds, a mite a shot. The workhorse.',
+  turret: 'Rapid rounds at one target. The workhorse.',
   mortar: 'Lobs shells into the thick of a lane. Long reach, blind up close.',
   tesla: 'A bolt that jumps through ten of them at once.',
   flamer: 'A cone of fire: a whole column burns. Short reach — put it right by a lane.',
-  piston: 'Shoves the front of a column back down its lane. Best at a corner.',
+  hammer: 'Heaves up and smashes the lane beside it. Flattens a whole clump at once.',
   wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
 };
 
@@ -1420,7 +1420,7 @@ export class MenuSystem extends createSystem({}) {
       g.fillStyle = UI.faint;
       g.fillText('THE ARSENAL', SHEET_X + 26, y);
       y += 30;
-      (['turret', 'flamer', 'piston', 'tesla', 'mortar'] as WeaponId[]).forEach((w, k) => {
+      (['turret', 'flamer', 'hammer', 'tesla', 'mortar'] as WeaponId[]).forEach((w, k) => {
         const cx = SHEET_X + 26 + (k % 2) * ((SHEET_W - 52) / 2);
         const cy = y + Math.floor(k / 2) * 44;
         unitGlyph(g, w, cx, cy - 18, 36);
@@ -1981,7 +1981,7 @@ export class MenuSystem extends createSystem({}) {
       const kit: Array<{ tool: BuildTool; label: string }> = [
         { tool: 'dock', label: 'CORE' },
         { tool: 'turret', label: 'TURRET' },
-        { tool: 'piston', label: 'PISTON' },
+        { tool: 'hammer', label: 'HAMMER' },
         { tool: 'flamer', label: 'FLAMER' },
         { tool: 'tesla', label: 'TESLA' },
         { tool: 'mortar', label: 'MORTAR' },
@@ -2277,93 +2277,77 @@ export class MenuSystem extends createSystem({}) {
   private paintBox(): void {
     const unit = unitById(site.inspect);
     if (!unit) return;
+    // THE TOWER PANEL, kept to the one decision it is for: what it is,
+    // how far it has come, and two big buttons — UPGRADE (its price) and
+    // SELL (what you get back). The numbers live in the game, not here.
     const [cw, ch] = BOARD.boxPx;
-    const PAD = 26;
-    const footY = ch - 78;
+    const PAD = 22;
     const tower = isWeapon(unit.type);
     const level = levelOf(unit);
     const next = tower ? upgradeCost(unit) : null;
     const coins = plant.siege.coins;
-    const half = (cw - PAD * 2 - 12) / 2;
+    const half = (cw - PAD * 2 - 14) / 2;
+    const footY = ch - PAD - 84;
     const buttons: PanelButton[] = [];
     if (tower) {
       buttons.push(
         {
           id: 'box:upgrade',
-          label: next === null ? 'MAX LEVEL' : `UPGRADE · ${next}`,
-          small: true,
-          px: 22,
+          label: next === null ? 'MAX' : `UPGRADE ${next}`,
+          px: 26,
           disabled: next === null || coins < next,
           tone: next !== null && coins >= next ? UI.positive : undefined,
           x: PAD,
           y: footY,
           w: half,
-          h: 58,
+          h: 84,
         },
         {
           id: 'box:remove',
-          label: `SELL · ${sellValue(unit)}`,
-          small: true,
-          px: 22,
+          label: `SELL ${sellValue(unit)}`,
+          px: 26,
           tone: UI.danger,
-          x: PAD + half + 12,
+          x: PAD + half + 14,
           y: footY,
           w: half,
-          h: 58,
+          h: 84,
         },
       );
     }
-    // CLOSE lives in the corner, away from SELL.
-    buttons.push({ id: 'box:close', label: 'CLOSE', small: true, px: 19, x: cw - PAD - 92, y: 22, w: 92, h: 42 });
+    buttons.push({ id: 'box:close', label: '✕', small: true, px: 22, x: cw - PAD - 48, y: 16, w: 48, h: 44 });
 
     this.box.paint(
-      unit.type === 'dock' ? 'THE CORE' : `${UNIT_NAME[unit.type]} · LEVEL ${level}`,
+      unit.type === 'dock' ? 'THE CORE' : UNIT_NAME[unit.type],
       (g) => {
         g.textAlign = 'left';
         g.textBaseline = 'middle';
-        unitGlyph(g, unit.type, PAD, 108, 74);
-        wrapText(g, UNIT_DOCKET[unit.type], PAD + 92, 126, cw - PAD * 2 - 96, 24, font(500, 19), UI.dim);
-        let y = 214;
+        const midY = 136;
+        unitGlyph(g, unit.type, PAD, midY - 40, 80);
         if (!tower) {
-          // The core: its health and the purse.
-          g.font = font(600, 22);
+          g.font = font(600, 26);
           g.fillStyle = UI.text;
-          g.fillText(`CORE ${Math.round(coreHealth() * 100)}%  ·  ${coins} COINS`, PAD, y);
+          g.fillText(`${Math.round(coreHealth() * 100)}%`, PAD + 88, midY);
           return;
         }
-        // THE LEVEL PIPS.
+        // THE LEVEL: one dot per level, lit up to this one.
+        const hex = `#${WEAPONS[unit.type as WeaponId].color.toString(16).padStart(6, '0')}`;
         for (let k = 0; k < SIEGE.levels.length; k++) {
-          g.fillStyle = k < level ? UI.accent : 'rgba(255,255,255,0.12)';
+          const x = PAD + 122 + k * 42;
           g.beginPath();
-          g.roundRect(PAD + k * 54, y - 9, 46, 18, 9);
-          g.fill();
-        }
-        g.font = font(600, 20);
-        g.fillStyle = UI.faint;
-        g.fillText(`${coins} COINS`, PAD + SIEGE.levels.length * 54 + 14, y);
-        // NOW → NEXT: what the upgrade buys.
-        y += 44;
-        const spec = WEAPONS[unit.type as WeaponId];
-        const cur = SIEGE.levels[level - 1];
-        const nxt = SIEGE.levels[level];
-        const rows: Array<[string, (l: typeof cur) => string]> = [
-          ['DAMAGE', (l) => `${Math.round(spec.damage * l.damage)}`],
-          ['REACH', (l) => `${(spec.range * l.range * 0.7).toFixed(2)} m`],
-          ['RATE', (l) => `${((1 / spec.cycleS) * l.rate).toFixed(1)}/s`],
-        ];
-        for (const [name, f] of rows) {
-          g.font = font(500, 19);
-          g.fillStyle = UI.faint;
-          g.fillText(name, PAD, y);
-          g.font = font(600, 22);
-          g.fillStyle = UI.text;
-          g.fillText(f(cur), PAD + 120, y);
-          if (nxt) {
-            g.fillStyle = UI.positive;
-            g.fillText(`→ ${f(nxt)}`, PAD + 260, y);
+          g.arc(x, midY, 13, 0, Math.PI * 2);
+          if (k < level) {
+            g.fillStyle = hex;
+            g.fill();
+          } else {
+            g.strokeStyle = 'rgba(255,255,255,0.25)';
+            g.lineWidth = 3;
+            g.stroke();
           }
-          y += 34;
         }
+        g.font = font(600, 22);
+        g.fillStyle = UI.faint;
+        g.textAlign = 'right';
+        g.fillText(`${coins} COINS`, cw - PAD, midY);
       },
       buttons,
       this.hover,

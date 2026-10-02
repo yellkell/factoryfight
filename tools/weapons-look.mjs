@@ -93,7 +93,7 @@ const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) =
 // core), the road its crawlers come down, and how far out they start.
 const roads = {
   flamer: { at: [0, -2], d: [0, -1], far: 0.95, kind: 'beetle', more: 'mite', crowd: 40 },
-  piston: { at: [0, -2], d: [0, -1], far: 0.45, kind: 'beetle', more: 'mite', crowd: 14 },
+  hammer: { at: [0, -2], d: [0, -1], far: 0.34, kind: 'beetle', more: 'mite', crowd: 14 },
   turret: { at: [0, -2], d: [0, -1], far: 1.3, kind: 'hulk', more: 'mite', crowd: 10 },
   tesla: { at: [0, -2], d: [0, -1], far: 1.0, kind: 'beetle', more: 'mite', crowd: 30 },
   mortar: { at: [-5, -3], d: [1, 0], far: 1.6, kind: 'hulk', more: 'mite', crowd: 60, flip: -1, eye: -0.6 },
@@ -186,7 +186,7 @@ for (const [w, r] of Object.entries(roads)) {
       })
       .catch(() => {});
   }
-  await page.waitForTimeout(w === 'piston' ? 400 : 60);
+  await page.waitForTimeout(w === 'hammer' ? 400 : 60);
   await page.screenshot({ path: `shots/weapons/${w}.png` });
   await page.evaluate(() => window.__tubes.plant.timeScale(1));
   console.log(`  ${stood && fired ? '✓' : '✗'} ${w} (stood ${stood}, fired ${fired}) · shots/weapons/${w}.png`);
@@ -210,7 +210,7 @@ await page.evaluate(({ ci, cj }) => {
     }
     return null;
   };
-  const ring = { flamer: [0, -2], piston: [-1, -1], turret: [2, -1], tesla: [-2, 1], mortar: [1, 2] };
+  const ring = { flamer: [0, -2], hammer: [-1, -1], turret: [2, -1], tesla: [-2, 1], mortar: [1, 2] };
   for (const [w, [di, dj]] of Object.entries(ring)) near(w, ci + di, cj + dj);
 }, { ci: core.i, cj: core.j });
 await page.waitForTimeout(400);

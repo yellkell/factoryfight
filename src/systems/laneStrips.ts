@@ -41,14 +41,18 @@ void main() {
   float s = vUv.x;
   float v = abs(vUv.y);
   // Two edge lines.
-  float edge = smoothstep(0.74, 0.86, v) * (1.0 - smoothstep(0.93, 1.0, v));
-  // Chevrons flowing toward the core.
-  float c = fract(s * 5.0 - uTime * 1.1 - v * 0.55);
-  float chev = smoothstep(0.0, 0.07, c) * (1.0 - smoothstep(0.16, 0.24, c)) * (1.0 - v * 0.6);
+  float edge = smoothstep(0.82, 0.9, v) * (1.0 - smoothstep(0.94, 1.0, v));
+  // Chevrons, pointing AT the core and travelling toward it: the tip
+  // (v = 0) leads, the arms sweep back, and each one is a hard bright
+  // front with a soft tail behind it. (c FALLS as s rises, so c ≈ 0 is
+  // the front edge of every band.)
+  float c = fract(uTime * 0.9 - s * 3.2 - v * 0.75);
+  float chev = smoothstep(0.0, 0.02, c) * (1.0 - smoothstep(0.02, 0.2, c));
+  chev *= 1.0 - v * 0.7;
   // Sealed: the edges dash, the middle is dark.
   float dash = step(0.45, fract(s * 4.0));
   float open = uOpen;
-  float a = mix(edge * dash * 0.22, edge * 0.85 + chev * 0.5 + 0.07, open);
+  float a = mix(edge * dash * 0.2, edge * 0.55 + chev * 0.38 + 0.03, open);
   // Fade in out of the wall, and brighten into the core.
   a *= smoothstep(0.0, 0.25, s) * (0.8 + 0.4 * smoothstep(uLen - 0.6, uLen, s));
   // Alpha IS the glow: additive blending adds colour × alpha, and in

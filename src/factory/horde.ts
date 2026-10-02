@@ -16,7 +16,7 @@
  *
  * THE BUCKETS. A spatial hash over the floor (cell HASH_CELL plant m),
  * rebuilt once a tick, answers "who is near here" for splash, the
- * flamer's cone, the coil's next hop, the piston's shove and a slug's
+ * flamer's cone, the coil's next hop, the hammer's smash and a slug's
  * landing — without any of them walking all n.
  *
  * Deaths leave a record in `deaths` (x, z, kind, cause) for the renderer

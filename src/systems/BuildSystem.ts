@@ -249,7 +249,7 @@ export class BuildSystem extends createSystem({}) {
     // maker's drum and piston, the combiner's twin lobes, the bank's
     // mouth, the crate's bands, a post's stick. One is shown at a time.
     this.bodies = new Map();
-    for (const type of ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'vat', 'turret', 'wall', 'flamer', 'piston', 'tesla', 'mortar'] as UnitType[]) {
+    for (const type of ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'vat', 'turret', 'wall', 'flamer', 'hammer', 'tesla', 'mortar'] as UnitType[]) {
       const refs = buildUnit(type);
       refs.group.traverse((o) => {
         const m = o as Mesh;
@@ -360,7 +360,7 @@ export class BuildSystem extends createSystem({}) {
     };
     buildView.catalogue = () => ({
       available: (
-        ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'vat', 'turret', 'wall', 'flamer', 'piston', 'tesla', 'mortar'] as UnitType[]
+        ['dock', 'maker', 'belt', 'combiner', 'chest', 'post', 'vat', 'turret', 'wall', 'flamer', 'hammer', 'tesla', 'mortar'] as UnitType[]
       ).filter((t) => typeAvailable(t)),
     });
     buildView.count = () => occupiedCount();

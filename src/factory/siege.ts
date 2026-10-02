@@ -36,7 +36,7 @@ import type { Wall } from '../room/walls.js';
 import { PLANT_SCALE } from './frame.js';
 import { HORDE_CAP, PHASE_EMERGE, PHASE_WALK } from './horde.js';
 import { laneAt, laneCellSet, layLanes } from './lanes.js';
-import { dockUnit, isWeapon, placeUnit, removeUnit } from './sim.js';
+import { dockUnit, isWeapon, noBuild, placeUnit, removeUnit } from './sim.js';
 import { plant, unitAtCell, type Breach, type SiegeFx, type Unit } from './state.js';
 
 /* ── the room, as the siege sees it ─────────────────────────────────────── */
@@ -99,6 +99,7 @@ export function startSiege(atWave = 0): void {
   sg.wave = Math.max(0, atWave);
   sg.kills = 0;
   sg.coins = SIEGE.startCoins;
+  sg.coinDust = 0;
   sg.horde.clear();
   sg.streams = [];
   sg.won = sg.wave >= WAVES.length;
@@ -151,10 +152,9 @@ function layTheLanes(): void {
   plant.generation++;
 }
 
-/** Is (i, j) on a lane? Nothing is built there. */
+/** Is (i, j) on a lane, or in the core's clearing? Nothing is built there. */
 export function laneBlocked(i: number, j: number): boolean {
-  const cells = plant.siege.laneCells;
-  return cells.size > 0 && cells.has((i + 4096) * 8192 + (j + 4096));
+  return noBuild(i, j);
 }
 
 function beginBuild(n: number): void {
@@ -296,8 +296,8 @@ const KIND_INDEX: Record<EnemyId, number> = Object.fromEntries(HORDE_KINDS.map((
 const NO_LANE = 255;
 
 /** Weapons by index — what killed a crawler, in the horde's death log. */
-export const WEAPON_ORDER: WeaponId[] = ['turret', 'mortar', 'tesla', 'flamer', 'piston'];
-const W: Record<WeaponId, number> = { turret: 0, mortar: 1, tesla: 2, flamer: 3, piston: 4 };
+export const WEAPON_ORDER: WeaponId[] = ['turret', 'mortar', 'tesla', 'flamer', 'hammer'];
+const W: Record<WeaponId, number> = { turret: 0, mortar: 1, tesla: 2, flamer: 3, hammer: 4 };
 /** The death log's cause for one that reached the core. */
 export const LEAK = 9;
 
@@ -391,7 +391,9 @@ function spawn(kind: EnemyId, laneIdx: number): number {
   const lane = sg.lanes[k];
   if (!lane) return -1;
   const h = sg.horde;
-  const i = h.add(KIND_INDEX[kind], lane.pts[0], lane.pts[1], ENEMIES[kind].hp, 0, k);
+  const w = plant.siege.wave;
+  const hp = ENEMIES[kind].hp * (1 + SIEGE.hpPerWave * w + SIEGE.hpPerWave2 * w * w);
+  const i = h.add(KIND_INDEX[kind], lane.pts[0], lane.pts[1], hp, 0, k);
   if (i < 0) return -1;
   // A little behind the crack's mouth, so it climbs out rather than pops.
   h.s[i] = -Math.random() * 0.1;
@@ -567,6 +569,11 @@ function tickWeapons(dt: number): void {
     u.cool = Math.max(0, (u.cool ?? 0) - dt);
     u.firedT = (u.firedT ?? 99) + dt;
     u.look = (u.look ?? 0) - dt;
+    if (u.strike) {
+      u.strike.t -= dt;
+      if (u.strike.t <= 0) smash(u);
+      continue; // mid-swing: it neither turns nor fires
+    }
     cellCenter(u.i, u.j, _c);
     const range = rangeOf(u);
     // Keep the one it has while it is alive and in reach; look again
@@ -587,12 +594,12 @@ function tickWeapons(dt: number): void {
     u.tgtAt = ti;
     if (ti < 0) continue;
     const want = Math.atan2(h.x[ti] - _c.x, h.z[ti] - _c.z);
-    const aimed = slew(u, want, dt, w === 'flamer' || w === 'piston' ? 0.5 : 0.3);
+    const aimed = slew(u, want, dt, w === 'flamer' ? 0.5 : 0.3);
     if (!aimed || u.cool > 0) continue;
     u.cool = spec.cycleS / lv(u).rate;
     u.firedT = 0;
     const yaw = u.yaw ?? want;
-    const reach = w === 'mortar' ? 0.22 : w === 'piston' ? 0.12 : 0.18;
+    const reach = w === 'mortar' ? 0.22 : 0.18;
     const mx = _c.x + Math.sin(yaw) * reach;
     const mz = _c.z + Math.cos(yaw) * reach;
     const my = spec.muzzleY;
@@ -600,8 +607,8 @@ function tickWeapons(dt: number): void {
       flame(u, mx, my, mz, yaw);
       continue;
     }
-    if (w === 'piston') {
-      punch(u, mx, mz, yaw);
+    if (w === 'hammer') {
+      swing(u, ti);
       continue;
     }
     fx({ kind: 'fire', x: mx, y: my, z: mz, weapon: w, unit: u.id, yaw });
@@ -685,33 +692,38 @@ function knock(i: number, dist: number, kt: number, stun: number): void {
   h.stunT[i] = Math.max(h.stunT[i], stun);
 }
 
-/** PISTON: the ram drives out and throws the whole front rank back the
- *  way it came — everything in a short cone ahead of it. */
-function punch(u: Unit, mx: number, mz: number, yaw: number): void {
-  const spec = WEAPONS.piston;
+/** HAMMER: the head goes up. It lands HAMMER_SWING seconds later, on
+ *  the spot the target was walking into. */
+const HAMMER_SWING = 0.22;
+function swing(u: Unit, ti: number): void {
+  const sg = plant.siege;
+  const h = sg.horde;
+  let x = h.x[ti];
+  let z = h.z[ti];
+  // Lead it: by the time the head comes down it has walked on.
+  const lane = h.breach[ti] !== NO_LANE ? sg.lanes[h.breach[ti]] : undefined;
+  if (lane) {
+    laneAt(lane, h.s[ti] + SPECS[h.kind[ti]].speed * h.pace[ti] * HAMMER_SWING, _p);
+    x = _p.x;
+    z = _p.z;
+  }
+  u.strike = { x, z, t: HAMMER_SWING };
+}
+
+/** The head comes down: everything under it is flattened and stunned. */
+function smash(u: Unit): void {
+  const st = u.strike;
+  if (!st) return;
+  u.strike = undefined;
+  const spec = WEAPONS.hammer;
   const h = plant.siege.horde;
-  const reach = rangeOf(u);
-  const cone = spec.cone ?? 0.7;
+  const r = spec.splash ?? 0.2;
   const dmg = damageOf(u);
-  cellCenter(u.i, u.j, _c);
-  h.near(_c.x, _c.z, reach + MAX_R, (i, d) => {
-    const a = Math.atan2(h.x[i] - _c.x, h.z[i] - _c.z);
-    const off = Math.abs(Math.atan2(Math.sin(a - yaw), Math.cos(a - yaw)));
-    if (off > cone && d > 0.12) return;
-    hurt(i, dmg, W.piston);
-    if (h.dead[i]) return;
-    const give = SPECS[h.kind[i]].give;
-    knock(i, (spec.knock ?? 0.9) * give * (1 - (d / (reach + MAX_R)) * 0.5), 0.22, (spec.stunS ?? 0.5) * give);
+  h.near(st.x, st.z, r + MAX_R, (i, d) => {
+    hurt(i, dmg * (d < r * 0.6 ? 1 : 0.6), W.hammer);
+    if (!h.dead[i]) h.stunT[i] = Math.max(h.stunT[i], spec.stunS ?? 0.4);
   });
-  fx({
-    kind: 'punch',
-    x: mx + Math.sin(yaw) * 0.2,
-    y: 0.2,
-    z: mz + Math.cos(yaw) * 0.2,
-    weapon: 'piston',
-    unit: u.id,
-    yaw,
-  });
+  fx({ kind: 'punch', x: st.x, y: 0.02, z: st.z, weapon: 'hammer', unit: u.id, yaw: u.yaw ?? 0, radius: r });
 }
 
 /** FLAMER: one tick of the cone — everything inside it scorches and
@@ -826,7 +838,10 @@ function die(i: number, cause: number): void {
   if (h.dead[i]) return;
   h.kill(i, cause);
   sg.kills++;
-  sg.coins += SPECS[h.kind[i]].coin;
+  sg.coinDust += SPECS[h.kind[i]].coin;
+  const whole = Math.floor(sg.coinDust + 1e-9);
+  sg.coins += whole;
+  sg.coinDust -= whole;
 }
 
 /* ── tools ──────────────────────────────────────────────────────────────── */

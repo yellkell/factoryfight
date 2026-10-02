@@ -147,13 +147,27 @@ check(
   }),
   'and every lane ends right beside the core',
 );
-check(sg.coins === 150, `the purse opens with 150 coins (${sg.coins})`);
+check(sg.coins === 120, `the purse opens with 120 coins (${sg.coins})`);
 const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(cat.length === 1 && cat[0] === 'turret', `wave 1 offers the TURRET and nothing else (${cat.join(', ')})`);
 const onLane = sg.lanes[0].cells[2];
 const refused = await handPlace('turret', onLane.i, onLane.j);
 check(!refused.ok && !refused.view?.placeable, 'a turret aimed at a lane cell is refused (the ghost says so)');
-check((await siege()).coins === 150, 'and costs nothing');
+{
+  // THE CLEARING: a free cell two from the core (off every lane) is
+  // refused too — you defend the lanes, not the doorstep.
+  const onAny = new Set(sg.lanes.flatMap((l) => l.cells.map((c) => `${c.i},${c.j}`)));
+  let near = null;
+  for (const [di, dj] of [[2, 2], [-2, 2], [2, -2], [-2, -2], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+    if (!onAny.has(`${core.i + di},${core.j + dj}`)) {
+      near = { i: core.i + di, j: core.j + dj };
+      break;
+    }
+  }
+  const r = await handPlace('turret', near.i, near.j);
+  check(!r.ok && !r.view?.placeable, `and so is one in the core's clearing (${near.i - core.i}, ${near.j - core.j} from it)`);
+}
+check((await siege()).coins === 120, 'and costs nothing');
 await studio();
 {
   const S = 0.7;
@@ -170,8 +184,11 @@ await studio();
 console.log('FIRST WATCH');
 const lane0 = sg.lanes[0].cells;
 const stood = [];
-for (const k of [lane0.length - 2, lane0.length - 5, lane0.length - 8]) {
-  const c = lane0[Math.max(0, k)];
+// Out along the lane from the core — past its clearing, where nothing
+// may stand — one turret by each of two cells, three cells apart.
+for (let k = lane0.length - 1; k >= 0 && stood.length < 2; k--) {
+  if (stood.length === 1 && Math.abs(lane0[k].i - stood[0][0]) + Math.abs(lane0[k].j - stood[0][1]) < 4) continue;
+  const c = lane0[k];
   for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const r = await handPlace('turret', c.i + di, c.j + dj);
     if (r.ok) {
@@ -181,10 +198,10 @@ for (const k of [lane0.length - 2, lane0.length - 5, lane0.length - 8]) {
   }
 }
 sg = await siege();
-check(stood.length === 3 && sg.coins === 0, `three TURRETS beside the lane, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
+check(stood.length === 2 && sg.coins === 20, `two TURRETS beside the lane, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
 await page.evaluate(() => window.__tubes.siege.horn());
 sg = await siege();
-check(sg.phase === 'wave' && sg.queued + sg.enemies === 80, `the horn: 80 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
+check(sg.phase === 'wave' && sg.queued + sg.enemies === 100, `the horn: 100 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
 await page.waitForTimeout(4000);
 {
   const S = 0.7;
@@ -202,11 +219,11 @@ const cleared = await page
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
 sg = await siege();
 check(cleared, `FIRST WATCH held (kills ${sg.kills}, core ${(sg.core * 100).toFixed(0)}%)`);
-check(sg.kills === 80, `every mite put down (${sg.kills})`);
-check(sg.coins === 80 + 55, `a coin a kill plus the wave bonus (${sg.coins} = 80 + 55)`);
+check(sg.kills === 100, `every mite put down (${sg.kills})`);
+check(sg.coins === 20 + 20 + 55, `a fifth of a coin a mite plus the wave bonus (${sg.coins} = 20 + 20 + 55)`);
 check(sg.phase === 'build' && sg.open === 2, `wave 2 opens a second lane (${sg.open} open)`);
 const cat2 = await page.evaluate(() => window.__tubes.build.catalogue().available);
-check(cat2.includes('piston'), `and the PISTON joins the catalogue (${cat2.join(', ')})`);
+check(cat2.includes('hammer'), `and the HAMMER joins the catalogue (${cat2.join(', ')})`);
 
 /* ── THE TOWER ───────────────────────────────────────────────────────── */
 
@@ -223,6 +240,7 @@ await page.waitForTimeout(250);
     console.log('  · shots/siege/tower-panel.png');
   }
 }
+await page.evaluate(() => window.__tubes.siege.coins(100));
 const c1 = (await siege()).coins;
 await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
 towers = await page.evaluate(() => window.__tubes.siege.turrets());
@@ -304,7 +322,7 @@ await page.waitForTimeout(400);
 sg = await siege();
 const units = await plan();
 check(
-  sg.phase === 'core' && sg.wave === 0 && units.length === 0 && sg.lanes.length === 0 && sg.coins === 150,
+  sg.phase === 'core' && sg.wave === 0 && units.length === 0 && sg.lanes.length === 0 && sg.coins === 120,
   `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units, ${sg.lanes.length} lanes, ${sg.coins} coins)`,
 );
 
