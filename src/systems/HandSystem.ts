@@ -503,7 +503,6 @@ export class HandSystem extends createSystem({}) {
     if (!this.belt.visible) return;
     const armed = buildView.armed?.() ?? null;
     const tools = TOOL_ORDER.filter((t) => t === 'delete' ? plant.siege.phase !== 'core' : typeAvailable(t as UnitType));
-    const rows = Math.ceil(tools.length / BELT.perRow);
     // Same law as the studs: tiles that move under a finger wait for it.
     const sig = tools.join(',');
     if (sig !== this.beltSig) {
@@ -522,11 +521,9 @@ export class HandSystem extends createSystem({}) {
       const row = Math.floor(k / BELT.perRow);
       const inRow = Math.min(BELT.perRow, tools.length - row * BELT.perRow);
       const col = k % BELT.perRow;
-      t.group.position.set(
-        (col - (inRow - 1) / 2) * BELT.pitch,
-        ((rows - 1) / 2 - row) * BELT.pitch * 1.12,
-        0,
-      );
+      // The first row stays where a lone row sits; more rows grow out
+      // toward the fingers — never back over the watch on the wrist.
+      t.group.position.set((col - (inRow - 1) / 2) * BELT.pitch, -row * BELT.pitch * 1.12, 0);
       t.group.visible = true;
       const afford = tool === 'delete' || canAfford(tool as UnitType);
       const cost = tool === 'delete' ? '' : costLabel(tool as UnitType);

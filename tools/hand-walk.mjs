@@ -225,6 +225,41 @@ check(ids.includes('horn') && ids.includes('menu'), 'and the watch offers HORN a
 await page.screenshot({ path: 'shots/hands/toolbelt.png' });
 console.log('  · shots/hands/toolbelt.png');
 
+// THE WHOLE ARSENAL ON THE PALM: late in the ladder every machine and
+// every weapon is offered — all of them must still sit on the hand,
+// within a finger's reach, and take a poke.
+await page.evaluate(() => {
+  window.__tubes.siege.wakeAll();
+  window.__tubes.plant.grantBank({ gear: 60, cell: 30, chip: 10, pump: 10 });
+  // Posts come with an upgrade off the core, not with a wave.
+  window.__tubes.menu.act('buy:route-posts');
+});
+await frames(8);
+const full = (await cuff()).studs.filter((s) => s.id.startsWith('tool:'));
+const want = ['maker', 'belt', 'combiner', 'chest', 'post', 'wall', 'piston', 'flamer', 'turret', 'tesla', 'mortar', 'delete'];
+check(
+  want.every((t) => full.some((s) => s.id === `tool:${t}`)),
+  `the full arsenal is on the palm: ${full.length} tiles (${full.map((s) => s.id.slice(5)).join(', ')})`,
+);
+{
+  const cx = full.reduce((a, s) => a + s.x, 0) / full.length;
+  const cy = full.reduce((a, s) => a + s.y, 0) / full.length;
+  const cz = full.reduce((a, s) => a + s.z, 0) / full.length;
+  const spread = Math.max(...full.map((s) => Math.hypot(s.x - cx, s.y - cy, s.z - cz)));
+  check(spread < 0.14, `and it stays a palm's width (furthest tile ${(spread * 100).toFixed(1)} cm from the middle)`);
+}
+// (Held a little higher for the photograph, so all three rows are in it.)
+await pose('left', [-0.04, 1.52, -0.3], WRIST_UP);
+await frames(8);
+await page.screenshot({ path: 'shots/hands/toolbelt-full.png' });
+console.log('  · shots/hands/toolbelt-full.png');
+await raiseLeft();
+await frames(8);
+await poke(await stud('tool:mortar'));
+check((await armed()) === 'mortar', 'POKE the MORTAR tile: a mortar in your hand');
+await poke(await stud('tool:mortar'));
+check((await armed()) === null, 'and poke it again to put it down');
+
 /* ── PAUSE, BY TOUCH ─────────────────────────────────────────────────── */
 
 console.log('PAUSE, BY TOUCH');
