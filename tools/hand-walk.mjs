@@ -308,21 +308,16 @@ check((await armed()) === null, 'and poke the same tile again to put it down');
 
 console.log('TOUCH A TOWER');
 await pose('left', LEFT_REST);
-// A turret beside the open lane (the walk stands it; placing by pinch
+// A turret two cells off the core (the walk stands it; placing by pinch
 // is BuildSystem's and is walked in siege-walk).
-const lane = (await page.evaluate(() => window.__tubes.siege.state())).lanes[0].cells;
-const spot = await page.evaluate(
-  ({ cells }) => {
-    for (const c of cells.slice(2)) {
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        if (window.__tubes.build.placeAt(c.i + di, c.j + dj, 'turret', 0)) return { i: c.i + di, j: c.j + dj };
-      }
-    }
-    return null;
-  },
-  { cells: lane },
-);
-check(Boolean(spot), `a TURRET stands beside the lane (${JSON.stringify(spot)})`);
+const spot = await page.evaluate(() => {
+  const core = window.__tubes.plant.plan().find((u) => u.type === 'dock');
+  for (const [di, dj] of [[2, 0], [-2, 0], [0, 2], [0, -2]]) {
+    if (window.__tubes.build.placeAt(core.i + di, core.j + dj, 'turret', 0)) return { i: core.i + di, j: core.j + dj };
+  }
+  return null;
+});
+check(Boolean(spot), `a TURRET stands near the core (${JSON.stringify(spot)})`);
 const towerPt = { x: (spot.i + 0.5) * 0.35 * S, y: 0.5, z: (spot.j + 0.5) * 0.35 * S, nx: 0, ny: 1, nz: 0 };
 await tipTo(towerPt, 0.3);
 await frames(4);

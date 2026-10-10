@@ -7,14 +7,16 @@
  *   node tools/siege-walk.mjs      → shots/siege/
  *
  *   MAN THE WALLS   the board's one door; the floor waits for its CORE
- *   THE LANES       the core lands: four lanes laid, one open; nothing
- *                   can be built on a lane
- *   FIRST WATCH     three turrets beside the lane; the horn; the tide
- *                   dies; kills and the wave bonus fill the purse
+ *   THE OPEN FLOOR  the core lands; towers stand right up against it
+ *   FIRST WATCH     three turrets hugging the core; the horn; the tide
+ *                   comes out of every wall and dies; kills and the
+ *                   wave bonus fill the purse
  *   THE TOWER       its panel: UPGRADE (level 2, dearer, stronger), SELL
  *   THE CARDS       every page of the card, inside the card
- *   THE LEAK        an unguarded lane: whatever reaches the core takes a
- *                   bite out of it, and is gone
+ *   THE RIFT        a pack tears out of one stretch of wall
+ *   THE CHEW        a core boxed in by towers: they chew their way in
+ *   THE LEAK        an unguarded core: whatever reaches it takes a bite
+ *                   out of it, and is gone
  *   THE FALL        a flood with no towers; TRY AGAIN deals a new floor
  */
 
@@ -125,84 +127,39 @@ await page.evaluate(() => window.__tubes.menu.act('start-order'));
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
 await page.waitForTimeout(300);
 let sg = await siege();
-check(sg.phase === 'core' && sg.lanes.length === 0, `the siege opens waiting for its CORE, no lanes yet (${sg.phase})`);
+check(sg.phase === 'core' && sg.breaches.length === 0, `the siege opens waiting for its CORE, no rifts (${sg.phase})`);
 const cat0 = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(cat0.length === 1 && cat0[0] === 'dock', `and the core is the only thing on offer (${cat0.join(', ')})`);
 
-/* ── THE LANES ───────────────────────────────────────────────────────── */
+/* ── THE OPEN FLOOR ──────────────────────────────────────────────────── */
 
-console.log('THE LANES');
+console.log('THE OPEN FLOOR');
 const coreAt = await handPlace('dock', 0, 0);
 check(coreAt.ok, 'the CORE stands where you put it');
 await page.waitForTimeout(200);
 sg = await siege();
 check(sg.phase === 'build' && sg.wave === 0, `and the siege begins: building for wave 1 (${sg.phase} ${sg.wave})`);
-check(sg.lanes.length === 4 && sg.open === 1, `four lanes are laid, one open (${sg.lanes.length} laid, ${sg.open} open)`);
-check(sg.lanes.every((l) => l.cells.length >= 3 && l.len > 1), `each runs from a crack to the core (${sg.lanes.map((l) => l.len.toFixed(1) + ' m').join(', ')})`);
+check(sg.breaches.length === 0, 'no rift shows until the horn: they could come from anywhere');
 const core = (await plan()).find((u) => u.type === 'dock');
-check(
-  sg.lanes.every((l) => {
-    const last = l.cells[l.cells.length - 1];
-    return Math.abs(last.i - core.i) + Math.abs(last.j - core.j) === 1;
-  }),
-  'and every lane ends right beside the core',
-);
-check(sg.coins === 120, `the purse opens with 120 coins (${sg.coins})`);
+check(sg.coins === 150, `the purse opens with 150 coins (${sg.coins})`);
 const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(cat.length === 1 && cat[0] === 'turret', `wave 1 offers the TURRET and nothing else (${cat.join(', ')})`);
-const onLane = sg.lanes[0].cells[2];
-const refused = await handPlace('turret', onLane.i, onLane.j);
-check(!refused.ok && !refused.view?.placeable, 'a turret aimed at a lane cell is refused (the ghost says so)');
-{
-  // THE CLEARING: a free cell two from the core (off every lane) is
-  // refused too — you defend the lanes, not the doorstep.
-  const onAny = new Set(sg.lanes.flatMap((l) => l.cells.map((c) => `${c.i},${c.j}`)));
-  let near = null;
-  for (const [di, dj] of [[2, 2], [-2, 2], [2, -2], [-2, -2], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
-    if (!onAny.has(`${core.i + di},${core.j + dj}`)) {
-      near = { i: core.i + di, j: core.j + dj };
-      break;
-    }
-  }
-  const r = await handPlace('turret', near.i, near.j);
-  check(!r.ok && !r.view?.placeable, `and so is one in the core's clearing (${near.i - core.i}, ${near.j - core.j} from it)`);
-}
-check((await siege()).coins === 120, 'and costs nothing');
-await studio();
-{
-  const S = 0.7;
-  const cx = (core.i + 0.5) * CELL * S;
-  const cz = (core.j + 0.5) * CELL * S;
-  await page.evaluate(() => window.__tubes.siege.breaches(4));
-  await lookAt(cx + 0.2, cz + 2.2, 0.6, cx, 0, cz - 0.3);
-  await shot('01-the-lanes');
-  await page.evaluate(() => window.__tubes.siege.breaches(1));
-}
 
 /* ── FIRST WATCH ─────────────────────────────────────────────────────── */
 
 console.log('FIRST WATCH');
-const lane0 = sg.lanes[0].cells;
 {
-  // THE REACH, while you place: arm a turret, aim beside the lane, and
+  // THE REACH, while you place: arm a turret, aim beside the core, and
   // the circle it will shoot within lies on the floor under the ghost.
   await arm('turret');
-  let spot = null;
-  for (let k = 2; k < lane0.length && !spot; k++) {
-    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const v = await aim(lane0[k].i + di, lane0[k].j + dj);
-      if (v?.placeable) {
-        spot = { i: lane0[k].i + di, j: lane0[k].j + dj };
-        break;
-      }
-    }
-  }
+  const v = await aim(core.i + 1, core.j);
+  check(Boolean(v?.placeable), 'a turret aimed at the cell right beside the core is offered');
   await page.waitForTimeout(150);
   let r = await page.evaluate(() => window.__tubes.build.reach());
   // (WEAPONS.turret.range, plant m: what the sim measures from a cell.)
   check(r.shown && Math.abs(r.radius - 2.1) < 1e-6, `placing a TURRET shows its reach on the floor (${r.radius.toFixed(2)} m)`);
   const S = 0.7;
-  const p = cellXZ(spot.i, spot.j);
+  const p = cellXZ(core.i + 1, core.j);
   await lookAt(p.x * S + 0.3, p.z * S + 1.6, 0.1, p.x * S, 0, p.z * S);
   await studio();
   await shot('01b-placing-reach');
@@ -212,31 +169,39 @@ const lane0 = sg.lanes[0].cells;
   check(!r.shown, 'and it goes when the tool is put down');
 }
 const stood = [];
-// Out along the lane from the core — past its clearing, where nothing
-// may stand — one turret by each of two cells, three cells apart.
-for (let k = lane0.length - 1; k >= 0 && stood.length < 2; k--) {
-  if (stood.length === 1 && Math.abs(lane0[k].i - stood[0][0]) + Math.abs(lane0[k].j - stood[0][1]) < 4) continue;
-  const c = lane0[k];
-  for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const r = await handPlace('turret', c.i + di, c.j + dj);
-    if (r.ok) {
-      stood.push([c.i + di, c.j + dj]);
-      break;
-    }
-  }
+// Hugging the core: three sides of it.
+for (const [di, dj] of [[1, 0], [-1, 0], [0, 1]]) {
+  const r = await handPlace('turret', core.i + di, core.j + dj);
+  if (r.ok) stood.push([core.i + di, core.j + dj]);
 }
 sg = await siege();
-check(stood.length === 2 && sg.coins === 20, `two TURRETS beside the lane, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
+check(stood.length === 3 && sg.coins === 0, `three TURRETS right up against the core, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
 await page.evaluate(() => window.__tubes.siege.horn());
 sg = await siege();
 check(sg.phase === 'wave' && sg.queued + sg.enemies === 100, `the horn: 100 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
-await page.waitForTimeout(4000);
+check(sg.breaches.length === 0, 'wave 1 has no pack: every one of them comes out of the walls');
 {
+  // FROM EVERY SIDE: where each one climbed out, by its bearing from the
+  // core (watched as they come — the turrets don't leave them long).
   const S = 0.7;
-  const b = sg.breaches[0];
-  const cx = (core.i + 0.5) * CELL * S;
-  const cz = (core.j + 0.5) * CELL * S;
-  await lookAt(cx + (b.x * S - cx) * 0.2 + 0.5, cz + (b.z * S - cz) * 0.2 + 0.9, -0.3, (cx + b.x * S) / 2, 0, (cz + b.z * S) / 2);
+  const cx = (core.i + 0.5) * CELL;
+  const cz = (core.j + 0.5) * CELL;
+  const first = await page.evaluate(
+    () =>
+      new Promise((done) => {
+        const seen = new Map();
+        const t0 = performance.now();
+        const look = () => {
+          for (const c of window.__tubes.siege.crawlers()) if (!seen.has(c.uid)) seen.set(c.uid, c);
+          if (performance.now() - t0 < 8000) setTimeout(look, 100);
+          else done([...seen.values()]);
+        };
+        look();
+      }),
+  );
+  const octants = new Set(first.map((c) => Math.floor(((Math.atan2(c.x - cx, c.z - cz) + Math.PI) / (Math.PI * 2)) * 8) % 8));
+  check(octants.size >= 5, `they come out of every wall (${first.length} so far, from ${octants.size} of 8 bearings)`);
+  await lookAt(cx * S + 0.6, cz * S + 1.8, 0.4, cx * S, 0, cz * S);
   await shot('02-first-watch');
 }
 await page.evaluate(() => window.__tubes.plant.timeScale(4));
@@ -248,8 +213,8 @@ await page.evaluate(() => window.__tubes.plant.timeScale(1));
 sg = await siege();
 check(cleared, `FIRST WATCH held (kills ${sg.kills}, core ${(sg.core * 100).toFixed(0)}%)`);
 check(sg.kills === 100, `every mite put down (${sg.kills})`);
-check(sg.coins === 20 + 20 + 55, `a fifth of a coin a mite plus the wave bonus (${sg.coins} = 20 + 20 + 55)`);
-check(sg.phase === 'build' && sg.open === 2, `wave 2 opens a second lane (${sg.open} open)`);
+check(sg.coins === 20 + 55, `a fifth of a coin a mite plus the wave bonus (${sg.coins} = 20 + 55)`);
+check(sg.phase === 'build' && sg.wave === 1, `wave 2 is building (${sg.phase})`);
 const cat2 = await page.evaluate(() => window.__tubes.build.catalogue().available);
 check(cat2.includes('hammer'), `and the HAMMER joins the catalogue (${cat2.join(', ')})`);
 
@@ -309,6 +274,76 @@ check(!cardIds.some((i) => /build:(maker|belt|wall|chest|combiner|post|delete)/.
 await page.evaluate(() => window.__tubes.menu.act('card:build'));
 await page.evaluate(() => window.__tubes.menu.setPause(false));
 
+/* ── THE RIFT ────────────────────────────────────────────────────────── */
+
+console.log('THE RIFT');
+await page.evaluate(() => {
+  const p = window.__tubes;
+  for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
+  p.siege.rifts(1);
+  p.siege.spawn('mite', 0, 40);
+});
+{
+  sg = await siege();
+  const rift = sg.breaches[0];
+  const crawlers = await page.evaluate(() => window.__tubes.siege.crawlers());
+  const far = Math.max(...crawlers.map((c) => Math.hypot(c.x - rift.x, c.z - rift.z)));
+  check(sg.breaches.length === 1 && rift.state === 'pouring', `a RIFT tears open (${rift?.state})`);
+  check(crawlers.length === 40 && far < 0.6, `and its PACK comes out of that one stretch of wall (all 40 within ${far.toFixed(2)} m)`);
+  const S = 0.7;
+  const cx = (core.i + 0.5) * CELL;
+  const cz = (core.j + 0.5) * CELL;
+  await page.evaluate(() => window.__tubes.plant.timeScale(0.5));
+  await page.waitForTimeout(1200);
+  await lookAt(cx * S + (rift.x - cx) * S * 0.35 + 0.4, cz * S + (rift.z - cz) * S * 0.35 + 0.4, 0, rift.x * S, 0.15, rift.z * S);
+  await shot('03-the-rift');
+  await page.evaluate(() => {
+    window.__tubes.siege.clear();
+    window.__tubes.plant.timeScale(1);
+  });
+}
+
+/* ── THE CHEW ────────────────────────────────────────────────────────── */
+
+console.log('THE CHEW');
+{
+  // Box the core in on all eight sides: there is no way in but through.
+  await page.evaluate(() => window.__tubes.siege.coins(1000));
+  let boxed = 0;
+  for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    if ((await handPlace('turret', core.i + di, core.j + dj)).ok) boxed++;
+  }
+  check(boxed === 8, `eight turrets box the core in (${boxed})`);
+  const before = (await siege()).core;
+  await page.evaluate(() => {
+    const p = window.__tubes;
+    p.siege.flood('beetle', 40);
+    p.siege.tough(400);
+    p.plant.timeScale(4);
+  });
+  const chewed = await page
+    .waitForFunction(() => window.__tubes.siege.turrets().some((t) => t.hp < t.maxHp - 1), undefined, { timeout: 60000, polling: 200 })
+    .then(() => true)
+    .catch(() => false);
+  await page.evaluate(() => window.__tubes.plant.timeScale(1));
+  const towersNow = await page.evaluate(() => window.__tubes.siege.turrets());
+  const worst = Math.min(...towersNow.map((t) => t.hp / t.maxHp));
+  check(chewed, `with no way round, they CHEW a tower (the worst is down to ${(worst * 100).toFixed(0)}%)`);
+  const bites = (await page.evaluate(() => window.__tubes.siege.enemies())).filter((e) => e.phase === 'bite').length;
+  check(bites > 0, `${bites} of them are at it`);
+  const S = 0.7;
+  const cx = (core.i + 0.5) * CELL;
+  const cz = (core.j + 0.5) * CELL;
+  await lookAt(cx * S + 0.5, cz * S + 0.9, -0.6, cx * S, 0.05, cz * S);
+  await shot('04-the-chew');
+  check((await siege()).core === before, 'and while the ring stands, nothing reaches the core');
+  await page.evaluate(() => {
+    const p = window.__tubes;
+    p.siege.clear();
+    for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
+  });
+}
+
 /* ── THE LEAK ────────────────────────────────────────────────────────── */
 
 console.log('THE LEAK');
@@ -317,21 +352,21 @@ await page.evaluate(() => {
   for (const u of p.plant.plan()) if (u.type !== 'dock') p.build.removeAt(u.i, u.j);
 });
 const coreBefore = (await siege()).core;
-await page.evaluate(() => window.__tubes.siege.spawn('mite', 0, 10));
+await page.evaluate(() => window.__tubes.siege.spawn('mite', -1, 10));
 await page.evaluate(() => window.__tubes.plant.timeScale(6));
 await page
   .waitForFunction(() => window.__tubes.siege.state().enemies === 0, undefined, { timeout: 60000 })
   .catch(() => {});
 await page.evaluate(() => window.__tubes.plant.timeScale(1));
 const coreAfter = (await siege()).core;
-check(Math.abs(coreBefore - coreAfter - 0.1) < 1e-6, `ten mites walk an empty lane into the core: −10 (${(coreBefore * 100).toFixed(0)}% → ${(coreAfter * 100).toFixed(0)}%)`);
+check(Math.abs(coreBefore - coreAfter - 0.1) < 1e-6, `ten mites walk an empty floor into the core: −10 (${(coreBefore * 100).toFixed(0)}% → ${(coreAfter * 100).toFixed(0)}%)`);
 
 /* ── THE FALL ────────────────────────────────────────────────────────── */
 
 console.log('THE FALL');
 await page.evaluate(() => {
   const p = window.__tubes;
-  for (let k = 0; k < 4; k++) p.siege.spawn('hulk', k);
+  p.siege.spawn('hulk', -1, 6);
   p.plant.timeScale(10);
 });
 const fell = await page
@@ -350,8 +385,8 @@ await page.waitForTimeout(400);
 sg = await siege();
 const units = await plan();
 check(
-  sg.phase === 'core' && sg.wave === 0 && units.length === 0 && sg.lanes.length === 0 && sg.coins === 120,
-  `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units, ${sg.lanes.length} lanes, ${sg.coins} coins)`,
+  sg.phase === 'core' && sg.wave === 0 && units.length === 0 && sg.breaches.length === 0 && sg.coins === 150,
+  `TRY AGAIN deals a bare floor waiting for its core (${sg.phase}, wave ${sg.wave + 1}, ${units.length} units, ${sg.breaches.length} rifts, ${sg.coins} coins)`,
 );
 
 await browser.close();

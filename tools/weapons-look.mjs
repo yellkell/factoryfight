@@ -108,7 +108,7 @@ for (const [w, r] of Object.entries(roads)) {
   const at = await page.evaluate(
     ({ i, j, w }) => {
       const near = (w, i, j) => {
-    // The cell asked for, or the nearest free one off every lane.
+    // The cell asked for, or the nearest free one.
     for (let r = 0; r < 4; r++) {
       for (let di = -r; di <= r; di++) {
         for (let dj = -r; dj <= r; dj++) {
@@ -199,7 +199,7 @@ await page.evaluate(({ ci, cj }) => {
   for (const u of t.plant.plan()) if (u.type !== 'dock') t.build.removeAt(u.i, u.j);
   t.siege.coins(1000);
   const near = (w, i, j) => {
-    // The cell asked for, or the nearest free one off every lane.
+    // The cell asked for, or the nearest free one.
     for (let r = 0; r < 4; r++) {
       for (let di = -r; di <= r; di++) {
         for (let dj = -r; dj <= r; dj++) {
@@ -216,10 +216,11 @@ await page.evaluate(({ ci, cj }) => {
 await page.waitForTimeout(400);
 await page.evaluate(() => {
   const t = window.__tubes;
-  t.siege.breaches(4);
-  for (let b = 0; b < 4; b++) t.siege.spawn('mite', b, 120);
-  t.siege.spawn('hulk', 0);
-  t.siege.spawn('beetle', 1, 10);
+  t.siege.rifts(2);
+  t.siege.spawn('mite', -1, 300);
+  t.siege.spawn('mite', 0, 120);
+  t.siege.spawn('hulk', 1);
+  t.siege.spawn('beetle', -1, 10);
   t.siege.tough(6);
 });
 // The whole ring, from above and behind the core.

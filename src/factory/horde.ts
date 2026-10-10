@@ -9,10 +9,10 @@
  * `uid` is what to hold across ticks: an index moves when the crawlers
  * behind it are swept, a uid never does.
  *
- * THE LANE. Each crawler walks one lane (factory/lanes.ts): `s` is how
- * far along it is, `lane` its sideways place in the column — so moving
- * the whole tide is one addition each, and "nearest the core" is just
- * the biggest `s`.
+ * THE WAY. Nobody here knows the way to the core: the room does
+ * (factory/field.ts), and a crawler's step is a lookup in it. `veer` is
+ * its own small lean off the way, so ten thousand of them fan out into
+ * a tide instead of filing down the same few streamlines.
  *
  * THE BUCKETS. A spatial hash over the floor (cell HASH_CELL plant m),
  * rebuilt once a tick, answers "who is near here" for splash, the
@@ -23,10 +23,10 @@
  * to burst, splat and voice; the sim never draws.
  */
 
-export const HORDE_CAP = 4096;
+export const HORDE_CAP = 8192;
 /** Spatial hash bucket edge (plant m) and table size (power of two). */
 export const HASH_CELL = 0.2;
-const TABLE = 8192;
+const TABLE = 16384;
 /** Most deaths a single tick reports (a mortar into a carpet of them). */
 export const DEATH_CAP = 2048;
 
@@ -36,8 +36,10 @@ export const PHASE_WALK = 1;
 export const PHASE_HELD = 2;
 /** Thrown: a ballistic arc until it hits the floor. */
 export const PHASE_FLY = 3;
-/** Landed and alive: scrabbling back to its lane. */
+/** Landed and alive: dazed a moment, then back on its way. */
 export const PHASE_RETURN = 4;
+/** Up against a tower that stands in its way, and chewing it. */
+export const PHASE_BITE = 5;
 
 export class Horde {
   n = 0;
@@ -50,31 +52,33 @@ export class Horde {
   readonly z = new Float32Array(HORDE_CAP);
   readonly hp = new Float32Array(HORDE_CAP);
   readonly maxHp = new Float32Array(HORDE_CAP);
+  /** Damage already in the air at it (slugs that haven't landed): a gun
+   *  doesn't waste a round on one that is as good as dead. */
+  readonly pend = new Float32Array(HORDE_CAP);
   readonly heading = new Float32Array(HORDE_CAP);
   readonly phase = new Uint8Array(HORDE_CAP);
   readonly phaseT = new Float32Array(HORDE_CAP);
-  /** Which lane it walks (index into siege.lanes). */
-  readonly breach = new Uint8Array(HORDE_CAP);
-  /** How far along that lane it is (plant m). */
-  readonly s = new Float32Array(HORDE_CAP);
-  /** Its pace, as a share of its kind's (a column that all walked in step
+  /** Its pace, as a share of its kind's (a tide that all walked in step
    *  would read as one thing). */
   readonly pace = new Float32Array(HORDE_CAP);
-  /** Sideways place in the column, −0.5..0.5 of the lane's width. */
-  readonly lane = new Float32Array(HORDE_CAP);
+  /** Its lean off the way (radians, −0.5..0.5 of SIEGE.veer). */
+  readonly veer = new Float32Array(HORDE_CAP);
   readonly flash = new Float32Array(HORDE_CAP);
   /** Distance walked (the legs' cycle). */
   readonly stride = new Float32Array(HORDE_CAP);
-  /** Knockback: speed back down the lane, and seconds of it left; then
-   *  a stun. */
-  readonly ks = new Float32Array(HORDE_CAP);
+  /** Knockback: velocity on the plan, and seconds of it left; then a
+   *  stun. */
+  readonly kvx = new Float32Array(HORDE_CAP);
+  readonly kvz = new Float32Array(HORDE_CAP);
   readonly kT = new Float32Array(HORDE_CAP);
   readonly stunT = new Float32Array(HORDE_CAP);
   readonly burnT = new Float32Array(HORDE_CAP);
   readonly burnDps = new Float32Array(HORDE_CAP);
-  /** How far it still has to go to the core (targeting: least = first). */
+  /** How far it still has to go to the core, by the road (targeting:
+   *  least = first). */
   readonly fd = new Float32Array(HORDE_CAP);
-  /** Off the floor (held or thrown): height, and velocity (plant m, m/s). */
+  /** Off the floor (held or thrown): height, and velocity (plant m, m/s).
+   *  Climbing out of the plaster, vx/vz are the way it climbs. */
   readonly y = new Float32Array(HORDE_CAP);
   readonly vx = new Float32Array(HORDE_CAP);
   readonly vy = new Float32Array(HORDE_CAP);
@@ -93,7 +97,7 @@ export class Horde {
   }
 
   /** Add one (returns its index, or −1 at the cap). */
-  add(kind: number, x: number, z: number, hp: number, heading: number, breach: number): number {
+  add(kind: number, x: number, z: number, hp: number, heading: number): number {
     if (this.n >= HORDE_CAP) return -1;
     const i = this.n++;
     this.uid[i] = this.nextUid++;
@@ -103,16 +107,16 @@ export class Horde {
     this.z[i] = z;
     this.hp[i] = hp;
     this.maxHp[i] = hp;
+    this.pend[i] = 0;
     this.heading[i] = heading;
     this.phase[i] = PHASE_EMERGE;
     this.phaseT[i] = 0;
-    this.breach[i] = breach;
-    this.s[i] = 0;
     this.pace[i] = 0.85 + Math.random() * 0.3;
-    this.lane[i] = Math.random() - 0.5;
+    this.veer[i] = Math.random() - 0.5;
     this.flash[i] = 0;
     this.stride[i] = Math.random() * 10;
-    this.ks[i] = 0;
+    this.kvx[i] = 0;
+    this.kvz[i] = 0;
     this.kT[i] = 0;
     this.stunT[i] = 0;
     this.burnT[i] = 0;
@@ -160,16 +164,16 @@ export class Horde {
     this.z[to] = this.z[from];
     this.hp[to] = this.hp[from];
     this.maxHp[to] = this.maxHp[from];
+    this.pend[to] = this.pend[from];
     this.heading[to] = this.heading[from];
     this.phase[to] = this.phase[from];
     this.phaseT[to] = this.phaseT[from];
-    this.breach[to] = this.breach[from];
-    this.s[to] = this.s[from];
     this.pace[to] = this.pace[from];
-    this.lane[to] = this.lane[from];
+    this.veer[to] = this.veer[from];
     this.flash[to] = this.flash[from];
     this.stride[to] = this.stride[from];
-    this.ks[to] = this.ks[from];
+    this.kvx[to] = this.kvx[from];
+    this.kvz[to] = this.kvz[from];
     this.kT[to] = this.kT[from];
     this.stunT[to] = this.stunT[from];
     this.burnT[to] = this.burnT[from];

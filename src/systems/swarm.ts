@@ -1,8 +1,8 @@
 /**
  * THE SWARM, DRAWN — every crawler on the floor in ONE draw call.
  *
- * A mite is ~100 triangles: a faceted abdomen, a head, two hot eyes and
- * six neon legs. It is one geometry, instanced: each crawler is two vec4s
+ * A mite is 62 triangles: a faceted abdomen, a head, two hot eyes and
+ * six neon legs, each two tapering spikes. It is one geometry, instanced: each crawler is two vec4s
  * (where it stands and which way it faces; its stride, hit flash, burn
  * and how far out of the wall it is) and a kind. Everything else happens
  * on the GPU — the legs swing in a tripod gait off the stride, the body
@@ -116,7 +116,7 @@ function miteGeometry(): BufferGeometry {
   }
   // Six legs: hip on the body's side, knee high and out, foot on the
   // floor further out. Tripod groups: L1 R2 L3 | R1 L2 R3.
-  const prism = (
+  const spike = (
     p: [number, number, number],
     q: [number, number, number],
     w: number,
@@ -124,7 +124,9 @@ function miteGeometry(): BufferGeometry {
     lg: number,
     h: [number, number, number],
   ): void => {
-    // A thin triangular prism from p to q.
+    // A thin three-sided spike from p, tapering to a point at q: three
+    // triangles where a prism took six — legs are most of a mite, and
+    // there are thousands of mites.
     const d = new Vector3(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
     const u = new Vector3(0, 1, 0).cross(d);
     if (u.lengthSq() < 1e-6) u.set(1, 0, 0);
@@ -135,12 +137,7 @@ function miteGeometry(): BufferGeometry {
       return [o[0] + u.x * Math.cos(t) + v.x * Math.sin(t), o[1] + u.y * Math.cos(t) + v.y * Math.sin(t), o[2] + u.z * Math.cos(t) + v.z * Math.sin(t)];
     });
     const r0 = ring(p);
-    const r1 = ring(q);
-    for (let s = 0; s < 3; s++) {
-      const s2 = (s + 1) % 3;
-      tri(r0[s], r1[s], r1[s2], g, lg, 1, h);
-      tri(r0[s], r1[s2], r0[s2], g, lg, 1, h);
-    }
+    for (let s = 0; s < 3; s++) tri(r0[s], q, r0[(s + 1) % 3], g, lg, 1, h);
   };
   const zs = [0.42, 0.02, -0.38];
   for (let k = 0; k < 3; k++) {
@@ -151,8 +148,8 @@ function miteGeometry(): BufferGeometry {
       const h: [number, number, number] = [sx * 0.42, 0.6, z];
       const knee: [number, number, number] = [sx * 1.05, 1.0, z + splay * 0.6];
       const foot: [number, number, number] = [sx * 1.55, 0.0, z + splay * 1.2];
-      prism(h, knee, 0.07, 1, group, h);
-      prism(knee, foot, 0.055, 1.25, group, h);
+      spike(h, knee, 0.08, 1, group, h);
+      spike(knee, foot, 0.065, 1.25, group, h);
     }
   }
   const g = new BufferGeometry();
@@ -566,7 +563,7 @@ void main() {
   if (r > edge) discard;
   float core = 1.0 - smoothstep(0.0, edge, r);
   // A flash as it lands, then a long stain that fades out. Alpha-blended,
-  // not added: a lane where three hundred died is stained, not blinding.
+  // not added: a patch where three hundred died is stained, not blinding.
   float flash = exp(-vAge * 30.0);
   float fade = 1.0 - smoothstep(0.55, 1.0, vAge);
   float alpha = mix(0.3, 0.7, core) * fade;

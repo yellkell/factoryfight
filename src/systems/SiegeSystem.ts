@@ -49,13 +49,13 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { ENEMIES, HORDE_KINDS, LINES, SIEGE, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
+import { ENEMIES, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { intents } from '../input/intents.js';
 import { site } from '../game/state.js';
 import { siegeFallen } from '../game/flow.js';
-import { CELL, cellCenter } from '../floor/grid.js';
+import { cellCenter } from '../floor/grid.js';
 import { ensurePlantRoot, toPlant } from '../factory/frame.js';
 import { NEON } from '../factory/neon.js';
 import { buildGate, type GateRefs } from '../factory/crystal.js';
@@ -73,7 +73,7 @@ import {
   rangeOf,
   debugClear,
   debugTough,
-  debugBreaches,
+  debugRifts,
   debugCoins,
   debugJump,
   debugFlood,
@@ -87,7 +87,6 @@ import {
   waveSpec,
 } from '../factory/siege.js';
 import { dockUnit, isWeapon } from '../factory/sim.js';
-import { LaneStrips } from './laneStrips.js';
 import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
@@ -108,16 +107,16 @@ export const siegeView: {
     kills: number;
     core: number;
     won: boolean;
-    breaches: Array<{ x: number; z: number }>;
-    /** How many lanes are open, and every lane: its length and cells. */
-    open: number;
-    lanes: Array<{ len: number; cells: Array<{ i: number; j: number }>; pts: number[] }>;
+    /** This wave's rifts (where its packs pour from) and their state. */
+    breaches: Array<{ x: number; z: number; state: string }>;
     coins: number;
   };
   horn?: () => void;
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
-  spawn?: (kind: EnemyId, breach?: number, count?: number) => void;
+  /** TOOLS ONLY: crawlers out of the plaster now — through rift n, or
+   *  (−1, the default) anywhere along any wall. */
+  spawn?: (kind: EnemyId, rift?: number, count?: number) => void;
   /** THE THROW, headless: a fist closing at a plant point, carrying,
    *  and opening with a velocity (plant m, m/s). */
   grab?: (hand: 0 | 1, x: number, y: number, z: number) => boolean;
@@ -127,8 +126,8 @@ export const siegeView: {
   crawlers?: () => Array<{ uid: number; kind: number; x: number; y: number; z: number; phase: number; hp: number }>;
   /** TOOLS ONLY: a whole tide at once, already out of the walls. */
   flood?: (kind: EnemyId, count: number) => void;
-  /** TOOLS ONLY: crack n breaches right now. */
-  breaches?: (n: number) => void;
+  /** TOOLS ONLY: tear n rifts open right now. */
+  rifts?: (n: number) => void;
   /** TOOLS ONLY: jump the ladder to wave n's build phase. */
   jump?: (n: number) => void;
   /** TOOLS ONLY: how long the last frames took (ms) — sim and draw. */
@@ -145,7 +144,16 @@ export const siegeView: {
   enemies?: () => Array<{ id: number; kind: string; x: number; z: number; hp: number; phase: string }>;
   /** Every weapon: what it is, seconds since it last fired, its aim, and
    *  whether it is plumbed (the fuel-burners). */
-  turrets?: () => Array<{ id: number; type: string; fired: number; yaw: number; fuelled: boolean; level: number }>;
+  turrets?: () => Array<{
+    id: number;
+    type: string;
+    fired: number;
+    yaw: number;
+    fuelled: boolean;
+    level: number;
+    hp: number;
+    maxHp: number;
+  }>;
   /** TOOLS ONLY: coins into the purse. */
   coins?: (n: number) => void;
 } = {};
@@ -397,7 +405,6 @@ function hammerAngle(f: number, t: number): number {
 export class SiegeSystem extends createSystem({}) {
   private root!: Group;
   private swarm!: SwarmMesh;
-  private laneStrips!: LaneStrips;
   /** Level rings round upgraded towers, and the reach of the one whose
    *  panel is open. */
   private levelRings!: InstancedMesh;
@@ -426,8 +433,6 @@ export class SiegeSystem extends createSystem({}) {
   private coreRing!: Mesh;
   private coreRingMat!: MeshBasicMaterial;
   private coreRingFrac = -1;
-  private clearing!: Mesh;
-  private clearingMat!: MeshBasicMaterial;
   private coreHit = 0;
   private coreSpin = 0;
   /** Each hand's recent path (plant m, with the clock), for the throw. */
@@ -451,7 +456,6 @@ export class SiegeSystem extends createSystem({}) {
     ensurePlantRoot(this.scene).add(this.root);
     bindRoom(walls);
 
-    this.laneStrips = new LaneStrips(this.root);
     {
       const ringGeo = new RingGeometry(0.9, 1, 48);
       ringGeo.rotateX(-Math.PI / 2);
@@ -573,16 +577,6 @@ export class SiegeSystem extends createSystem({}) {
     this.coreRing.visible = false;
     this.root.add(this.coreRing);
 
-    // THE CLEARING round the core, where nothing may be built: a faint
-    // square on the floor (a four-sided ring turned to sit square).
-    const half = (SIEGE.coreClear + 0.5) * CELL;
-    this.clearingMat = glow(0xffcf3a);
-    this.clearingMat.side = DoubleSide;
-    this.clearing = new Mesh(new RingGeometry(half * Math.SQRT2 - 0.012 * Math.SQRT2, half * Math.SQRT2, 4, 1, Math.PI / 4), this.clearingMat);
-    this.clearing.rotation.x = -Math.PI / 2;
-    this.clearing.visible = false;
-    this.root.add(this.clearing);
-
     // THE PLATE — the one sign the siege floats.
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -611,15 +605,13 @@ export class SiegeSystem extends createSystem({}) {
         kills: sg.kills,
         core: coreHealth(),
         won: sg.won,
-        breaches: sg.breaches.map((b) => ({ x: b.x, z: b.z })),
-        open: sg.open,
-        lanes: sg.lanes.map((l) => ({ len: l.len, cells: l.cells.map((c) => ({ ...c })), pts: [...l.pts] })),
+        breaches: sg.breaches.map((b) => ({ x: b.x, z: b.z, state: b.state })),
         coins: sg.coins,
       };
     };
     siegeView.horn = () => soundHorn();
     siegeView.core = () => standCore();
-    siegeView.spawn = (kind, breach = 0, count = 1) => debugSpawn(kind, breach, count);
+    siegeView.spawn = (kind, rift = -1, count = 1) => debugSpawn(kind, rift, count);
     siegeView.grab = (hand, x, y, z) => grabEnemy(hand, x, y, z);
     siegeView.hold = (hand, x, y, z) => holdEnemy(hand, x, y, z);
     siegeView.throw = (hand, vx, vy, vz) => throwEnemy(hand, vx, vy, vz);
@@ -633,7 +625,7 @@ export class SiegeSystem extends createSystem({}) {
       return out;
     };
     siegeView.flood = (kind, count) => debugFlood(kind, count);
-    siegeView.breaches = (n) => debugBreaches(n);
+    siegeView.rifts = (n) => debugRifts(n);
     siegeView.jump = (n) => debugJump(n);
     siegeView.coins = (n) => debugCoins(n);
     siegeView.perf = () => ({ sim: simMs(), draw: this.drawMs, alive: plant.siege.horde.n, shards: this.shards.live });
@@ -653,7 +645,7 @@ export class SiegeSystem extends createSystem({}) {
           x: h.x[i],
           z: h.z[i],
           hp: h.hp[i],
-          phase: ['emerge', 'walk', 'bite'][h.phase[i]],
+          phase: ['emerge', 'walk', 'held', 'fly', 'return', 'bite'][h.phase[i]],
         });
       }
       return out;
@@ -668,6 +660,8 @@ export class SiegeSystem extends createSystem({}) {
           yaw: u.yaw ?? 0,
           fuelled: true,
           level: u.level ?? 1,
+          hp: u.hp,
+          maxHp: u.maxHp,
         }));
   }
 
@@ -697,7 +691,6 @@ export class SiegeSystem extends createSystem({}) {
 
     this.tickFists(delta);
     this.drainFx();
-    this.laneStrips.sync(sg.lanes, sg.open, this.clock, SIEGE.laneWidth * 0.65, breachHex());
     this.syncBreaches(false);
     this.tickBreaches(delta);
     const t0 = performance.now();
@@ -842,7 +835,13 @@ export class SiegeSystem extends createSystem({}) {
         break;
       }
       case 'breach':
+        // A RIFT tears open: the plaster bursts, and the pack is through.
         this.breachFlare = 1;
+        this.ring(f.x, f.z, breachHex(), (f.radius ?? 0.4) * 1.8, 0.5);
+        this.sparks.burst(f.x, 0.15, f.z, 40, breachHex(), 1.6, 0.6, 3, 1.2);
+        this.sparks.burst(f.x, 0.1, f.z, 16, 0xd8d0c0, 1.2, 0.4, 5, 1);
+        sfx.wallKnock();
+        buzz(this.world, 'both', 0.3, 60);
         break;
       case 'horn':
         this.breachFlare = 1.5;
@@ -1298,8 +1297,10 @@ export class SiegeSystem extends createSystem({}) {
     void delta;
   }
 
-  /* ── the breaches ───────────────────────────────────────────────────── */
+  /* ── the rifts ──────────────────────────────────────────────────────── */
 
+  /** A gate for every rift this wave has: they come at the horn and go
+   *  when the wave is done. */
   private syncBreaches(clear: boolean): void {
     const list = clear ? [] : plant.siege.breaches;
     const key = list.map((b) => `${b.x.toFixed(2)},${b.z.toFixed(2)}`).join('|');
@@ -1311,6 +1312,8 @@ export class SiegeSystem extends createSystem({}) {
       const gate = buildGate(breachHex());
       gate.group.position.set(b.x + b.nx * 0.004, 0, b.z + b.nz * 0.004);
       gate.group.rotation.y = Math.atan2(b.nx, b.nz);
+      // As wide as the stretch its pack pours out of.
+      gate.group.scale.setScalar(Math.max(0.7, Math.min(1.3, b.half / 0.4)));
       this.root.add(gate.group);
       this.breachHw.push(gate);
     }
@@ -1319,32 +1322,34 @@ export class SiegeSystem extends createSystem({}) {
   private tickBreaches(delta: number): void {
     const sg = plant.siege;
     this.breachFlare = Math.max(0, this.breachFlare - delta * 0.8);
-    const fighting = sg.phase === 'wave';
     const hex = breachHex();
     this.breachHw.forEach((g, k) => {
+      const state = sg.breaches[k]?.state ?? 'spent';
       const u = g.voidMat.uniforms;
       u.uTime.value = this.clock;
-      // SEALED (a later wave's): a dim frame, no void, nothing turning.
-      if (k >= sg.open) {
-        g.voidMesh.visible = false;
+      // SPENT: its pack is through. A dim frame, no void, nothing turning.
+      if (state === 'spent') {
+        u.uOpen.value = Math.max(0, u.uOpen.value - delta * 1.5);
+        g.voidMesh.visible = u.uOpen.value > 0.02;
         g.tube.color.setHex(hex).multiplyScalar(0.25);
         g.halo.opacity = 0.05;
         g.glass.emissiveIntensity = 0.05;
         g.pool.opacity = 0.02;
         return;
       }
-      // Build phase: the void gathers, slow, breathing — a warning.
-      // Wave: it pours — fast, hot, flaring as each one comes through.
-      const breathe = 0.5 + 0.5 * Math.sin(this.clock * (fighting ? 9 : 2.4));
-      const want = fighting ? 1 : 0.35;
+      // GATHERING: the void swirls slow and breathes: a warning.
+      // POURING: it tears wide — fast, hot, flaring as each one comes through.
+      const pouring = state === 'pouring';
+      const breathe = 0.5 + 0.5 * Math.sin(this.clock * (pouring ? 9 : 3.2));
+      const want = pouring ? 1 : 0.35;
       u.uOpen.value += (Math.min(1.4, want + this.breachFlare * 0.4) - u.uOpen.value) * Math.min(1, delta * 3);
       g.voidMesh.visible = true;
-      const lit = Math.min(1, (fighting ? 0.8 : 0.5) + breathe * 0.2 + this.breachFlare * 0.4);
+      const lit = Math.min(1, (pouring ? 0.8 : 0.5) + breathe * 0.2 + this.breachFlare * 0.4);
       g.tube.color.setHex(hex).multiplyScalar(lit);
       g.halo.opacity = 0.12 + 0.2 * lit;
       g.glass.emissiveIntensity = 0.12 + 0.25 * lit;
-      g.pool.opacity = (fighting ? 0.3 : 0.1) + breathe * 0.08 + this.breachFlare * 0.2;
-      const spin = (fighting ? 1.6 : 0.4) * delta;
+      g.pool.opacity = (pouring ? 0.3 : 0.1) + breathe * 0.08 + this.breachFlare * 0.2;
+      const spin = (pouring ? 1.6 : 0.5) * delta;
       g.rings[0].rotation.z += spin;
       g.rings[1].rotation.z -= spin * 1.4;
     });
@@ -1355,7 +1360,6 @@ export class SiegeSystem extends createSystem({}) {
   private tickCore(delta: number): void {
     const core = dockUnit();
     if (!core) {
-      this.clearing.visible = false;
       this.coreRing.visible = false;
       this.plate.visible = false;
       return;
@@ -1371,9 +1375,6 @@ export class SiegeSystem extends createSystem({}) {
     this.coreHit = Math.max(0, this.coreHit - delta * 3);
     this.coreRing.position.set(_c.x, 0.015, _c.z);
     this.coreRing.visible = true;
-    this.clearing.position.set(_c.x, 0.006, _c.z);
-    this.clearing.visible = true;
-    this.clearingMat.opacity = plant.siege.phase === 'build' ? 0.3 + 0.1 * Math.sin(this.clock * 2) : 0.1;
     const crys = liveUnitRefs.get(core.id)?.core;
     if (crys) {
       // THE CRYSTAL: it turns slower, sinks lower and burns dimmer the
