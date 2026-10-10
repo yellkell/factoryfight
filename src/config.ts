@@ -928,6 +928,8 @@ export interface EnemySpec {
   speed: number;
   /** What it does to the core if it gets there (then it is gone). */
   leak: number;
+  /** Hit points a second it chews off a tower standing in its way. */
+  bite: number;
   /** Body radius — the hit circle and the mesh's scale. */
   radius: number;
   /** How far a mortar's blast throws it back (1 = all the way). */
@@ -945,8 +947,9 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     id: 'mite',
     name: 'MITE',
     hp: 8,
-    speed: 0.5,
+    speed: 0.42,
     leak: 1,
+    bite: 0.6,
     radius: 0.05,
     give: 1,
     coin: 0.2,
@@ -957,8 +960,9 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     id: 'beetle',
     name: 'BEETLE',
     hp: 60,
-    speed: 0.32,
+    speed: 0.28,
     leak: 5,
+    bite: 3,
     radius: 0.085,
     give: 0.6,
     coin: 2,
@@ -970,12 +974,13 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     name: 'HULK',
     hp: 1400,
     speed: 0.14,
-    leak: 30,
+    leak: 20,
+    bite: 25,
     radius: 0.2,
     give: 0.2,
     coin: 25,
     neon: 0xff6a2a,
-    docket: 'Plate and fury. A third of the core if it gets there.',
+    docket: 'Plate and fury. A fifth of the core if it gets there.',
   },
 };
 
@@ -1050,7 +1055,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
   hammer: {
     id: 'hammer',
     name: 'HAMMER',
-    docket: 'Winds up and smashes the lane in front of it. Everything under the head is flattened.',
+    docket: 'Winds up and smashes the crowd in front of it. Everything under the head is flattened.',
     range: 0.45,
     cycleS: 1.4,
     damage: 55,
@@ -1093,8 +1098,8 @@ export const SIEGE = {
   /** The core's hit points — the lives. Whatever reaches it takes its
    *  `leak` off, and the core never heals. */
   coreHp: 100,
-  /** Plant hit points by kind (towers are never chewed now; kept so a
-   *  unit always has a number). */
+  /** Plant hit points by kind. A tower standing in the tide's way gets
+   *  chewed (ENEMIES' `bite`); one that goes to zero is scrap. */
   hp: {
     dock: 100,
     maker: 70,
@@ -1112,8 +1117,11 @@ export const SIEGE = {
   } as Record<UnitType, number>,
   /** How fast a gun's head slews onto a target, radians per second. */
   slew: 7,
-  /** THE PURSE a siege opens with: two turrets' worth, and change. */
-  startCoins: 120,
+  /** How much nearer the core (plant m) a crawler straight BEHIND a gun
+   *  has to be to win its aim over one dead ahead. */
+  turnPrice: 0.8,
+  /** THE PURSE a siege opens with: three turrets' worth. */
+  startCoins: 150,
   /** Clearing a wave pays this, plus `bonusPerWave` × its number. */
   waveBonus: 40,
   bonusPerWave: 15,
@@ -1121,26 +1129,37 @@ export const SIEGE = {
    *  for wave index w — a mite is three times as tough by wave 5 and
    *  eleven times by the last shift, which is what upgrades are for. */
   hpPerWave: 0.15,
-  /** THE CLEARING: no tower within this many cells of the core (every
-   *  way, diagonals too) — you defend the lanes, not the doorstep. */
-  coreClear: 2,
   hpPerWave2: 0.11,
   /** A sold tower returns this share of every coin put into it. */
   sellBack: 0.7,
   /** TOWER LEVELS. Level 2 and 3 cost these shares of the tower's price,
-   *  and multiply its damage, reach and rate of fire. */
+   *  and multiply its damage, reach, rate of fire and hit points. */
   levels: [
-    { cost: 0, damage: 1, range: 1, rate: 1 },
-    { cost: 0.8, damage: 1.6, range: 1.12, rate: 1.2 },
-    { cost: 1.4, damage: 2.6, range: 1.25, rate: 1.45 },
+    { cost: 0, damage: 1, range: 1, rate: 1, hp: 1 },
+    { cost: 0.8, damage: 1.6, range: 1.12, rate: 1.2, hp: 1.5 },
+    { cost: 1.4, damage: 2.6, range: 1.25, rate: 1.45, hp: 2.2 },
   ],
-  /** The most lanes a siege lays (one per breach it will ever open). */
-  lanes: 4,
-  /** A lane's width (plant m): how far a column spreads sideways. */
-  laneWidth: 0.24,
-  /** How far along its lane a crawler is still climbing out of the
-   *  plaster (plant m). */
-  emergeDepth: 0.22,
+  /** THE CHEW (factory/field.ts): a tower's cell costs the tide this
+   *  many steps, plus `chewPerHp` a hit point, to go THROUGH rather than
+   *  round — so they walk round a lone tower and chew through a ring. */
+  chewBase: 5,
+  chewPerHp: 0.04,
+  /** Nothing climbs out of the plaster closer than this to the core
+   *  (plant m): a core against a wall still gets a fight. */
+  spawnClear: 1.4,
+  /** A PACK comes out of one stretch of wall this wide (plant m). */
+  packSpread: 0.9,
+  /** Seconds a crawler takes to climb out of the plaster. */
+  emergeS: 0.55,
+  /** THE CROWD (factory/field.ts): above this much body per patch the
+   *  crowd shoves outward, at `crowdShove` m/s per unit of slope (and no
+   *  faster than `crowdShoveMax`). */
+  crowdFull: 0.35,
+  crowdShove: 0.22,
+  crowdShoveMax: 0.35,
+  /** How far each crawler leans off the way (radians, all told): the
+   *  tide fans out instead of filing down streamlines. */
+  veer: 0.9,
   /** Endless mode: after the ladder, each wave's spawns scale by this. */
   endlessGrowth: 1.15,
 };
@@ -1154,8 +1173,10 @@ export interface WaveSpawn {
   gap: number;
   /** Seconds into the wave this group starts. */
   at: number;
-  /** Which of the wave's breaches it comes out of (index; wraps). */
-  breach: number;
+  /** A PACK: they all tear out of one stretch of wall, picked when the
+   *  horn goes (you can't know where). Otherwise they come out of EVERY
+   *  wall, anywhere along it. */
+  pack: boolean;
 }
 
 export interface WaveSpec {
@@ -1163,8 +1184,6 @@ export interface WaveSpec {
   name: string;
   /** What this wave TEACHES — one line, on the card while you build. */
   tip: string;
-  /** How many lanes are open this wave (1–4). */
-  breaches: number;
   /** Seconds of build time BEFORE this wave (the horn calls it early). */
   buildS: number;
   spawns: WaveSpawn[];
@@ -1173,132 +1192,122 @@ export interface WaveSpec {
   wakes: { feeds?: LineId[]; units?: UnitType[] };
 }
 
-/** A stream: `count` of them at `perS` a second, from `at` seconds in. */
-const s = (enemy: EnemyId, count: number, perS: number, at = 0, breach = 0): WaveSpawn => ({
+/** A stream from every wall: `count` of them at `perS` a second, from
+ *  `at` seconds in. */
+const s = (enemy: EnemyId, count: number, perS: number, at = 0): WaveSpawn => ({
   enemy,
   count,
   gap: 1 / perS,
   at,
-  breach,
+  pack: false,
+});
+/** …and a PACK, out of one place. */
+const pack = (enemy: EnemyId, count: number, perS: number, at = 0): WaveSpawn => ({
+  ...s(enemy, count, perS, at),
+  pack: true,
 });
 
 /**
- * THE LADDER. Every wave is a TIDE — hundreds at first, thousands by the
- * end — and every one adds a tool for killing them in bulk.
+ * THE LADDER. Every wave is a TIDE out of every wall at once — hundreds
+ * at first, thousands by the end — with PACKS tearing through somewhere
+ * you didn't guess, and every wave adds a tool for killing them in bulk.
  */
 export const WAVES: WaveSpec[] = [
   {
     id: 'first-watch',
     name: 'FIRST WATCH',
-    tip: 'They walk the glowing lane. Put TURRETS beside it — not on it, and not inside the core\'s square.',
-    breaches: 1,
+    tip: 'They come out of EVERY wall. Ring the core with TURRETS: build right up against it.',
     buildS: 60,
-    spawns: [s('mite', 50, 3), s('mite', 50, 6, 18)],
+    spawns: [s('mite', 50, 3), s('mite', 50, 5, 16)],
     wakes: { units: ['dock', 'turret'] },
   },
   {
-    id: 'two-doors',
-    name: 'TWO DOORS',
-    tip: 'A second lane opens. HAMMERS smash whatever walks under them — right by a lane.',
-    breaches: 2,
+    id: 'the-pack',
+    name: 'THE PACK',
+    tip: 'A PACK tears out of one spot in the wall: you won\'t know where. HAMMERS flatten whatever walks under them.',
     buildS: 40,
-    spawns: [s('mite', 100, 6, 0, 0), s('mite', 100, 6, 4, 1)],
+    spawns: [s('mite', 100, 5), pack('mite', 90, 8, 8)],
     wakes: { units: ['hammer'] },
   },
   {
     id: 'hot-work',
     name: 'HOT WORK',
-    tip: 'FLAMETHROWERS set the whole column burning. Beetles take more than one shot.',
-    breaches: 2,
+    tip: 'FLAMETHROWERS set the whole crowd burning. Whatever stands in their way, they chew through.',
     buildS: 40,
-    spawns: [s('mite', 260, 12, 0, 0), s('mite', 260, 12, 3, 1), s('beetle', 12, 1, 6, 0)],
+    spawns: [s('mite', 260, 10), pack('mite', 220, 12, 6), s('beetle', 12, 1, 6)],
     wakes: { units: ['flamer'] },
   },
   {
     id: 'live-wire',
     name: 'LIVE WIRE',
-    tip: 'Three lanes. TESLA COILS arc through ten at a time.',
-    breaches: 3,
+    tip: 'Two packs, two walls. TESLA COILS arc through ten at a time.',
     buildS: 40,
     spawns: [
-      s('mite', 320, 16, 0, 0),
-      s('mite', 320, 16, 2, 1),
-      s('mite', 260, 14, 4, 2),
-      s('beetle', 25, 1.5, 6, 1),
+      s('mite', 340, 11),
+      pack('mite', 260, 12, 4),
+      pack('mite', 220, 11, 12),
+      s('beetle', 25, 1.5, 6),
     ],
     wakes: { units: ['tesla'] },
   },
   {
     id: 'heavy-metal',
     name: 'HEAVY METAL',
-    tip: 'MORTARS drop shells into the thick of it — and here comes a HULK.',
-    breaches: 3,
+    tip: 'MORTARS drop shells into the thick of it. And here comes a HULK.',
     buildS: 45,
     spawns: [
-      s('mite', 520, 22, 0, 0),
-      s('mite', 520, 22, 2, 1),
-      s('mite', 390, 18, 4, 2),
-      s('beetle', 50, 2, 5, 1),
-      s('hulk', 1, 1, 14, 0),
+      s('mite', 620, 18),
+      pack('mite', 380, 16, 4),
+      pack('mite', 320, 15, 11),
+      s('beetle', 50, 2, 5),
+      pack('hulk', 1, 1, 14),
     ],
     wakes: { units: ['mortar'] },
   },
   {
     id: 'the-hulks',
     name: 'THE HULKS',
-    tip: 'Three hulks in the tide. UPGRADE: poke a tower.',
-    breaches: 3,
+    tip: 'Four hulks, from anywhere. UPGRADE: touch a tower. Upgrades thicken its plate too.',
     buildS: 45,
     spawns: [
-      s('mite', 780, 26, 0, 0),
-      s('mite', 780, 26, 2, 1),
-      s('hulk', 4, 0.15, 6, 2),
-      s('beetle', 100, 3, 8, 2),
+      s('mite', 900, 22),
+      pack('mite', 560, 22, 5),
+      s('hulk', 4, 0.15, 6),
+      pack('beetle', 100, 3, 8),
     ],
     wakes: {},
   },
   {
     id: 'swarm',
     name: 'SWARM',
-    tip: 'All four lanes. Two and a half thousand.',
-    breaches: 4,
+    tip: 'Every wall at once. Three thousand.',
     buildS: 45,
-    spawns: [
-      s('mite', 840, 40, 0, 0),
-      s('mite', 840, 40, 0, 1),
-      s('mite', 840, 40, 0, 2),
-      s('mite', 840, 40, 0, 3),
-    ],
+    spawns: [s('mite', 2600, 90), pack('mite', 700, 45, 10)],
     wakes: {},
   },
   {
     id: 'siege-engine',
     name: 'SIEGE ENGINE',
-    tip: 'Beetles in the front rank, hulks behind.',
-    breaches: 4,
+    tip: 'A pack of beetles in front, hulks behind, and the tide all round.',
     buildS: 45,
     spawns: [
-      s('beetle', 210, 6, 0, 0),
-      s('mite', 910, 30, 2, 1),
-      s('mite', 910, 30, 2, 2),
-      s('hulk', 5, 0.2, 8, 3),
-      s('mite', 650, 30, 12, 0),
+      pack('beetle', 220, 6),
+      s('mite', 1700, 45, 2),
+      s('hulk', 5, 0.2, 8),
+      pack('mite', 800, 35, 12),
     ],
     wakes: {},
   },
   {
     id: 'flood',
     name: 'FLOOD',
-    tip: 'Three thousand, and the beetles are thicker.',
-    breaches: 4,
+    tip: 'Four thousand, and the beetles are thicker.',
     buildS: 45,
     spawns: [
-      s('mite', 1040, 45, 0, 0),
-      s('mite', 1040, 45, 0, 1),
-      s('mite', 1040, 45, 0, 2),
-      s('mite', 1040, 45, 0, 3),
-      s('beetle', 160, 5, 4, 1),
-      s('beetle', 160, 5, 4, 3),
+      s('mite', 3000, 95),
+      pack('mite', 1000, 50, 6),
+      s('beetle', 180, 5, 4),
+      pack('beetle', 160, 5, 10),
     ],
     wakes: {},
   },
@@ -1306,15 +1315,13 @@ export const WAVES: WaveSpec[] = [
     id: 'last-shift',
     name: 'THE LAST SHIFT',
     tip: 'Everything, everywhere, at once.',
-    breaches: 4,
     buildS: 50,
     spawns: [
-      s('mite', 1170, 40, 0, 0),
-      s('mite', 1170, 40, 0, 1),
-      s('mite', 1170, 40, 0, 2),
-      s('mite', 1170, 40, 0, 3),
-      s('beetle', 260, 6, 6, 1),
-      s('hulk', 7, 0.25, 10, 2),
+      s('mite', 3400, 100),
+      pack('mite', 1000, 55, 8),
+      pack('mite', 1000, 55, 16),
+      s('beetle', 300, 7, 6),
+      s('hulk', 8, 0.25, 10),
     ],
     wakes: {},
   },

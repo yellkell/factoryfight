@@ -8,8 +8,9 @@
  *   MODE=turret node tools/balance-bot.mjs  (turrets only)
  *
  * Every build phase it spends the lot: the cheapest tower type it has
- * fewest of, on the free cell nearest the core along an open lane; when
- * nothing more fits, it upgrades. Then it sounds the horn and watches
+ * fewest of, on the free cell nearest the core (they come from every
+ * wall, so it builds a blob round the core); when nothing more fits, it
+ * upgrades. Then it sounds the horn and watches
  * at 6× speed. A careful player beats this bot; the ladder is tuned so
  * the bot finishes bloodied (SIEGE.hpPerWave/hpPerWave2, the coins).
  */
@@ -43,12 +44,10 @@ for (let w = 0; w < 10; w++) {
     const core = plan.find((u) => u.type === 'dock');
     const COST = { turret: 50, hammer: 70, flamer: 80, tesla: 100, mortar: 120 };
     const avail = t.build.catalogue().available.filter((x) => x in COST && (MODE !== 'turret' || x === 'turret'));
-    const cellsNow = () => {
-      const s2 = t.siege.state(); const out = [];
-      s2.lanes.slice(0, s2.open).forEach((l) => l.cells.forEach((c, k) => out.push({ ...c, k: l.cells.length - k })));
-      return out.sort((a, b) => a.k - b.k);
-    };
-    const cells = cellsNow();
+    // Every cell round the core, nearest first.
+    const cells = [];
+    for (let di = -9; di <= 9; di++) for (let dj = -9; dj <= 9; dj++) if (di || dj) cells.push({ i: core.i + di, j: core.j + dj, k: Math.hypot(di, dj) });
+    cells.sort((a, b) => a.k - b.k);
     for (let guard = 0; guard < 300; guard++) {
       const coins = t.siege.state().coins;
       const have = {}; for (const tw of t.siege.turrets()) have[tw.type] = (have[tw.type] ?? 0) + 1;
@@ -56,10 +55,7 @@ for (let w = 0; w < 10; w++) {
       let ok = false;
       if (pick) {
         for (const c of cells) {
-          for (const [di, dj] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]) {
-            if (t.build.placeAt(c.i + di, c.j + dj, pick, 0)) { ok = true; break; }
-          }
-          if (ok) break;
+          if (t.build.placeAt(c.i, c.j, pick, 0)) { ok = true; break; }
         }
       }
       if (ok) continue;
@@ -79,7 +75,8 @@ for (let w = 0; w < 10; w++) {
   }, MODE);
   await page.waitForFunction(() => { const s = window.__tubes.siege.state(); return s.phase !== 'wave'; }, undefined, { timeout: 400000, polling: 500 });
   const st = await page.evaluate(() => window.__tubes.siege.state());
-  console.log(`wave ${r.wave} ${r.name}: ${r.towers} towers → core ${(st.core * 100).toFixed(0)}% ${st.phase}, coins ${st.coins}`);
+  const left = await page.evaluate(() => window.__tubes.siege.turrets().length);
+  console.log(`wave ${r.wave} ${r.name}: ${r.towers} towers (${r.towers - left} chewed to scrap) → core ${(st.core * 100).toFixed(0)}% ${st.phase}, coins ${st.coins}`);
   if (st.phase === 'fallen' || st.phase === 'core') break;
 }
 await browser.close();

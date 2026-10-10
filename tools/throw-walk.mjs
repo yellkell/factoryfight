@@ -7,8 +7,8 @@
  *
  * Through the same sim doors the fists use (siege.grab / hold / throw):
  * close on a MITE, lift it, and throw it into a crowd — it breaks, and
- * so do the ones it lands on. Drop a BEETLE gently and it lives, and
- * scrabbles back to its lane. A HULK is too big to take.
+ * so do the ones it lands on. Drop a BEETLE gently and it lives, shakes
+ * it off, and comes on again. A HULK is too big to take.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -154,8 +154,8 @@ const beetle = all.find((c) => c.kind === 1);
 check(await page.evaluate(({ x, z }) => window.__tubes.siege.grab(0, x, 0.07, z), { x: beetle.x, z: beetle.z }), 'the other fist takes a BEETLE');
 await page.evaluate(({ x, z }) => window.__tubes.siege.hold(0, x, 0.15, z), { x: beetle.x, z: beetle.z });
 await page.evaluate(() => window.__tubes.siege.throw(0, 0, 0, 0));
-// It lands dazed, scrabbles back to the nearest point of a lane, and
-// falls in (phase 1, WALK) to march on.
+// It lands dazed (phase 4), shakes it off, and is back on its way
+// (phase 1, WALK).
 let b2 = null;
 let landed = false;
 for (let k = 0; k < 40; k++) {
@@ -164,8 +164,8 @@ for (let k = 0; k < 40; k++) {
   if (b2?.phase === 4) landed = true;
   if (!b2 || (landed && b2.phase === 1)) break;
 }
-check(landed, 'set down gently it lands alive, and scrabbles for its lane');
-check(b2?.phase === 1, `and falls back into the column on its lane (phase ${b2?.phase})`);
+check(landed, 'set down gently it lands alive, dazed');
+check(b2?.phase === 1, `and comes on again (phase ${b2?.phase})`);
 all = await crawlers();
 
 console.log('THE HULK');

@@ -717,20 +717,6 @@ export function placementFor(type: UnitType, i: number, j: number, rot: Rot): Ro
  * actually take what they make — the same "the facing is our problem,
  * not yours" law bestRot runs on, applied one move later.
  */
-/**
- * Where nothing is built: on a lane, and in THE CLEARING round the core
- * (SIEGE.coreClear cells every way). Every lane ends at the core, so a
- * ring of guns hugging it covered all of them at once and the siege was
- * won by building in one place; the clearing sends you out along the
- * lanes to meet them.
- */
-export function noBuild(i: number, j: number): boolean {
-  const cells = plant.siege.laneCells;
-  if (cells.size > 0 && cells.has((i + 4096) * 8192 + (j + 4096))) return true;
-  const core = dockUnit();
-  return Boolean(core && Math.max(Math.abs(i - core.i), Math.abs(j - core.j)) <= SIEGE.coreClear);
-}
-
 export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit | null {
   if (!unitAvailable(type)) return null;
   if (type === 'dock' && dockUnit()) return null;
@@ -740,8 +726,6 @@ export function placeUnit(type: UnitType, i: number, j: number, rot: Rot): Unit 
   // the lattice is asked so a refusal claims nothing.
   if (!canAfford(type)) return null;
   rot = facing;
-  // Nothing stands on a lane.
-  if (type !== 'dock' && noBuild(i, j)) return null;
   const id = plant.nextUnit;
   if (!occupy(i, j, id)) return null;
   plant.nextUnit++;

@@ -163,10 +163,10 @@ const UNIT_DOCKET: Record<UnitType, string> = {
   post: 'Guides a rail route. Place where you want it to bend.',
   vat: 'Takes the green feed. Fill it to complete the final goal.',
   turret: 'Rapid rounds at one target. The workhorse.',
-  mortar: 'Lobs shells into the thick of a lane. Long reach, blind up close.',
+  mortar: 'Lobs shells into the thick of the crowd. Long reach, blind up close.',
   tesla: 'A bolt that jumps through ten of them at once.',
-  flamer: 'A cone of fire: a whole column burns. Short reach — put it right by a lane.',
-  hammer: 'Heaves up and smashes the lane beside it. Flattens a whole clump at once.',
+  flamer: 'A cone of fire: a whole crowd burns. Short reach, so put it close to the core.',
+  hammer: 'Heaves up and smashes the crowd beside it. Flattens a whole clump at once.',
   wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
 };
 
@@ -253,12 +253,13 @@ function handGlyph(
   g.restore();
 }
 
-/** One wave's bill of crawlers, in a line: "5 SKITTER · 2 GRUB · 2 BREACHES". */
+/** One wave's bill of crawlers, in a line: "300 MITE · 14 BEETLE · 1 PACK". */
 function waveSummary(w: WaveSpec): string {
   const n = new Map<string, number>();
   for (const sp of w.spawns) n.set(sp.enemy, (n.get(sp.enemy) ?? 0) + sp.count);
   const parts = [...n.entries()].map(([e, c]) => `${c} ${ENEMIES[e as keyof typeof ENEMIES].name}`);
-  parts.push(`${w.breaches} LANE${w.breaches === 1 ? '' : 'S'}`);
+  const packs = w.spawns.filter((sp) => sp.pack).length;
+  parts.push(packs > 0 ? `${packs} PACK${packs === 1 ? '' : 'S'}` : 'EVERY WALL');
   return parts.join(' \u00b7 ');
 }
 
@@ -1406,7 +1407,7 @@ export class MenuSystem extends createSystem({}) {
         28 *
           wrapText(
             g,
-            'Something lives behind your walls. Place your CORE, and glowing lanes run from cracks in the plaster to it. Build towers beside the lanes, anywhere but on them. When the horn goes they pour out in their thousands and march for the core. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
+            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When the horn goes they climb out of EVERY wall in their thousands, and packs tear through rifts you can\'t predict. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
             SHEET_X + 26,
             y,
             SHEET_W - 52,
@@ -2099,8 +2100,8 @@ export class MenuSystem extends createSystem({}) {
                 ? ''
                 : armed && isWeapon(armed as UnitType)
                   ? say(
-                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) beside a lane · it fires on its own`,
-                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) beside a lane · it fires on its own`,
+                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) anywhere on the floor · it fires on its own`,
+                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) anywhere on the floor · it fires on its own`,
                     )
                   : armed
                     ? say('Aim at the floor · Trigger: place', 'Aim at the floor · Pinch: place')
@@ -2132,7 +2133,7 @@ export class MenuSystem extends createSystem({}) {
   private paintHandControls(g: CanvasRenderingContext2D, x0: number, y0: number, w: number, pitch: number): void {
     const rows: Array<{ shape: 'pinch' | 'fist' | 'fists' | 'cuff'; name: string; does: string }> = [
       { shape: 'cuff', name: 'YOUR PALM', does: 'Turn your left palm toward you: the towers, the wave, the coins. Poke a tower with your right index finger to pick it up.' },
-      { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down — anywhere but on a lane.' },
+      { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down, anywhere on the floor.' },
       { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s HORN calls the wave early.' },
     ];
     let y = y0;

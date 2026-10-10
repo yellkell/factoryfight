@@ -4,11 +4,11 @@
  *
  *   npm run dev
  *   node tools/horde-look.mjs            → shots/horde/
- *   COUNT=4000 node tools/horde-look.mjs
+ *   CROWD=8000 node tools/horde-look.mjs
  *
- * A core in the middle of the floor, a ring of towers round it (off the
- * lanes), all four lanes open — and then COUNT crawlers
- * at once, already out of the plaster. It photographs the tide coming
+ * A core in the middle of the floor, a ring of towers hugging it — and
+ * then CROWD crawlers at once, already out of every wall and on their
+ * way in. It photographs the tide coming
  * in, the guns tearing into it and the floor after, and reports what
  * the sim and the swarm's draw cost per frame while it was at its
  * thickest. (Headless Chromium draws in software: the frame rate here is
@@ -19,7 +19,6 @@ import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const base = process.env.PREVIEW_BASE ?? 'http://localhost:5173';
-const COUNT = Number(process.env.COUNT ?? 3000);
 const S = 0.7;
 const CELL = 0.35;
 const fails = [];
@@ -105,7 +104,6 @@ console.log('THE CROWD');
 const CROWD = Number(process.env.CROWD ?? 3600);
 await page.evaluate((n) => {
   const t = window.__tubes;
-  t.siege.breaches(4);
   t.siege.flood('mite', Math.round(n * 0.95));
   t.siege.flood('beetle', Math.round(n * 0.045));
   t.siege.flood('hulk', 6);
@@ -184,7 +182,7 @@ const ring = [
 const stood = await page.evaluate(
   ({ ring, ci, cj }) => {
     const near = (w, i, j) => {
-    // The cell asked for, or the nearest free one off every lane.
+    // The cell asked for, or the nearest free one.
     for (let r = 0; r < 6; r++) {
       for (let di = -r; di <= r; di++) {
         for (let dj = -r; dj <= r; dj++) {
@@ -200,7 +198,7 @@ const stood = await page.evaluate(
   },
   { ring, ci: core.i, cj: core.j },
 );
-check(stood === ring.length, `a ring of ${stood}/${ring.length} towers round the core, off the lanes`);
+check(stood === ring.length, `a ring of ${stood}/${ring.length} towers hugging the core`);
 // By wave 7 a player has had thousands of coins through their hands:
 // the ring is upgraded to the top, the way theirs would be.
 const top = await page.evaluate(() => {
@@ -218,8 +216,7 @@ check(top === ring.length, `and every one of them upgraded to level 3 (${top}/${
 /* ── the tide ──────────────────────────────────────────────────────────── */
 
 console.log('THE TIDE');
-// A real wave: SWARM, four doors, two and a half thousand pouring out at
-// forty a second each.
+// A real wave: SWARM, three thousand out of every wall and a pack.
 const WAVE = Number(process.env.WAVE ?? 6);
 await page.evaluate((n) => {
   const t = window.__tubes;
@@ -228,7 +225,7 @@ await page.evaluate((n) => {
 }, WAVE);
 let st = await page.evaluate(() => window.__tubes.siege.state());
 const total = st.queued + st.enemies;
-check(total >= 2000, `wave ${WAVE + 1}, ${st.name}: ${total} of them, out of ${st.breaches.length} breaches`);
+check(total >= 2000, `wave ${WAVE + 1}, ${st.name}: ${total} of them, out of every wall and ${st.breaches.length} rift(s)`);
 const corePos = { x: (core.i + 0.5) * CELL * S, z: (core.j + 0.5) * CELL * S };
 // Watch it in sim time at a steady 1/60 s a frame (headless frames are
 // slow; scaling time keeps the sim's dt honest), sampling the cost.

@@ -12,7 +12,6 @@
  */
 
 import { Horde } from './horde.js';
-import type { Lane } from './lanes.js';
 import { Vector3 } from 'three';
 import {
   FACTORY,
@@ -230,7 +229,8 @@ export interface Stream {
   left: number;
   gap: number;
   next: number;
-  breach: number;
+  /** A PACK's rift (index into siege.breaches); −1: out of every wall. */
+  rift: number;
 }
 
 /** A patch of burning floor where a flame landed. */
@@ -249,8 +249,14 @@ export interface Breach {
   z: number;
   nx: number;
   nz: number;
-  /** Width of the wall it is in (plant m) — the crack is drawn to fit. */
-  wall: number;
+  /** The wall's run along the floor (unit), and how far the stretch a
+   *  pack pours out of reaches either way along it (plant m). */
+  tx: number;
+  tz: number;
+  half: number;
+  /** GATHERING from the horn (the warning), POURING while its pack comes
+   *  through, SPENT after (dim, and gone at the wave's end). */
+  state: 'gathering' | 'pouring' | 'spent';
 }
 
 export interface Shot {
@@ -311,7 +317,7 @@ export interface SiegeFx {
 }
 
 /** core: the floor is waiting for its CORE — nothing else can stand and
- *  no clock runs until it does (the breaches are chosen relative to it). */
+ *  no clock runs until it does (the horde's way is rooted at it). */
 export type SiegePhase = 'off' | 'core' | 'build' | 'wave' | 'fallen';
 
 export interface Siege {
@@ -330,15 +336,9 @@ export interface Siege {
   nextShot: number;
   /** Burning floor. */
   fires: Fire[];
-  /** Every breach the siege will ever open — one per lane, laid when the
-   *  core lands. Only the first `open` of them pour this wave. */
+  /** This wave's RIFTS: where its packs tear out of the wall, picked
+   *  when the horn goes. (The rest of the tide comes out of every wall.) */
   breaches: Breach[];
-  /** The roads from each breach to the core (factory/lanes.ts). */
-  lanes: Lane[];
-  /** How many lanes are open this wave (the rest are sealed, but drawn). */
-  open: number;
-  /** Every lane cell — nothing can be built on a lane. */
-  laneCells: Set<number>;
   kills: number;
   /** THE PURSE: coins, earned by kills and cleared waves, spent on towers. */
   coins: number;
@@ -385,9 +385,6 @@ export function freshSiege(): Siege {
     nextShot: 1,
     fires: [],
     breaches: [],
-    lanes: [],
-    open: 0,
-    laneCells: new Set(),
     kills: 0,
     coins: 0,
     coinDust: 0,
