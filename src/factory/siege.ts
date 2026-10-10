@@ -11,7 +11,7 @@
  *   build  — the clock runs down (or the horn is sounded early). Towers
  *            go anywhere on the floor, right up against the core.
  *   wave   — they come out of EVERY wall: a tide climbing out of the
- *            plaster all round the room, and PACKS tearing through rifts
+ *            plaster all round the room, and PACKS splitting the floor
  *            somewhere you didn't guess. The towers fire on their own.
  *            Whatever reaches the core takes a bite out of it and is
  *            gone; a tower that stands in the way gets chewed. Every
@@ -155,9 +155,9 @@ export function soundHorn(): void {
   sg.waveT = 0;
   sg.buildT = 0;
   sg.breaches = [];
-  // Every PACK gets its own rift, as far round the room from the others
-  // as the walls allow. They gather now (a few seconds' warning) and
-  // tear open when their pack starts to pour.
+  // Every PACK gets its own crack in the floor, as far round the room
+  // from the others as it can. They gather now (a few seconds' warning)
+  // and split wide when their pack starts to pour.
   sg.streams = spec.spawns.map((sp) => ({
     enemy: sp.enemy,
     left: sp.count,
@@ -259,20 +259,40 @@ function rimSpot(): boolean {
   return true;
 }
 
-/** A RIFT for a pack: of a handful of spots on the rim, the one furthest
- *  round the core from the rifts already open. Returns its index. */
+/** A RIFT for a pack: a crack split open in the FLOOR, out in the room
+ *  between a wall and the core. Of a handful of candidates, the one
+ *  furthest round the core from the rifts already open, and never on
+ *  or against a tower. Returns its index (−1: nowhere would do). */
 function openRift(): number {
   const sg = plant.siege;
   const core = dockUnit();
   if (!core || rim.length === 0) return -1;
   cellCenter(core.i, core.j, _c);
+  const half = SIEGE.packSpread / 2;
+  const clear = Math.max(SIEGE.spawnClear, 1.5);
   let best: Breach | null = null;
   let bestScore = -Infinity;
-  for (let k = 0; k < 6; k++) {
+  for (let k = 0; k < 12; k++) {
     if (!rimSpot()) break;
-    const g = rim[_s.seg];
-    const half = Math.max(0.05, Math.min(SIEGE.packSpread / 2, _s.u, g.len - _s.u));
-    const ang = Math.atan2(_s.x - _c.x, _s.z - _c.z);
+    // Somewhere on the way in from that stretch of wall.
+    const d = Math.hypot(_s.x - _c.x, _s.z - _c.z);
+    if (d < clear + 0.2) continue;
+    const room = Math.min(0.4, 1 - (clear + 0.1) / d - 0.15);
+    if (room < 0.05) continue;
+    const t = 0.15 + Math.random() * room;
+    const x = _s.x + (_c.x - _s.x) * t;
+    const z = _s.z + (_c.z - _s.z) * t;
+    const a = Math.random() * Math.PI;
+    const tx = Math.cos(a);
+    const tz = Math.sin(a);
+    // Not through a tower, nor against one.
+    let blocked = false;
+    for (const u of [-1, -0.5, 0, 0.5, 1]) {
+      const f = field.at(x + tx * half * u, z + tz * half * u);
+      if (f >= 0 && field.nearTower[f]) blocked = true;
+    }
+    if (blocked) continue;
+    const ang = Math.atan2(x - _c.x, z - _c.z);
     let sep = Math.PI;
     for (const o of sg.breaches) {
       const oa = Math.atan2(o.x - _c.x, o.z - _c.z);
@@ -281,7 +301,7 @@ function openRift(): number {
     const score = sep + Math.random() * 0.3;
     if (score > bestScore) {
       bestScore = score;
-      best = { x: _s.x, z: _s.z, nx: _s.nx, nz: _s.nz, tx: g.tx, tz: g.tz, half, state: 'gathering' };
+      best = { x, z, tx, tz, half, state: 'gathering' };
     }
   }
   if (!best) return -1;
@@ -447,23 +467,32 @@ function waveCleared(): void {
   beginBuild(next);
 }
 
-/** One crawler out of the plaster: through a pack's rift, or (rift −1)
+/** One crawler out: up out of a pack's crack in the floor, or (rift −1)
  *  anywhere along any wall. */
 function spawn(kind: EnemyId, rift: number): number {
   const sg = plant.siege;
   const r = rift >= 0 ? sg.breaches[rift] : undefined;
-  if (r) {
-    const u = (Math.random() * 2 - 1) * r.half;
-    _s.x = r.x + r.tx * u;
-    _s.z = r.z + r.tz * u;
-    _s.nx = r.nx;
-    _s.nz = r.nz;
-  } else if (!rimSpot()) {
-    return -1;
-  }
   const h = sg.horde;
   const w = sg.wave;
   const hp = ENEMIES[kind].hp * (1 + SIEGE.hpPerWave * w + SIEGE.hpPerWave2 * w * w);
+  if (r) {
+    // UP OUT OF THE CRACK: somewhere along it, below the floor, and it
+    // climbs out over one lip or the other.
+    const u = (Math.random() * 2 - 1) * r.half * 0.85;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const px = -r.tz * side;
+    const pz = r.tx * side;
+    const x = r.x + r.tx * u + px * 0.01;
+    const z = r.z + r.tz * u + pz * 0.01;
+    const i = h.add(KIND_INDEX[kind], x, z, hp, Math.atan2(px, pz));
+    if (i < 0) return -1;
+    h.vx[i] = px * 0.5;
+    h.vz[i] = pz * 0.5;
+    h.y[i] = -RADII[KIND_INDEX[kind]] * 1.3;
+    h.fd[i] = field.distAt(x, z);
+    return i;
+  }
+  if (!rimSpot()) return -1;
   // A little inside the plaster, so it climbs out rather than pops.
   const i = h.add(KIND_INDEX[kind], _s.x - _s.nx * 0.05, _s.z - _s.nz * 0.05, hp, Math.atan2(_s.nx, _s.nz));
   if (i < 0) return -1;
@@ -543,15 +572,18 @@ function tickHorde(dt: number): void {
       continue;
     }
     if (ph === PHASE_EMERGE) {
-      // Climbing out of the plaster, straight off the wall.
+      // Climbing out: straight off the wall, or up out of a crack in the
+      // floor (it starts below it, and rises as it comes).
       const step = spec.speed * 0.5 * dt;
       X[i] += VX[i] * step;
       Z[i] += VZ[i] * step;
       SD[i] += step;
+      if (h.y[i] < 0) h.y[i] = Math.min(0, h.y[i] + ((RADII[KD[i]] * 1.3) / SIEGE.emergeS) * dt);
       if (PT[i] >= SIEGE.emergeS) {
         PH[i] = PHASE_WALK;
         VX[i] = 0; // (out: now it reads the way)
         VZ[i] = 0;
+        h.y[i] = 0;
       }
       continue;
     }
@@ -1322,7 +1354,7 @@ export function debugJump(n: number): void {
   beginBuild(n);
 }
 
-/** Headless: tear `n` rifts open now, pouring (a portrait's gates). */
+/** Headless: split `n` rifts open now, pouring (a portrait's cracks). */
 export function debugRifts(n: number): void {
   const sg = plant.siege;
   if (rim.length === 0) buildRim();
@@ -1334,7 +1366,7 @@ export function debugRifts(n: number): void {
   }
 }
 
-/** Headless: crawlers out of the plaster right now — through rift
+/** Headless: crawlers climbing out right now — up out of rift
  *  `rift`, or (−1) anywhere along any wall. */
 export function debugSpawn(kind: EnemyId, rift = -1, count = 1): void {
   if (rim.length === 0) buildRim();

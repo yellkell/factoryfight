@@ -1147,7 +1147,7 @@ export const SIEGE = {
   /** Nothing climbs out of the plaster closer than this to the core
    *  (plant m): a core against a wall still gets a fight. */
   spawnClear: 1.4,
-  /** A PACK comes out of one stretch of wall this wide (plant m). */
+  /** A PACK climbs out of one crack in the floor this long (plant m). */
   packSpread: 0.9,
   /** Seconds a crawler takes to climb out of the plaster. */
   emergeS: 0.55,
@@ -1173,7 +1173,7 @@ export interface WaveSpawn {
   gap: number;
   /** Seconds into the wave this group starts. */
   at: number;
-  /** A PACK: they all tear out of one stretch of wall, picked when the
+  /** A PACK: they all climb out of one crack in the floor, split when the
    *  horn goes (you can't know where). Otherwise they come out of EVERY
    *  wall, anywhere along it. */
   pack: boolean;
@@ -1209,7 +1209,7 @@ const pack = (enemy: EnemyId, count: number, perS: number, at = 0): WaveSpawn =>
 
 /**
  * THE LADDER. Every wave is a TIDE out of every wall at once — hundreds
- * at first, thousands by the end — with PACKS tearing through somewhere
+ * at first, thousands by the end — with PACKS splitting the floor somewhere
  * you didn't guess, and every wave adds a tool for killing them in bulk.
  */
 export const WAVES: WaveSpec[] = [
@@ -1224,7 +1224,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'the-pack',
     name: 'THE PACK',
-    tip: 'A PACK tears out of one spot in the wall: you won\'t know where. HAMMERS flatten whatever walks under them.',
+    tip: 'A PACK splits the floor open and climbs out: you won\'t know where. HAMMERS flatten whatever walks under them.',
     buildS: 40,
     spawns: [s('mite', 100, 5), pack('mite', 90, 8, 8)],
     wakes: { units: ['hammer'] },
@@ -1240,7 +1240,7 @@ export const WAVES: WaveSpec[] = [
   {
     id: 'live-wire',
     name: 'LIVE WIRE',
-    tip: 'Two packs, two walls. TESLA COILS arc through ten at a time.',
+    tip: 'Two packs, two cracks in the floor. TESLA COILS arc through ten at a time.',
     buildS: 40,
     spawns: [
       s('mite', 340, 11),

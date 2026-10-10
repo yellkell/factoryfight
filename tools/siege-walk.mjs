@@ -13,7 +13,7 @@
  *                   wave bonus fill the purse
  *   THE TOWER       its panel: UPGRADE (level 2, dearer, stronger), SELL
  *   THE CARDS       every page of the card, inside the card
- *   THE RIFT        a pack tears out of one stretch of wall
+ *   THE RIFT        a pack splits the floor open and climbs out of it
  *   THE CHEW        a core boxed in by towers: they chew their way in
  *   THE LEAK        an unguarded core: whatever reaches it takes a bite
  *                   out of it, and is gone
@@ -288,8 +288,14 @@ await page.evaluate(() => {
   const rift = sg.breaches[0];
   const crawlers = await page.evaluate(() => window.__tubes.siege.crawlers());
   const far = Math.max(...crawlers.map((c) => Math.hypot(c.x - rift.x, c.z - rift.z)));
-  check(sg.breaches.length === 1 && rift.state === 'pouring', `a RIFT tears open (${rift?.state})`);
-  check(crawlers.length === 40 && far < 0.6, `and its PACK comes out of that one stretch of wall (all 40 within ${far.toFixed(2)} m)`);
+  check(sg.breaches.length === 1 && rift.state === 'pouring', `a RIFT splits the floor open (${rift?.state})`);
+  check(crawlers.length === 40 && far < 0.6, `and its PACK climbs out of that one crack (all 40 within ${far.toFixed(2)} m)`);
+  check(crawlers.every((c) => c.y < 0), 'up from under the floor');
+  {
+    const S0 = (await plan()).find((u) => u.type === 'dock');
+    const d = Math.hypot(rift.x - (S0.i + 0.5) * CELL, rift.z - (S0.j + 0.5) * CELL);
+    check(d >= 1.5, `out in the room, clear of the core (${d.toFixed(2)} m from it)`);
+  }
   const S = 0.7;
   const cx = (core.i + 0.5) * CELL;
   const cz = (core.j + 0.5) * CELL;
