@@ -243,19 +243,16 @@ export interface Fire {
 }
 
 export interface Breach {
-  /** Where it opens: the foot of a real wall, in plant metres, and the
-   *  wall's into-the-room normal. */
+  /** A RIFT: a crack split open in the floor, where a pack climbs out.
+   *  Its middle (plant m), the way it runs (unit), and how far it
+   *  reaches either way along it (plant m). */
   x: number;
   z: number;
-  nx: number;
-  nz: number;
-  /** The wall's run along the floor (unit), and how far the stretch a
-   *  pack pours out of reaches either way along it (plant m). */
   tx: number;
   tz: number;
   half: number;
   /** GATHERING from the horn (the warning), POURING while its pack comes
-   *  through, SPENT after (dim, and gone at the wave's end). */
+   *  through, SPENT after (a dim scar, gone at the wave's end). */
   state: 'gathering' | 'pouring' | 'spent';
 }
 
@@ -336,8 +333,9 @@ export interface Siege {
   nextShot: number;
   /** Burning floor. */
   fires: Fire[];
-  /** This wave's RIFTS: where its packs tear out of the wall, picked
-   *  when the horn goes. (The rest of the tide comes out of every wall.) */
+  /** This wave's RIFTS: the cracks in the floor its packs climb out of,
+   *  picked when the horn goes. (The rest of the tide comes out of every
+   *  wall.) */
   breaches: Breach[];
   kills: number;
   /** THE PURSE: coins, earned by kills and cleared waves, spent on towers. */

@@ -58,7 +58,6 @@ import { siegeFallen } from '../game/flow.js';
 import { cellCenter } from '../floor/grid.js';
 import { ensurePlantRoot, toPlant } from '../factory/frame.js';
 import { NEON } from '../factory/neon.js';
-import { buildGate, type GateRefs } from '../factory/crystal.js';
 import {
   bindRoom,
   grabEnemy,
@@ -91,6 +90,7 @@ import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { font } from '../ui/fonts.js';
 import { liveUnitRefs } from './FactorySystem.js';
+import { FloorCrack } from './crack.js';
 import { Shards, Splats, SwarmMesh } from './swarm.js';
 import { walls } from './WallSystem.js';
 
@@ -114,7 +114,7 @@ export const siegeView: {
   horn?: () => void;
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
-  /** TOOLS ONLY: crawlers out of the plaster now — through rift n, or
+  /** TOOLS ONLY: crawlers climbing out now — up out of rift n, or
    *  (−1, the default) anywhere along any wall. */
   spawn?: (kind: EnemyId, rift?: number, count?: number) => void;
   /** THE THROW, headless: a fist closing at a plant point, carrying,
@@ -126,7 +126,7 @@ export const siegeView: {
   crawlers?: () => Array<{ uid: number; kind: number; x: number; y: number; z: number; phase: number; hp: number }>;
   /** TOOLS ONLY: a whole tide at once, already out of the walls. */
   flood?: (kind: EnemyId, count: number) => void;
-  /** TOOLS ONLY: tear n rifts open right now. */
+  /** TOOLS ONLY: split n rifts open in the floor right now. */
   rifts?: (n: number) => void;
   /** TOOLS ONLY: jump the ladder to wave n's build phase. */
   jump?: (n: number) => void;
@@ -210,8 +210,6 @@ function trs(
 
 /* ── THE BREACH ─────────────────────────────────────────────────────────── */
 
-/** A gate's moving parts (factory/crystal.ts builds it). */
-type BreachHw = GateRefs;
 
 /* ── particles ──────────────────────────────────────────────────────────── */
 
@@ -423,7 +421,7 @@ export class SiegeSystem extends createSystem({}) {
   private flashes: Flare[] = [];
   private beams: Flare[] = [];
   private arcs: ArcHw[] = [];
-  private breachHw: BreachHw[] = [];
+  private cracks: Array<{ crack: FloorCrack; open: number }> = [];
   private breachKey = '';
   private breachFlare = 0;
   private clock = 0;
@@ -671,7 +669,7 @@ export class SiegeSystem extends createSystem({}) {
     const live = site.screen === 'factory' && sg.phase !== 'off';
     this.root.visible = live;
     if (!live) {
-      if (this.breachHw.length) this.syncBreaches(true);
+      if (this.cracks.length) this.syncBreaches(true);
       return;
     }
     const dt = delta * plant.timeScale;
@@ -835,7 +833,8 @@ export class SiegeSystem extends createSystem({}) {
         break;
       }
       case 'breach':
-        // A RIFT tears open: the plaster bursts, and the pack is through.
+        // A RIFT splits the floor: grit and sparks out of it, and the
+        // pack is coming up.
         this.breachFlare = 1;
         this.ring(f.x, f.z, breachHex(), (f.radius ?? 0.4) * 1.8, 0.5);
         this.sparks.burst(f.x, 0.15, f.z, 40, breachHex(), 1.6, 0.6, 3, 1.2);
@@ -1299,59 +1298,42 @@ export class SiegeSystem extends createSystem({}) {
 
   /* ── the rifts ──────────────────────────────────────────────────────── */
 
-  /** A gate for every rift this wave has: they come at the horn and go
-   *  when the wave is done. */
+  /** A crack in the floor for every rift this wave has: they come at the
+   *  horn and go when the wave is done. */
   private syncBreaches(clear: boolean): void {
     const list = clear ? [] : plant.siege.breaches;
     const key = list.map((b) => `${b.x.toFixed(2)},${b.z.toFixed(2)}`).join('|');
     if (key === this.breachKey) return;
     this.breachKey = key;
-    for (const hw of this.breachHw) hw.group.removeFromParent();
-    this.breachHw = [];
-    for (const b of list) {
-      const gate = buildGate(breachHex());
-      gate.group.position.set(b.x + b.nx * 0.004, 0, b.z + b.nz * 0.004);
-      gate.group.rotation.y = Math.atan2(b.nx, b.nz);
-      // As wide as the stretch its pack pours out of.
-      gate.group.scale.setScalar(Math.max(0.7, Math.min(1.3, b.half / 0.4)));
-      this.root.add(gate.group);
-      this.breachHw.push(gate);
-    }
+    for (const c of this.cracks) c.crack.dispose();
+    this.cracks = [];
+    list.forEach((b, k) => {
+      const crack = new FloorCrack(breachHex(), b.half, Math.floor(b.x * 977 + b.z * 131) + k);
+      crack.group.position.set(b.x, 0, b.z);
+      // Its run along local +X lies along the rift's.
+      crack.group.rotation.y = Math.atan2(-b.tz, b.tx);
+      this.root.add(crack.group);
+      this.cracks.push({ crack, open: 0 });
+    });
   }
 
   private tickBreaches(delta: number): void {
     const sg = plant.siege;
     this.breachFlare = Math.max(0, this.breachFlare - delta * 0.8);
-    const hex = breachHex();
-    this.breachHw.forEach((g, k) => {
+    this.cracks.forEach((c, k) => {
       const state = sg.breaches[k]?.state ?? 'spent';
-      const u = g.voidMat.uniforms;
-      u.uTime.value = this.clock;
-      // SPENT: its pack is through. A dim frame, no void, nothing turning.
-      if (state === 'spent') {
-        u.uOpen.value = Math.max(0, u.uOpen.value - delta * 1.5);
-        g.voidMesh.visible = u.uOpen.value > 0.02;
-        g.tube.color.setHex(hex).multiplyScalar(0.25);
-        g.halo.opacity = 0.05;
-        g.glass.emissiveIntensity = 0.05;
-        g.pool.opacity = 0.02;
-        return;
-      }
-      // GATHERING: the void swirls slow and breathes: a warning.
-      // POURING: it tears wide — fast, hot, flaring as each one comes through.
+      // GATHERING: a hairline that pulses — a warning.
+      // POURING: it gapes, hot and flickering as each one climbs out.
+      // SPENT: it closes to a dim scar.
       const pouring = state === 'pouring';
-      const breathe = 0.5 + 0.5 * Math.sin(this.clock * (pouring ? 9 : 3.2));
-      const want = pouring ? 1 : 0.35;
-      u.uOpen.value += (Math.min(1.4, want + this.breachFlare * 0.4) - u.uOpen.value) * Math.min(1, delta * 3);
-      g.voidMesh.visible = true;
-      const lit = Math.min(1, (pouring ? 0.8 : 0.5) + breathe * 0.2 + this.breachFlare * 0.4);
-      g.tube.color.setHex(hex).multiplyScalar(lit);
-      g.halo.opacity = 0.12 + 0.2 * lit;
-      g.glass.emissiveIntensity = 0.12 + 0.25 * lit;
-      g.pool.opacity = (pouring ? 0.3 : 0.1) + breathe * 0.08 + this.breachFlare * 0.2;
-      const spin = (pouring ? 1.6 : 0.5) * delta;
-      g.rings[0].rotation.z += spin;
-      g.rings[1].rotation.z -= spin * 1.4;
+      const breathe = 0.5 + 0.5 * Math.sin(this.clock * (pouring ? 11 : 3.2));
+      const want = state === 'spent' ? 0.12 : pouring ? 1 : 0.06 + 0.05 * breathe;
+      c.open += (want - c.open) * Math.min(1, delta * (pouring ? 5 : 2));
+      const lit =
+        state === 'spent'
+          ? 0.12
+          : Math.min(1, (pouring ? 0.75 : 0.45) + breathe * 0.25 + this.breachFlare * 0.3);
+      c.crack.set(c.open, lit);
     });
   }
 

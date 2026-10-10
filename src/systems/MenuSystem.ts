@@ -1407,7 +1407,7 @@ export class MenuSystem extends createSystem({}) {
         28 *
           wrapText(
             g,
-            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When the horn goes they climb out of EVERY wall in their thousands, and packs tear through rifts you can\'t predict. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
+            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When the horn goes they climb out of EVERY wall in their thousands, and packs split the floor open where you least expect. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
             SHEET_X + 26,
             y,
             SHEET_W - 52,

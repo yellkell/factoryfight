@@ -45,11 +45,12 @@ from every side at once: a *They Are Billions* horde in your living room.
   way but the room: one flow field, rooted at the core, gives every spot of
   floor its way in, and the crowd spreads, bunches at a choke and pours
   round your towers like water round rocks.
-- **PACKS tear through RIFTS.** From wave 2, some of the tide comes as a
-  pack out of one stretch of wall, picked when the horn goes, as far round
-  the room from the other packs as the walls allow. Its rift (a magenta hex
-  portal flush on the plaster) gathers at the horn, a few seconds' warning,
-  then tears open and pours.
+- **PACKS split the FLOOR.** From wave 2, some of the tide comes as a pack
+  that climbs up out of a crack in your floor, out in the room between a
+  wall and the core, split where the horn finds it (never on a tower, and
+  as far round the room from the other packs as it can). The crack glows as
+  a pulsing hairline at the horn, a few seconds' warning, then gapes open
+  and they climb out of it.
 - **They CHEW what's in the way.** A lone tower gets walked round. Box the
   core in and they chew through the weakest tower in the ring (a mite
   nibbles, a beetle gnaws, a hulk wrecks); one chewed to nothing is scrap.
@@ -91,13 +92,13 @@ top of it.
   hexagonal tube cocked up at the sky.
 - **THE CORE** (gold): a big crystal hovering over its pad, turning inside
   three orbiting halo rings.
-- **THE RIFTS** (magenta), where a pack tears through your wall: a hexagonal
-  portal flush against the plaster, its frame of dark crystal beams, two hex
-  rings turning against each other inside it, and a void that swirls slowly
-  while it gathers and hard and bright while the pack pours out. A spent
-  rift dims to an empty frame, and is gone when the wave is.
+- **THE CRACKS** (magenta), where a pack splits your floor: a jagged black
+  gash with burning lips, hairline fractures running off it and a glow
+  pooled round it. A pulsing hairline while it gathers, gaping and
+  flickering while the pack climbs out, a dim scar once it's spent, gone
+  when the wave is.
 
-The tide and its rifts are magenta. The menus
+The tide and its cracks are magenta. The menus
 use no drawings: at load, a small studio (`src/ui/pictures.ts`) photographs
 every tower with the same builders the floor uses.
 
@@ -143,7 +144,7 @@ stands in. Its hands can be switched on from its panel.
 ```bash
 npm run typecheck
 npm run dev &
-node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, upgrade, sell, a rift, the chew, a leak, the fall
+node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, upgrade, sell, a crack in the floor, the chew, a leak, the fall
 node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a tower to upgrade and sell
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost; CROWD=8000 for more), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
@@ -164,6 +165,7 @@ src/factory/crystal.ts    CRYSTAL & HEX: the core and the five towers' models
 src/factory/siege.ts      the fight's sim: waves (streams), the rim and rifts, the march,
                           the chew, leaks, coins, the five
                           towers and their levels, shells, bolts, burning
+src/systems/crack.ts      a pack's crack in the floor: the gash, its burning lips, the fractures
 src/systems/swarm.ts      the horde drawn: every crawler in ONE instanced draw call with
                           its legs animated on the GPU; shards and floor splats
 src/systems/SiegeSystem.ts  the fight drawn and voiced: the swarm, deaths, tracers,
