@@ -42,7 +42,7 @@ export function deckFor(): Deck {
     case 'floor':
       return 'board';
     case 'factory':
-      // THE HORN CHANGES THE RECORD. The build phase works to the shop's
+      // A WAVE CHANGES THE RECORD. The build phase works to the shop's
       // own set; the moment they come out of the wall, NOVUS takes the
       // room (the deck still carries its TUBES name), and it holds until
       // the last of them is down — or the core is.

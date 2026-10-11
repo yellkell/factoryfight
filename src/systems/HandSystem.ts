@@ -18,9 +18,10 @@
  *     holds exactly one tile — the CORE — because nothing else can stand
  *     until the core does.
  *
- *   THE HEADER — across the top: the wave, the clock to the horn (or how
- *     many are left), the coins, and the studs a hand has no buttons for —
- *       HORN   call the wave now (build phase only)
+ *   THE HEADER — across the top: the wave, the clock to the next wave
+ *     (or how many are left), the coins and the core, and the studs a
+ *     hand has no buttons for —
+ *       START  start the next wave now (build phase only)
  *       PAUSE  the pause plate (BACK while it, or the core, is open)
  *       TURN   a quarter turn for the piece in hand   ┐ only while
  *       DOWN   put the tool away                      ┘ holding one
@@ -56,7 +57,7 @@ import { site } from '../game/state.js';
 import { cellCenter } from '../floor/grid.js';
 import { PLANT_SCALE } from '../factory/frame.js';
 import { plant } from '../factory/state.js';
-import { siegeLeft, soundHorn, waveSpec } from '../factory/siege.js';
+import { coreHealth, siegeLeft, startWave } from '../factory/siege.js';
 import { canAfford, isWeapon, unitCost } from '../factory/sim.js';
 import { font } from '../ui/fonts.js';
 import { GLYPH_DEAD, GLYPH_LIVE, unitGlyph, type GlyphId } from '../ui/icons.js';
@@ -152,7 +153,7 @@ const TOOL_NAME: Record<string, string> = {
   delete: 'REMOVE',
 };
 
-type Action = 'menu' | 'turn' | 'stow' | 'done' | 'horn';
+type Action = 'menu' | 'turn' | 'stow' | 'done' | 'start';
 
 /** One pokeable thing: a watch stud or a toolbelt tile. */
 interface Poke {
@@ -450,14 +451,14 @@ export class HandSystem extends createSystem({}) {
     if (floor) acts = ['done'];
     else if (factory && open) acts = ['menu'];
     else if (factory && armed) acts = ['turn', 'stow', 'menu'];
-    else if (factory && plant.siege.phase === 'build') acts = ['horn', 'menu'];
+    else if (factory && plant.siege.phase === 'build') acts = ['start', 'menu'];
     else if (factory || site.screen === 'shift') acts = ['menu'];
     const label: Record<Action, string> = {
       menu: open ? 'BACK' : 'PAUSE',
       turn: 'TURN',
       stow: 'DOWN',
       done: 'DONE',
-      horn: 'HORN',
+      start: 'START',
     };
     // A NEW LAYOUT IS A NEW SET OF BUTTONS. Pressing PAUSE re-lays the
     // watch (one stud, BACK, centred) right under the finger that is
@@ -475,10 +476,11 @@ export class HandSystem extends createSystem({}) {
       s.group.visible = act !== null;
       // Centre whatever row there is.
       s.group.position.x = (k - (acts.length - 1) / 2) * CUFF.pitch;
-      const key = act ? `${act}|${label[act]}` : '';
+      const icon: Icon | null = act === 'menu' ? (open ? 'back' : 'pause') : act;
+      const key = act ? `${act}|${label[act]}|${icon}` : '';
       if (key !== s.key) {
         s.key = key;
-        paintStud(s, act ? label[act] : '', act === 'stow' || act === 'horn');
+        paintStud(s, act ? label[act] : '', icon, act === 'start');
       }
       s.flash = Math.max(0, s.flash - delta * 4);
       s.face.opacity = this.shown;
@@ -550,7 +552,7 @@ export class HandSystem extends createSystem({}) {
     else if (act === 'turn') intents.turn = true;
     else if (act === 'stow') intents.stow = true;
     else if (act === 'done') intents.done = true;
-    else if (act === 'horn') soundHorn();
+    else if (act === 'start') startWave();
   }
 
   /* ── A TOWER, touched ─────────────────────────────────────────────── */
@@ -591,57 +593,115 @@ export class HandSystem extends createSystem({}) {
     }
   }
 
-  /** The watch face: the wave, and the clock to the horn (or what's left). */
+  /** The header's face: the wave, the clock to the next one (or what's
+   *  left), the coins, and the core. */
   private paintFace(): void {
     const sg = plant.siege;
-    let top = '';
-    let big = '';
-    let tone: string = UI.accent;
+    // Three readouts across the top — WAVE · the clock · COINS — and the
+    // core's bar under them. Each is a small caps label over a big figure,
+    // so the eye finds the figure and the label says what it is.
+    type Cell = { label: string; value: string; tone: string; sub?: string };
+    let left: Cell | null = null;
+    let mid: Cell = { label: '', value: '', tone: UI.accent };
+    let right: Cell | null = null;
+    let core = -1;
     if (site.screen === 'factory' && sg.phase !== 'off') {
-      top = `WAVE ${sg.wave + 1} · ${waveSpec(sg.wave).name}`;
+      left = { label: 'WAVE', value: `${sg.wave + 1}`, tone: UI.text, sub: sg.wave < 10 ? '/10' : '' };
+      right = { label: 'COINS', value: sg.coins.toLocaleString('en-US'), tone: '#ffd36a' };
+      core = coreHealth();
       if (sg.phase === 'core') {
-        top = 'FIRST, THE CORE';
-        big = 'PLACE CORE';
+        left = null;
+        right = null;
+        core = -1;
+        mid = { label: 'FIRST', value: 'PLACE THE CORE', tone: UI.accent };
       } else if (sg.phase === 'build') {
-        const s = Math.ceil(sg.buildT);
-        big = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-        top = `W${sg.wave + 1} · ${sg.coins} COINS`;
+        const t = Math.ceil(sg.buildT);
+        mid = { label: 'NEXT WAVE IN', value: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, tone: UI.accent };
       } else if (sg.phase === 'wave') {
-        big = `${siegeLeft()} LEFT`;
-        top = `W${sg.wave + 1} · ${sg.coins} COINS`;
-        tone = UI.danger;
+        mid = { label: 'ENEMIES LEFT', value: siegeLeft().toLocaleString('en-US'), tone: UI.danger };
       } else {
-        big = 'FALLEN';
-        tone = UI.danger;
+        mid = { label: 'THE CORE', value: 'FALLEN', tone: UI.danger };
       }
     } else if (site.screen === 'floor') {
-      top = 'MARKING THE FLOOR';
-      big = 'PINCH A TAPE';
+      mid = { label: 'MARK THE FLOOR', value: 'PINCH A TAPE', tone: UI.accent };
     } else {
-      top = 'FACTORY FIGHT';
+      mid = { label: '', value: 'FACTORY FIGHT', tone: UI.accent };
     }
-    const key = `${top}|${big}`;
+    const cells = [left, mid, right].map((c) => (c ? `${c.label}:${c.value}` : '-')).join('|');
+    const key = `${cells}|${core < 0 ? -1 : Math.round(core * 100)}`;
     if (key === this.face.key) return;
     this.face.key = key;
     const g = this.face.ctx;
     const W = g.canvas.width;
     const H = g.canvas.height;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(11,10,7,0.86)';
+    g.fillStyle = 'rgba(11,10,7,0.88)';
     g.beginPath();
     g.roundRect(3, 3, W - 6, H - 6, 26);
     g.fill();
-    g.strokeStyle = 'rgba(255,162,46,0.6)';
+    g.strokeStyle = 'rgba(255,162,46,0.5)';
     g.lineWidth = 3;
     g.stroke();
+    g.textBaseline = 'alphabetic';
+    const LABEL_Y = 34;
+    const VALUE_Y = 80;
+    const label = (text: string, x: number, align: CanvasTextAlign): void => {
+      g.textAlign = align;
+      g.font = font(600, 17);
+      g.fillStyle = UI.faint;
+      g.fillText(text, x, LABEL_Y);
+    };
+    // WAVE, on the left.
+    if (left) {
+      label(left.label, 24, 'left');
+      g.textAlign = 'left';
+      g.font = font(700, 42);
+      g.fillStyle = left.tone;
+      g.fillText(left.value, 24, VALUE_Y);
+      if (left.sub) {
+        const w = g.measureText(left.value).width;
+        g.font = font(600, 18);
+        g.fillStyle = UI.faint;
+        g.fillText(left.sub, 24 + w + 3, VALUE_Y);
+      }
+    }
+    // The clock (or the count), in the middle and biggest.
+    const solo = !left && !right;
+    if (mid.label) label(mid.label, W / 2, 'center');
     g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.font = font(600, 22);
-    g.fillStyle = 'rgba(255,255,255,0.6)';
-    g.fillText(top, W / 2, 30, W - 30);
-    g.font = font(700, 44);
-    g.fillStyle = tone;
-    g.fillText(big, W / 2, 72, W - 30);
+    g.font = font(700, solo ? 34 : 46);
+    g.fillStyle = mid.tone;
+    g.fillText(mid.value, W / 2, solo ? 76 : VALUE_Y + 2, solo ? W - 40 : 150);
+    // COINS, on the right, behind a coin.
+    if (right) {
+      label(right.label, W - 24, 'right');
+      g.textAlign = 'right';
+      g.font = font(700, 30);
+      g.fillStyle = right.tone;
+      g.fillText(right.value, W - 24, VALUE_Y - 4, 92);
+      const w = Math.min(92, g.measureText(right.value).width);
+      g.beginPath();
+      g.arc(W - 24 - w - 13, VALUE_Y - 14, 9, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = 'rgba(11,10,7,0.7)';
+      g.beginPath();
+      g.arc(W - 24 - w - 13, VALUE_Y - 14, 4.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    // THE CORE: a slim bar right across, coloured by how much is left.
+    if (core >= 0) {
+      const x = 24;
+      const y = 96;
+      const bw = W - 48;
+      g.fillStyle = 'rgba(255,255,255,0.1)';
+      g.beginPath();
+      g.roundRect(x, y, bw, 7, 3.5);
+      g.fill();
+      g.fillStyle = core > 0.5 ? UI.positive : core > 0.25 ? UI.warn : UI.danger;
+      g.beginPath();
+      g.roundRect(x, y, Math.max(7, bw * core), 7, 3.5);
+      g.fill();
+    }
     this.face.tex.needsUpdate = true;
   }
 }
@@ -698,21 +758,88 @@ function costLabel(type: UnitType): string {
   return n > 0 ? `${n} COINS` : '';
 }
 
-function paintStud(s: Poke, label: string, hot: boolean): void {
+/** What a stud shows over its word. */
+type Icon = 'start' | 'pause' | 'back' | 'turn' | 'stow' | 'done';
+
+/**
+ * A STUD: a round button, an icon over one short word. The one that
+ * starts the next wave is the only filled one (it is the thing a build
+ * phase is for); the rest are dark glass with amber line work.
+ */
+function paintStud(s: Poke, label: string, icon: Icon | null, primary: boolean): void {
   const g = s.ctx;
   g.clearRect(0, 0, 128, 128);
-  if (label) {
-    g.fillStyle = hot ? '#3a1612' : '#2a1f10';
+  if (label && icon) {
+    g.fillStyle = primary ? UI.accent : '#211a10';
     g.beginPath();
     g.arc(64, 64, 62, 0, Math.PI * 2);
     g.fill();
-    g.fillStyle = hot ? '#ff6a52' : '#ffa22e';
+    const ink = primary ? '#1a1206' : UI.accent;
+    g.fillStyle = ink;
+    g.strokeStyle = ink;
+    g.lineWidth = 7;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    drawIcon(g, icon, 64, 50);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = font(700, label.length > 4 ? 26 : 32);
-    g.fillText(label, 64, 66);
+    g.font = font(700, label.length > 5 ? 17 : 20);
+    g.fillText(label, 64, 94);
   }
   s.tex.needsUpdate = true;
+}
+
+/** The stud icons, centred on (x, y), about 40 px across. */
+function drawIcon(g: CanvasRenderingContext2D, icon: Icon, x: number, y: number): void {
+  g.beginPath();
+  switch (icon) {
+    case 'start':
+      // ▶▶ — on to the next wave.
+      for (const dx of [-17, 3]) {
+        g.moveTo(x + dx, y - 15);
+        g.lineTo(x + dx + 18, y);
+        g.lineTo(x + dx, y + 15);
+        g.closePath();
+      }
+      g.fill();
+      return;
+    case 'pause':
+      g.roundRect(x - 13, y - 15, 9, 30, 2);
+      g.roundRect(x + 4, y - 15, 9, 30, 2);
+      g.fill();
+      return;
+    case 'back':
+      g.moveTo(x + 12, y - 14);
+      g.lineTo(x - 6, y);
+      g.lineTo(x + 12, y + 14);
+      g.stroke();
+      return;
+    case 'turn':
+      // A three-quarter circle with its arrowhead.
+      g.arc(x, y, 13, -Math.PI * 0.35, Math.PI * 1.25);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(x + 14, y - 20);
+      g.lineTo(x + 9, y - 8);
+      g.lineTo(x + 21, y - 7);
+      g.closePath();
+      g.fill();
+      return;
+    case 'stow':
+      g.moveTo(x, y - 15);
+      g.lineTo(x, y + 9);
+      g.moveTo(x - 11, y);
+      g.lineTo(x, y + 12);
+      g.lineTo(x + 11, y);
+      g.stroke();
+      return;
+    case 'done':
+      g.moveTo(x - 14, y);
+      g.lineTo(x - 4, y + 10);
+      g.lineTo(x + 15, y - 11);
+      g.stroke();
+      return;
+  }
 }
 
 /** A toolbelt tile: the machine's shop drawing, its name, its price. */

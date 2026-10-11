@@ -8,7 +8,7 @@
  *
  *   MAN THE WALLS   the board's one door; the floor waits for its CORE
  *   THE OPEN FLOOR  the core lands; towers stand right up against it
- *   FIRST WATCH     three turrets hugging the core; the horn; the tide
+ *   FIRST WATCH     three turrets hugging the core; START; the tide
  *                   comes out of every wall and dies; kills and the
  *                   wave bonus fill the purse
  *   THE TOWER       its panel: UPGRADE (level 2, dearer, stronger), SELL
@@ -139,7 +139,7 @@ check(coreAt.ok, 'the CORE stands where you put it');
 await page.waitForTimeout(200);
 sg = await siege();
 check(sg.phase === 'build' && sg.wave === 0, `and the siege begins: building for wave 1 (${sg.phase} ${sg.wave})`);
-check(sg.breaches.length === 0, 'no rift shows until the horn: they could come from anywhere');
+check(sg.breaches.length === 0, 'no rift shows before the wave: they could come from anywhere');
 const core = (await plan()).find((u) => u.type === 'dock');
 check(sg.coins === 150, `the purse opens with 150 coins (${sg.coins})`);
 const cat = await page.evaluate(() => window.__tubes.build.catalogue().available);
@@ -176,9 +176,9 @@ for (const [di, dj] of [[1, 0], [-1, 0], [0, 1]]) {
 }
 sg = await siege();
 check(stood.length === 3 && sg.coins === 0, `three TURRETS right up against the core, 50 coins each (${stood.length} stood, ${sg.coins} left)`);
-await page.evaluate(() => window.__tubes.siege.horn());
+await page.evaluate(() => window.__tubes.siege.start());
 sg = await siege();
-check(sg.phase === 'wave' && sg.queued + sg.enemies === 100, `the horn: 100 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
+check(sg.phase === 'wave' && sg.queued + sg.enemies === 100, `START: 100 mites are coming (${sg.enemies} out, ${sg.queued} queued)`);
 check(sg.breaches.length === 0, 'wave 1 has no pack: every one of them comes out of the walls');
 {
   // FROM EVERY SIDE: where each one climbed out, by its bearing from the
@@ -269,7 +269,7 @@ for (const pg of ['build', 'goals', 'controls']) {
   check(off.length === 0, `card ${pg}: every control inside the card (${off.map((r) => r.id).join(',') || 'ok'})`);
 }
 const cardIds = await page.evaluate(() => window.__tubes.menu.cardButtons());
-check(cardIds.includes('card:horn'), 'the card offers SOUND THE HORN while you build');
+check(cardIds.includes('card:start'), 'the card offers START WAVE while you build');
 check(!cardIds.some((i) => /build:(maker|belt|wall|chest|combiner|post|delete)/.test(i)), 'and no factory machine anywhere on it');
 await page.evaluate(() => window.__tubes.menu.act('card:build'));
 await page.evaluate(() => window.__tubes.menu.setPause(false));

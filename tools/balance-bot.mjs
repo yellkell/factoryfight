@@ -10,7 +10,7 @@
  * Every build phase it spends the lot: the cheapest tower type it has
  * fewest of, on the free cell nearest the core (they come from every
  * wall, so it builds a blob round the core); when nothing more fits, it
- * upgrades. Then it sounds the horn and watches
+ * upgrades. Then it starts the wave and watches
  * at 6× speed. A careful player beats this bot; the ladder is tuned so
  * the bot finishes bloodied (SIEGE.hpPerWave/hpPerWave2, the coins).
  */
@@ -69,7 +69,7 @@ for (let w = 0; w < 10; w++) {
       t.menu.act('box:close');
       if (!up) break;
     }
-    t.siege.horn();
+    t.siege.start();
     t.plant.timeScale(6);
     return { wave: st.wave + 1, name: st.name, towers: t.siege.turrets().length, coins: t.siege.state().coins };
   }, MODE);

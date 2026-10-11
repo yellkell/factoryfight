@@ -39,7 +39,7 @@ from every side at once: a *They Are Billions* horde in your living room.
   one-shots a mite only in the first wave; after that, upgrade or lose. `tools/balance-bot.mjs` plays the whole
   ladder the blunt way (spend everything, every wave, on the free cells
   nearest the core) and finishes it at about half a core.
-- **They come out of EVERY WALL.** When the horn goes they climb out of the
+- **They come out of EVERY WALL.** When a wave starts they climb out of the
   foot of every real wall in the room, anywhere along it, and make for the
   core: a hundred in the first wave, thousands by the end. Nobody knows the
   way but the room: one flow field, rooted at the core, gives every spot of
@@ -47,9 +47,9 @@ from every side at once: a *They Are Billions* horde in your living room.
   round your towers like water round rocks.
 - **PACKS split the FLOOR.** From wave 2, some of the tide comes as a pack
   that climbs up out of a crack in your floor, out in the room between a
-  wall and the core, split where the horn finds it (never on a tower, and
+  wall and the core, split where the wave finds it (never on a tower, and
   as far round the room from the other packs as it can). The crack glows as
-  a pulsing hairline at the horn, a few seconds' warning, then gapes open
+  a pulsing hairline as the wave starts, a few seconds' warning, then gapes open
   and they climb out of it.
 - **They CHEW what's in the way.** A lone tower gets walked round. Box the
   core in and they chew through the weakest tower in the ring (a mite
@@ -109,10 +109,11 @@ The game reads controllers or tracked hands through one layer
 hands, everything is **poked with your right index finger**.
 
 - **Turn your left palm toward you.** One panel rises over it, facing you:
-  - **The header** across the top: the wave, the time to the horn (or how
-    many are left), your coins, and the buttons a hand doesn't have:
-    **HORN** (call the wave now), **PAUSE**, and **TURN** / **DOWN** while
-    you're holding a tower.
+  - **The header** across the top: three readouts (the WAVE, the clock
+    to the NEXT WAVE or how many ENEMIES are LEFT, and your COINS) over a
+    slim bar for the core, and the buttons a hand doesn't have, each an
+    icon over a word: **▶▶ START** (start the next wave now), **❚❚ PAUSE**,
+    and **TURN** / **DOWN** while you're holding a tower.
   - **The towers** below it: each tile shows the tower's picture and price,
     dimmed when you can't afford it. Poke one to pick it up, aim with your
     right hand and **pinch** to put it down. Poke the same tile again to put
@@ -150,7 +151,7 @@ node tools/horde-look.mjs   # 3,600 alive at once (sim cost; CROWD=8000 for more
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
 node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
-node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
+node tools/enemy-look.mjs   # the three kinds: a line-up, each close from three angles, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
 ```
 
@@ -166,8 +167,8 @@ src/factory/siege.ts      the fight's sim: waves (streams), the rim and rifts, t
                           the chew, leaks, coins, the five
                           towers and their levels, shells, bolts, burning
 src/systems/crack.ts      a pack's crack in the floor: the gash, its burning lips, the fractures
-src/systems/swarm.ts      the horde drawn: every crawler in ONE instanced draw call with
-                          its legs animated on the GPU; shards and floor splats
+src/systems/swarm.ts      the horde drawn: three bodies (mite, beetle, hulk), one instanced
+                          draw call each, legs and jaws animated on the GPU; shards and splats
 src/systems/SiegeSystem.ts  the fight drawn and voiced: the swarm, deaths, tracers,
                           lobbed shells, bolts, fire, the hammer's swing, level rings, the core's crystal
 src/systems/HandSystem.ts reads controllers or hands into intents; owns the palm panel

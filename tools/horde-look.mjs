@@ -221,7 +221,7 @@ const WAVE = Number(process.env.WAVE ?? 6);
 await page.evaluate((n) => {
   const t = window.__tubes;
   t.siege.jump(n);
-  t.siege.horn();
+  t.siege.start();
 }, WAVE);
 let st = await page.evaluate(() => window.__tubes.siege.state());
 const total = st.queued + st.enemies;
