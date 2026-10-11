@@ -65,11 +65,12 @@ from every side at once: a *They Are Billions* horde in your living room.
   hard, it breaks where it lands and takes the ones it lands on with it; set
   down gently, it lives, shakes it off and comes on again. A HULK is too big.
 - **Whatever reaches the core takes a bite and is gone** (1 for a mite, 5 for
-  a beetle, 20 for a hulk, out of 100). The core never heals: its crystal
+  a beetle, 20 for a hulk, out of 100), shown by a slim ten-segment gauge
+  floating over the core and a ring on the floor round it. The core never
+  heals: its crystal
   cracks, dims, slows and sinks as it is hurt.
 - **They come apart.** Each death bursts into neon shards that bounce across
-  the floor, leaves a glowing stain, and pops. The core's plate keeps the body
-  count.
+  the floor, leaves a glowing stain, and pops.
 - **Ten waves,** each adding a tower or a threat, up to THE LAST SHIFT (5,400
   mites, 300 beetles, 8 hulks). After that comes OVERTIME, which never ends.
 
