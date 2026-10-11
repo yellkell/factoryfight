@@ -393,7 +393,9 @@ export function simMs(): number {
  *  that fires once a step would fire a quarter as often, and a crawler
  *  would stride through a tower's corner. */
 const MAX_STEP = 1 / 30;
-const MAX_STEPS = 6;
+/** …but no more than this many a frame: on a headset that is already
+ *  behind, more steps make the next frame later still. */
+const MAX_STEPS = 3;
 
 export function siegeTick(dt: number): void {
   const t0 = performance.now();

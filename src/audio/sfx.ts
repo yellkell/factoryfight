@@ -770,7 +770,7 @@ const lastAt: Record<string, number> = {};
  *  of a second. Sixty towers at full tilt would otherwise build hundreds
  *  of little synths a second — a headset's frame, gone on sound nobody
  *  can pick apart anyway. */
-const VOICES_PER_TENTH = 8;
+const VOICES_PER_TENTH = 6;
 let windowAt = -1;
 let windowN = 0;
 /** True if `key` may sound now (at most once per `gapS`, and while the
