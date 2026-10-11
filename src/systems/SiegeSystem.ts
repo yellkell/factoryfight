@@ -16,8 +16,8 @@
  *                  breech pips, the barrel band in the chambered round's
  *                  colour.
  *   THE SHOTS      tracers, lobbed shells, frost bursts, arcs, beams.
- *   THE CORE       a health ring on the floor round it, and the one
- *                  plate the siege floats: wave, clock, core, bank.
+ *   THE CORE       a health ring on the floor round it, and its gauge:
+ *                  one slim segmented bar floating over the crystal.
  *
  * Everything lives in the plant frame (factory/frame.ts), in plant metres.
  */
@@ -87,7 +87,6 @@ import {
 import { dockUnit, isWeapon } from '../factory/sim.js';
 import { plant, type SiegeFx } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
-import { font } from '../ui/fonts.js';
 import { liveUnitRefs } from './FactorySystem.js';
 import { FloorCrack } from './crack.js';
 import { Shards, Splats, SwarmMesh } from './swarm.js';
@@ -427,7 +426,7 @@ export class SiegeSystem extends createSystem({}) {
   private clock = 0;
   /** Per-turret: seconds of recoil/flash left. */
   private recoil = new Map<number, number>();
-  /** THE CORE's ring and plate. */
+  /** THE CORE's ring and gauge. */
   private coreRing!: Mesh;
   private coreRingMat!: MeshBasicMaterial;
   private coreRingFrac = -1;
@@ -438,11 +437,10 @@ export class SiegeSystem extends createSystem({}) {
   /** Whether each fist took what it holds (a walk's headless grab is
    *  left to the walk). */
   private fistOwns = [false, false];
-  private plate!: Mesh;
-  private plateCtx!: CanvasRenderingContext2D;
-  private plateTex!: CanvasTexture;
-  private plateKey = '';
-  private platePainted = -1;
+  private gauge!: Mesh;
+  private gaugeCtx!: CanvasRenderingContext2D;
+  private gaugeTex!: CanvasTexture;
+  private gaugeKey = '';
   private lastPhase = '';
   private fireClock = 0;
   /** Seconds since the core went — the fall plays before the card. */
@@ -575,20 +573,20 @@ export class SiegeSystem extends createSystem({}) {
     this.coreRing.visible = false;
     this.root.add(this.coreRing);
 
-    // THE PLATE — the one sign the siege floats.
+    // THE GAUGE — the core's health, and nothing else, over the crystal.
     const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 240;
-    this.plateCtx = canvas.getContext('2d')!;
-    this.plateTex = new CanvasTexture(canvas);
-    this.plateTex.colorSpace = SRGBColorSpace;
-    this.plate = new Mesh(
-      new PlaneGeometry(0.64, 0.24),
-      new MeshBasicMaterial({ map: this.plateTex, transparent: true, depthWrite: false, side: DoubleSide }),
+    canvas.width = GAUGE.px[0];
+    canvas.height = GAUGE.px[1];
+    this.gaugeCtx = canvas.getContext('2d')!;
+    this.gaugeTex = new CanvasTexture(canvas);
+    this.gaugeTex.colorSpace = SRGBColorSpace;
+    this.gauge = new Mesh(
+      new PlaneGeometry(GAUGE.w, (GAUGE.w * GAUGE.px[1]) / GAUGE.px[0]),
+      new MeshBasicMaterial({ map: this.gaugeTex, transparent: true, depthWrite: false, side: DoubleSide }),
     );
-    this.plate.visible = false;
-    this.plate.renderOrder = 17;
-    this.root.add(this.plate);
+    this.gauge.visible = false;
+    this.gauge.renderOrder = 17;
+    this.root.add(this.gauge);
 
     siegeView.state = () => {
       const sg = plant.siege;
@@ -679,7 +677,6 @@ export class SiegeSystem extends createSystem({}) {
 
     if (sg.phase !== this.lastPhase) {
       this.lastPhase = sg.phase;
-      this.plateKey = '';
       this.fallenT = 0;
     }
     if (sg.phase === 'fallen' && !site.finale) {
@@ -847,15 +844,12 @@ export class SiegeSystem extends createSystem({}) {
         sfx.waveStart();
         sfx.wallKnock();
         buzz(this.world, 'both', 0.5, 120);
-        this.plateKey = '';
         break;
       case 'clear':
         sfx.allClear();
-        this.plateKey = '';
         break;
       case 'victory':
         sfx.ceremonyChord();
-        this.plateKey = '';
         break;
       case 'fallen':
         sfx.coreFall();
@@ -863,7 +857,6 @@ export class SiegeSystem extends createSystem({}) {
         this.flash(f.x, 0.6, f.z, 0xff6a30, 0.6, 0.8);
         this.sparks.burst(f.x, 0.7, f.z, 160, 0xff8a3a, 3, 1.4, 4, 1.8);
         buzz(this.world, 'both', 1, 400);
-        this.plateKey = '';
         break;
     }
   }
@@ -1343,7 +1336,7 @@ export class SiegeSystem extends createSystem({}) {
     const core = dockUnit();
     if (!core) {
       this.coreRing.visible = false;
-      this.plate.visible = false;
+      this.gauge.visible = false;
       return;
     }
     cellCenter(core.i, core.j, _c);
@@ -1352,7 +1345,6 @@ export class SiegeSystem extends createSystem({}) {
       this.coreRingFrac = frac;
       this.coreRing.geometry.dispose();
       this.coreRing.geometry = new RingGeometry(0.2, 0.245, 48, 1, Math.PI / 2, Math.max(0.001, frac * Math.PI * 2));
-      this.plateKey = '';
     }
     this.coreHit = Math.max(0, this.coreHit - delta * 3);
     this.coreRing.position.set(_c.x, 0.015, _c.z);
@@ -1380,102 +1372,63 @@ export class SiegeSystem extends createSystem({}) {
     this.coreRingMat.color.copy(_col);
     this.coreRingMat.opacity = 0.55 + 0.3 * Math.sin(this.clock * (frac < 0.25 ? 10 : 2)) ** 2;
 
-    // The plate rides over the core, turned to face you.
-    this.plate.position.set(_c.x, 1.32, _c.z);
-    this.plate.rotation.y = Math.atan2(_cam.x - _c.x, _cam.z - _c.z);
-    this.plate.visible = !site.paused;
-    this.paintPlate();
+    // The gauge rides over the crystal, turned to face you.
+    this.gauge.position.set(_c.x, GAUGE.y, _c.z);
+    this.gauge.rotation.y = Math.atan2(_cam.x - _c.x, _cam.z - _c.z);
+    this.gauge.visible = !site.paused;
+    const low = frac < 0.25 ? 0.6 + 0.4 * Math.sin(this.clock * 9) ** 2 : 1;
+    (this.gauge.material as MeshBasicMaterial).opacity = low;
+    this.paintGauge(frac);
   }
 
-  private paintPlate(): void {
-    const sg = plant.siege;
-    const spec = waveSpec(sg.wave);
-    const secs = sg.phase === 'build' ? Math.ceil(sg.buildT) : Math.floor(sg.waveT);
-    const left = siegeLeft();
-    const key = `${sg.phase}|${sg.wave}|${secs}|${left}|${sg.kills}|${Math.round(coreHealth() * 100)}|${sg.coins}`;
-    if (key === this.plateKey) return;
-    // In a tide the counts change every frame: repaint (and re-upload)
-    // the plate at most four times a second.
-    if (this.clock - this.platePainted < 0.25 && this.plateKey !== '') return;
-    this.platePainted = this.clock;
-    this.plateKey = key;
-    const g = this.plateCtx;
-    const W = 640;
-    const H = 240;
+  /**
+   * THE GAUGE: ten segments in a dark pill, as many lit as the core has
+   * tenths left (the last one part-lit), green → amber → red. A hit
+   * flashes the lit ones white. Repainted only when it changes.
+   */
+  private paintGauge(frac: number): void {
+    const hit = Math.round(this.coreHit * 8);
+    const key = `${Math.round(frac * 200)}|${hit}`;
+    if (key === this.gaugeKey) return;
+    this.gaugeKey = key;
+    const g = this.gaugeCtx;
+    const [W, H] = GAUGE.px;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(11,10,7,0.78)';
+    // The pill it sits in: dark enough to read against a bright room.
+    g.fillStyle = 'rgba(8,7,5,0.62)';
     g.beginPath();
-    g.roundRect(4, 4, W - 8, H - 8, 18);
+    g.roundRect(2, 2, W - 4, H - 4, (H - 4) / 2);
     g.fill();
-    g.strokeStyle = sg.phase === 'wave' ? 'rgba(255,74,38,0.7)' : 'rgba(255,162,46,0.55)';
-    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(255,255,255,0.14)';
+    g.lineWidth = 2;
     g.stroke();
-    g.textBaseline = 'alphabetic';
-    g.fillStyle = 'rgba(255,255,255,0.55)';
-    g.font = font(600, 24);
-    g.fillText(`WAVE ${sg.wave + 1}${sg.wave >= 10 ? '' : ' / 10'}`, 28, 46);
-    g.fillStyle = '#fdf6ec';
-    g.font = font(700, 40);
-    g.fillText(spec.name, 28, 92);
-    // The clock, right-aligned.
-    g.textAlign = 'right';
-    if (sg.phase === 'build') {
-      g.fillStyle = '#ffa22e';
-      g.font = font(700, 54);
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
-      g.fillText(`${m}:${String(s).padStart(2, '0')}`, W - 28, 92);
-      g.font = font(600, 22);
-      g.fillStyle = 'rgba(255,255,255,0.55)';
-      g.fillText('NEXT WAVE IN', W - 28, 46);
-    } else if (sg.phase === 'wave') {
-      g.fillStyle = '#ff5a3a';
-      g.font = font(700, 54);
-      g.fillText(`${left}`, W - 28, 92);
-      g.font = font(600, 22);
-      g.fillStyle = 'rgba(255,255,255,0.55)';
-      g.fillText('ENEMIES LEFT', W - 28, 46);
-    } else if (sg.phase === 'fallen') {
-      g.fillStyle = '#ff4030';
-      g.font = font(700, 44);
-      g.fillText('FALLEN', W - 28, 92);
+    _col.set(frac > 0.5 ? 0x6cff9a : frac > 0.25 ? 0xffc23a : 0xff4030);
+    if (this.coreHit > 0) _col.lerp(_tmpWhite, this.coreHit * 0.7);
+    const lit = `#${_col.getHexString()}`;
+    const N = GAUGE.segments;
+    const pad = 12;
+    const gap = 6;
+    const sh = H - pad * 2;
+    const sw = (W - pad * 2 - gap * (N - 1)) / N;
+    for (let k = 0; k < N; k++) {
+      const x = pad + k * (sw + gap);
+      const fill = Math.max(0, Math.min(1, frac * N - k));
+      g.fillStyle = 'rgba(255,255,255,0.1)';
+      g.beginPath();
+      g.roundRect(x, pad, sw, sh, 4);
+      g.fill();
+      if (fill <= 0) continue;
+      g.fillStyle = lit;
+      g.beginPath();
+      g.roundRect(x, pad, Math.max(4, sw * fill), sh, 4);
+      g.fill();
     }
-    g.textAlign = 'left';
-    // THE CORE.
-    const frac = coreHealth();
-    g.fillStyle = 'rgba(255,255,255,0.12)';
-    g.fillRect(28, 118, W - 56, 22);
-    g.fillStyle = frac > 0.5 ? '#6cff9a' : frac > 0.25 ? '#ffc23a' : '#ff4030';
-    g.fillRect(28, 118, (W - 56) * frac, 22);
-    g.fillStyle = '#0b0a07';
-    g.font = font(700, 18);
-    g.fillText('CORE', 36, 136);
-    // THE PURSE — what you have to build with.
-    g.fillStyle = '#ffd36a';
-    g.beginPath();
-    g.arc(38, 186, 11, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = '#0b0a07';
-    g.font = font(700, 14);
-    g.textAlign = 'center';
-    g.fillText('C', 38, 191);
-    g.textAlign = 'left';
-    g.fillStyle = '#fdf6ec';
-    g.font = font(700, 30);
-    g.fillText(`${sg.coins.toLocaleString('en-US')}`, 58, 197);
-    // THE BODY COUNT, bottom right — the number a tide is measured in.
-    if (sg.kills > 0) {
-      g.textAlign = 'right';
-      g.fillStyle = '#ff2bd6';
-      g.font = font(700, 30);
-      g.fillText(`${sg.kills.toLocaleString('en-US')}`, W - 28, 197);
-      g.font = font(600, 16);
-      g.fillStyle = 'rgba(255,255,255,0.55)';
-      g.fillText('KILLED', W - 28, 218);
-      g.textAlign = 'left';
-    }
-    this.plateTex.needsUpdate = true;
+    this.gaugeTex.needsUpdate = true;
   }
 }
+
+/** The core's gauge: its canvas, width (plant m), height over the floor,
+ *  and how many segments. */
+const GAUGE = { px: [512, 64] as [number, number], w: 0.4, y: 1.0, segments: 10 };
 
 const _tmpWhite = new Color(0xffffff);
