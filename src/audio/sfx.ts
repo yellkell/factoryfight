@@ -189,29 +189,39 @@ function tone(o: ToneOpts): void {
   osc.stop(t0 + dur + 0.03);
 }
 
-/** Bandpass-filtered noise burst — the basis of every hiss and whoosh. */
+/** Two seconds of white noise, made once: every hiss plays a slice of
+ *  it. (It used to be rolled fresh for every shot — in a late wave that
+ *  was most of the frame's audio cost.) */
+let noiseBuf: AudioBuffer | null = null;
+function noise(c: Ctx): AudioBuffer {
+  if (noiseBuf && noiseBuf.sampleRate === c.sampleRate) return noiseBuf;
+  const frames = c.sampleRate * 2;
+  noiseBuf = c.createBuffer(1, frames, c.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+  return noiseBuf;
+}
+
+/** Bandpass-filtered noise burst — the basis of every hiss and whoosh.
+ *  A slice of the shared noise, shaped by its gain: a quick swell, then
+ *  a fall to nothing. */
 function whooshNoise(dur: number, gain: number, fromHz: number, toHz: number, delay = 0): void {
   const c = ready();
   if (!c) return;
   const t0 = c.currentTime + delay;
-  const frames = Math.floor(c.sampleRate * dur);
-  const buf = c.createBuffer(1, frames, c.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < frames; i++) {
-    const p = i / frames;
-    data[i] = (Math.random() * 2 - 1) * (p < 0.12 ? p / 0.12 : 1) * (1 - p) ** 0.8;
-  }
   const src = c.createBufferSource();
-  src.buffer = buf;
+  src.buffer = noise(c);
   const bp = c.createBiquadFilter();
   bp.type = 'bandpass';
   bp.Q.value = 1.1;
   bp.frequency.setValueAtTime(fromHz, t0);
   bp.frequency.exponentialRampToValueAtTime(toHz, t0 + dur * 0.6);
   const g = c.createGain();
-  g.gain.value = gain;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.12);
+  g.gain.linearRampToValueAtTime(0, t0 + dur);
   src.connect(bp).connect(g).connect(c._master!);
-  src.start(t0);
+  src.start(t0, Math.random() * (2 - Math.min(1.9, dur)), dur);
 }
 
 /**
@@ -756,12 +766,26 @@ export function toolStow(): void {
  */
 
 const lastAt: Record<string, number> = {};
-/** True if `key` may sound now (at most once per `gapS`). */
+/** And all of them together: at most this many new voices in any tenth
+ *  of a second. Sixty towers at full tilt would otherwise build hundreds
+ *  of little synths a second — a headset's frame, gone on sound nobody
+ *  can pick apart anyway. */
+const VOICES_PER_TENTH = 8;
+let windowAt = -1;
+let windowN = 0;
+/** True if `key` may sound now (at most once per `gapS`, and while the
+ *  moment's voice budget lasts). */
 function gate(key: string, gapS: number): boolean {
   const c = ready();
   if (!c) return false;
   const now = c.currentTime;
   if (now - (lastAt[key] ?? -1) < gapS) return false;
+  if (now - windowAt > 0.1) {
+    windowAt = now;
+    windowN = 0;
+  }
+  if (windowN >= VOICES_PER_TENTH) return false;
+  windowN++;
   lastAt[key] = now;
   return true;
 }
