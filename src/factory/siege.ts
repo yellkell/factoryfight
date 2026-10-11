@@ -393,13 +393,14 @@ export function simMs(): number {
  *  that fires once a step would fire a quarter as often, and a crawler
  *  would stride through a tower's corner. */
 const MAX_STEP = 1 / 30;
-/** …but no more than this many a frame: on a headset that is already
- *  behind, more steps make the next frame later still. */
+/** …but no more than this many a frame (times the time-scale, so a sped-
+ *  up tool still steps finely): on a headset that is already behind,
+ *  more steps make the next frame later still. */
 const MAX_STEPS = 3;
 
 export function siegeTick(dt: number): void {
   const t0 = performance.now();
-  const n = Math.min(MAX_STEPS, Math.ceil(dt / MAX_STEP - 1e-6));
+  const n = Math.min(MAX_STEPS * Math.max(1, Math.ceil(plant.timeScale)), Math.ceil(dt / MAX_STEP - 1e-6));
   for (let k = 0; k < n; k++) tickSiege(dt / n);
   simAvg = simAvg * 0.9 + (performance.now() - t0) * 0.1;
 }
