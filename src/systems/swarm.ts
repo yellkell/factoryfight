@@ -974,12 +974,14 @@ void main() {
   float edge = 0.78 + 0.16 * sin(a * 5.0 + vSeed * 20.0) + 0.08 * sin(a * 11.0 + vSeed * 7.0);
   if (r > edge) discard;
   float core = 1.0 - smoothstep(0.0, edge, r);
-  // A flash as it lands, then a long stain that fades out. Alpha-blended,
-  // not added: a patch where three hundred died is stained, not blinding.
-  float flash = exp(-vAge * 30.0);
+  // A flash as it lands — in its own colour, run hot toward white, and
+  // quick: thirty landing at once must read as thirty, not a white-out —
+  // then a long stain that fades out. Alpha-blended, not added: a patch
+  // where three hundred died is stained, not blinding.
+  float flash = exp(-vAge * 55.0);
   float fade = 1.0 - smoothstep(0.55, 1.0, vAge);
   float alpha = mix(0.3, 0.7, core) * fade;
-  vec3 col = vCol * mix(0.55, 0.85, core) + vec3(1.0) * flash * 0.6;
+  vec3 col = vCol * mix(0.55, 0.85, core) + mix(vCol, vec3(1.0), 0.45) * flash * 0.6;
   gl_FragColor = vec4(col, clamp(alpha + flash * 0.5, 0.0, 1.0));
   #include <colorspace_fragment>
 }
@@ -1026,13 +1028,15 @@ export class Splats {
     parent.add(this.mesh);
   }
 
-  add(x: number, z: number, radius: number, hex: number): void {
+  /** A stain at (x, z). `quiet` skips its landing flash (a scorch, a
+   *  dent: marks, not deaths). */
+  add(x: number, z: number, radius: number, hex: number, quiet = false): void {
     const i = this.next;
     this.next = (this.next + 1) % SPLAT_CAP;
     this.x[i] = x;
     this.z[i] = z;
     this.r[i] = radius * (0.8 + Math.random() * 0.5);
-    this.t[i] = 0;
+    this.t[i] = quiet ? 1 : 0;
     this.tmp.set(hex);
     this.col[i * 3] = this.tmp.r;
     this.col[i * 3 + 1] = this.tmp.g;
