@@ -69,7 +69,7 @@ export function tubeMat(hex: number): MeshBasicMaterial {
   }
   return m;
 }
-function haloMat(hex: number): MeshBasicMaterial {
+export function haloMat(hex: number): MeshBasicMaterial {
   let m = haloMats.get(hex);
   if (!m) {
     m = new MeshBasicMaterial({
@@ -168,11 +168,18 @@ export class Trim {
     return this;
   }
 
+  /** The strokes as bare geometry — the tube, or (`halo`) its fatter
+   *  glow — for a builder merging the trim into something bigger. */
+  geometry(halo = false): BufferGeometry | null {
+    if (this.strokes.length === 0) return null;
+    return mergeGeometries(this.strokes.map((s) => s(halo ? HALO : 1)));
+  }
+
   /** Merge it all into `group`: one tube mesh, one halo. */
   into(group: Group, hex: number): Group {
     if (this.strokes.length === 0) return group;
-    const tube = mergeGeometries(this.strokes.map((s) => s(1)));
-    const halo = mergeGeometries(this.strokes.map((s) => s(HALO)));
+    const tube = this.geometry();
+    const halo = this.geometry(true);
     if (tube) {
       const m = new Mesh(tube, tubeMat(hex));
       m.name = 'neon';

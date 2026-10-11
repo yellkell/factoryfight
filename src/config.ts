@@ -1037,7 +1037,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     speed: 10,
     cost: 50,
     color: 0xffb347,
-    muzzleY: 0.48,
+    muzzleY: 0.29,
   },
   flamer: {
     id: 'flamer',
@@ -1050,7 +1050,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     burn: { dps: 5, s: 2.5 },
     cost: 80,
     color: 0xff7a1a,
-    muzzleY: 0.44,
+    muzzleY: 0.27,
   },
   hammer: {
     id: 'hammer',
@@ -1090,7 +1090,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     speed: 2.4,
     cost: 120,
     color: 0xffd36a,
-    muzzleY: 0.46,
+    muzzleY: 0.32,
   },
 };
 

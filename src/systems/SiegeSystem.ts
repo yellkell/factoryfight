@@ -1149,6 +1149,8 @@ export class SiegeSystem extends createSystem({}) {
       const refs = liveUnitRefs.get(u.id);
       // A levelled tower stands a little bigger…
       if (refs) refs.group.scale.setScalar(1 + (level - 1) * 0.09);
+      // …wears what each level adds…
+      refs?.gun?.dress?.(level);
       if (level < 2) continue;
       // …and wears a neon ring on the floor per level above the first.
       cellCenter(u.i, u.j, _c);
