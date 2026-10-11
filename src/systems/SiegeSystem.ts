@@ -9,10 +9,9 @@
  *                  own stride counter, on the GPU. When they die they
  *                  come apart — shards that bounce, splats that glow on
  *                  the floor, and a pop for every handful.
- *   THE BREACHES   a crack of light at the foot of a REAL wall, chosen
- *                  during the build phase so the room tells you where to
- *                  wall before the horn goes — and when it goes, the
- *                  plaster opens and they climb out.
+ *   THE CRACKS     a pack's rift: a crack splitting the floor open,
+ *                  glowing as a warning when the wave starts, then
+ *                  gaping as they climb up out of it.
  *   THE GUNS       slewing heads, recoiling barrels, muzzle flash, the
  *                  breech pips, the barrel band in the chambered round's
  *                  colour.
@@ -80,7 +79,7 @@ import {
   debugSpawn,
   siegeLeft,
   simMs,
-  soundHorn,
+  startWave,
   WEAPON_ORDER,
   standCore,
   waveSpec,
@@ -111,7 +110,8 @@ export const siegeView: {
     breaches: Array<{ x: number; z: number; state: string }>;
     coins: number;
   };
-  horn?: () => void;
+  /** Start the next wave now (the build clock's early end). */
+  start?: () => void;
   /** TOOLS ONLY: stand the core in the middle of the floor. */
   core?: () => void;
   /** TOOLS ONLY: crawlers climbing out now — up out of rift n, or
@@ -607,7 +607,7 @@ export class SiegeSystem extends createSystem({}) {
         coins: sg.coins,
       };
     };
-    siegeView.horn = () => soundHorn();
+    siegeView.start = () => startWave();
     siegeView.core = () => standCore();
     siegeView.spawn = (kind, rift = -1, count = 1) => debugSpawn(kind, rift, count);
     siegeView.grab = (hand, x, y, z) => grabEnemy(hand, x, y, z);
@@ -842,9 +842,9 @@ export class SiegeSystem extends createSystem({}) {
         sfx.wallKnock();
         buzz(this.world, 'both', 0.3, 60);
         break;
-      case 'horn':
+      case 'wave-start':
         this.breachFlare = 1.5;
-        sfx.siegeHorn();
+        sfx.waveStart();
         sfx.wallKnock();
         buzz(this.world, 'both', 0.5, 120);
         this.plateKey = '';
@@ -1298,8 +1298,8 @@ export class SiegeSystem extends createSystem({}) {
 
   /* ── the rifts ──────────────────────────────────────────────────────── */
 
-  /** A crack in the floor for every rift this wave has: they come at the
-   *  horn and go when the wave is done. */
+  /** A crack in the floor for every rift this wave has: they come when
+   *  the wave starts and go when it is done. */
   private syncBreaches(clear: boolean): void {
     const list = clear ? [] : plant.siege.breaches;
     const key = list.map((b) => `${b.x.toFixed(2)},${b.z.toFixed(2)}`).join('|');
@@ -1427,14 +1427,14 @@ export class SiegeSystem extends createSystem({}) {
       g.fillText(`${m}:${String(s).padStart(2, '0')}`, W - 28, 92);
       g.font = font(600, 22);
       g.fillStyle = 'rgba(255,255,255,0.55)';
-      g.fillText('UNTIL THE HORN', W - 28, 46);
+      g.fillText('NEXT WAVE IN', W - 28, 46);
     } else if (sg.phase === 'wave') {
       g.fillStyle = '#ff5a3a';
       g.font = font(700, 54);
       g.fillText(`${left}`, W - 28, 92);
       g.font = font(600, 22);
       g.fillStyle = 'rgba(255,255,255,0.55)';
-      g.fillText('INCOMING', W - 28, 46);
+      g.fillText('ENEMIES LEFT', W - 28, 46);
     } else if (sg.phase === 'fallen') {
       g.fillStyle = '#ff4030';
       g.font = font(700, 44);

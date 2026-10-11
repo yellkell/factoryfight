@@ -170,7 +170,7 @@ check(
   ids.includes('tool:dock') && ids.filter((i) => i.startsWith('tool:')).length === 1,
   `a bare floor: the toolbelt holds ONE tile, the CORE (${ids.join(', ')})`,
 );
-check(ids.includes('menu') && !ids.includes('horn'), 'and the header offers PAUSE, no horn yet');
+check(ids.includes('menu') && !ids.includes('start'), 'and the header offers PAUSE, no START yet');
 await page.screenshot({ path: 'shots/hands/core-first.png' });
 console.log('  · shots/hands/core-first.png');
 
@@ -222,7 +222,7 @@ check(
   ids.includes('tool:turret') && !ids.includes('tool:dock') && !ids.some((i) => /maker|belt|delete|wall/.test(i)),
   `now the palm holds the towers — no factory (${ids.filter((i) => i.startsWith('tool:')).join(', ')})`,
 );
-check(ids.includes('horn') && ids.includes('menu'), 'and the header offers HORN and PAUSE');
+check(ids.includes('start') && ids.includes('menu'), 'and the header offers START and PAUSE');
 // ONE PANEL: the header's studs and the tiles share a plane and never
 // sit on top of one another (the old wrist watch hid behind the tiles).
 {
@@ -279,7 +279,7 @@ check(await page.evaluate(() => window.__tubes.site.paused), 'POKE PAUSE: the pa
 const pauseIds = await page.evaluate(() => window.__tubes.menu.cardButtons());
 check(
   pauseIds.includes('resume') && pauseIds.includes('quit') && !pauseIds.some((i) => i.startsWith('card:build')),
-  `and it is just RESUME / HORN / QUIT — no tabs (${pauseIds.join(', ')})`,
+  `and it is just RESUME / START / QUIT — no tabs (${pauseIds.join(', ')})`,
 );
 await page.screenshot({ path: 'shots/hands/pause.png' });
 console.log('  · shots/hands/pause.png');

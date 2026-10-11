@@ -251,7 +251,7 @@ export interface Breach {
   tx: number;
   tz: number;
   half: number;
-  /** GATHERING from the horn (the warning), POURING while its pack comes
+  /** GATHERING from the wave's start (the warning), POURING while its pack comes
    *  through, SPENT after (a dim scar, gone at the wave's end). */
   state: 'gathering' | 'pouring' | 'spent';
 }
@@ -289,7 +289,7 @@ export interface SiegeFx {
     | 'bite'
     | 'core-hit'
     | 'breach'
-    | 'horn'
+    | 'wave-start'
     | 'clear'
     | 'victory'
     | 'fallen'
@@ -321,9 +321,9 @@ export interface Siege {
   phase: SiegePhase;
   /** The wave being built for / fought (index; past WAVES = endless). */
   wave: number;
-  /** Build phase: seconds left before the horn. */
+  /** Build phase: seconds left before the wave starts. */
   buildT: number;
-  /** Wave phase: seconds since the horn. */
+  /** Wave phase: seconds since it started. */
   waveT: number;
   /** The wave's streams, still pouring. */
   streams: Stream[];
@@ -334,7 +334,7 @@ export interface Siege {
   /** Burning floor. */
   fires: Fire[];
   /** This wave's RIFTS: the cracks in the floor its packs climb out of,
-   *  picked when the horn goes. (The rest of the tide comes out of every
+   *  picked when the wave starts. (The rest of the tide comes out of every
    *  wall.) */
   breaches: Breach[];
   kills: number;

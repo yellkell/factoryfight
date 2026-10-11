@@ -108,7 +108,7 @@ function costText(type: UnitType): string {
   const n = unitCost(type);
   return n > 0 ? `${n} COINS` : 'free';
 }
-import { coreHealth, levelOf, sellValue, siegeLeft, soundHorn, upgradeCost, upgradeTower, waveSpec } from '../factory/siege.js';
+import { coreHealth, levelOf, sellValue, siegeLeft, startWave, upgradeCost, upgradeTower, waveSpec } from '../factory/siege.js';
 import { buildView, typeAvailable, type BuildTool } from './BuildSystem.js';
 import { goopView } from './GoopSystem.js';
 import { font } from '../ui/fonts.js';
@@ -849,8 +849,8 @@ export class MenuSystem extends createSystem({}) {
     } else if (id === 'fin:board') {
       site.finale = false;
       abandonFactory();
-    } else if (id === 'card:horn') {
-      soundHorn();
+    } else if (id === 'card:start') {
+      startWave();
       site.paused = false;
     } else if (id.startsWith('build:')) {
       // Arm the tool and put the card away — the hands do the rest.
@@ -1407,7 +1407,7 @@ export class MenuSystem extends createSystem({}) {
         28 *
           wrapText(
             g,
-            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When the horn goes they climb out of EVERY wall in their thousands, and packs split the floor open where you least expect. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
+            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When a wave starts they climb out of EVERY wall in their thousands, and packs split the floor open where you least expect. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
             SHEET_X + 26,
             y,
             SHEET_W - 52,
@@ -1851,7 +1851,7 @@ export class MenuSystem extends createSystem({}) {
   /**
    * PAUSED, ON HANDS — three big plates and nothing else. Building lives
    * on your palm, the money on the core, the wave on your watch; all
-   * that is left for a pause is to come back, call the horn, or leave.
+   * that is left for a pause is to come back, start the wave, or leave.
    */
   private paintHandPause(): void {
     const [cw, ch] = BOARD.cardPx;
@@ -1861,9 +1861,9 @@ export class MenuSystem extends createSystem({}) {
     ];
     if (sg.phase === 'build') {
       buttons.push({
-        id: 'card:horn',
-        label: 'SOUND THE HORN',
-        tone: UI.danger,
+        id: 'card:start',
+        label: 'START THE NEXT WAVE',
+        tone: UI.accent,
         x: 40,
         y: 420,
         w: cw - 80,
@@ -2022,19 +2022,21 @@ export class MenuSystem extends createSystem({}) {
       });
     }
 
-    // THE HORN — the build phase ends when you say so.
+    // START — the build phase ends when you say so.
     const sg = plant.siege;
-    if (sg.phase === 'build') {
+    const starting = sg.phase === 'build';
+    const START_W = 200;
+    if (starting) {
       buttons.push({
-        id: 'card:horn',
-        label: 'SOUND THE HORN',
+        id: 'card:start',
+        label: 'START WAVE',
         small: true,
         px: 21,
-        tone: UI.danger,
-        x: cw - 34 - 236,
-        y: 92,
-        w: 236,
-        h: 52,
+        tone: UI.accent,
+        x: cw - 34 - START_W,
+        y: 101,
+        w: START_W,
+        h: 50,
       });
     }
     const wave = waveSpec(sg.wave);
@@ -2042,42 +2044,75 @@ export class MenuSystem extends createSystem({}) {
     this.card.paint(
       title,
       (g) => {
-        g.textBaseline = 'middle';
-        g.textAlign = 'left';
-        g.font = font(700, 30);
+        // THE READOUT: three small-caps labels over three figures — the
+        // clock (or the count), the core, the purse — in one row with
+        // START at its end.
+        const LABEL_Y = 113;
+        const VALUE_Y = 145;
+        const label = (text: string, x: number, align: CanvasTextAlign = 'left'): void => {
+          g.textAlign = align;
+          g.font = font(600, 15);
+          g.fillStyle = UI.faint;
+          g.fillText(text, x, LABEL_Y);
+        };
+        g.textBaseline = 'alphabetic';
+        let clockLabel = '';
+        let clock = '';
+        let clockTone: string = UI.accent;
         if (sg.phase === 'build') {
           const secs = Math.ceil(sg.buildT);
-          g.fillStyle = UI.accent;
-          g.fillText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, 36, 112);
-          g.font = font(500, 20);
-          g.fillStyle = UI.faint;
-          g.fillText('until the horn', 120, 113);
+          clockLabel = 'NEXT WAVE IN';
+          clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
         } else if (sg.phase === 'wave') {
-          g.fillStyle = UI.danger;
-          g.fillText(`${siegeLeft()} INCOMING`, 36, 112);
+          clockLabel = 'ENEMIES LEFT';
+          clock = siegeLeft().toLocaleString('en-US');
+          clockTone = UI.danger;
         } else if (sg.phase === 'core') {
-          g.fillStyle = UI.accent;
-          g.fillText('PLACE THE CORE', 36, 112);
+          clockLabel = 'FIRST';
+          clock = 'PLACE THE CORE';
         } else {
-          g.fillStyle = UI.danger;
-          g.fillText('THE CORE HAS FALLEN', 36, 112);
+          clockLabel = 'THE CORE';
+          clock = 'FALLEN';
+          clockTone = UI.danger;
         }
-        // The core, as a bar — the number the whole siege is about.
+        label(clockLabel, 36);
+        g.textAlign = 'left';
+        g.font = font(700, clock.length > 6 ? 26 : 34);
+        g.fillStyle = clockTone;
+        g.fillText(clock, 36, VALUE_Y, 150);
+        // THE CORE, as a bar — the number the whole siege is about.
+        const coinsW = 130;
+        const right = starting ? cw - 34 - START_W - 22 : cw - 36;
+        const barX = 206;
+        const barW = right - coinsW - 22 - barX;
         const core = coreHealth();
-        const barW = sg.phase === 'build' ? cw - 34 - 236 - 36 - 20 : cw - 72;
+        label('CORE', barX);
+        label(`${Math.round(core * 100)}%`, barX + barW, 'right');
         g.fillStyle = 'rgba(255,255,255,0.08)';
         g.beginPath();
-        g.roundRect(36, 138, barW, 12, 6);
+        g.roundRect(barX, 127, barW, 14, 7);
         g.fill();
         g.fillStyle = core > 0.5 ? UI.positive : core > 0.25 ? UI.warn : UI.danger;
         g.beginPath();
-        g.roundRect(36, 138, Math.max(6, barW * core), 12, 6);
+        g.roundRect(barX, 127, Math.max(7, barW * core), 14, 7);
         g.fill();
-        g.font = font(600, 16);
-        g.fillStyle = UI.faint;
+        // THE PURSE, behind a coin.
+        label('COINS', right, 'right');
         g.textAlign = 'right';
-        g.fillText(`CORE ${Math.round(core * 100)}%  \u00b7  ${sg.coins} COINS`, 36 + barW, 124);
+        g.font = font(700, 30);
+        g.fillStyle = '#ffd36a';
+        const coins = sg.coins.toLocaleString('en-US');
+        g.fillText(coins, right, VALUE_Y, coinsW - 30);
+        const cwid = Math.min(coinsW - 30, g.measureText(coins).width);
+        g.beginPath();
+        g.arc(right - cwid - 16, VALUE_Y - 11, 10, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = 'rgba(14,11,7,0.75)';
+        g.beginPath();
+        g.arc(right - cwid - 16, VALUE_Y - 11, 5, 0, Math.PI * 2);
+        g.fill();
         g.textAlign = 'left';
+        g.textBaseline = 'middle';
 
         if (this.cardMode === 'goals') this.paintWaves(g, cw, ch);
         else if (this.cardMode === 'supply') this.paintBills(g, cw, ch);
@@ -2134,7 +2169,7 @@ export class MenuSystem extends createSystem({}) {
     const rows: Array<{ shape: 'pinch' | 'fist' | 'fists' | 'cuff'; name: string; does: string }> = [
       { shape: 'cuff', name: 'YOUR PALM', does: 'Turn your left palm toward you: the towers, the wave, the coins. Poke a tower with your right index finger to pick it up.' },
       { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down, anywhere on the floor.' },
-      { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s HORN calls the wave early.' },
+      { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s START begins the next wave early.' },
     ];
     let y = y0;
     for (const row of rows) {
@@ -2152,7 +2187,7 @@ export class MenuSystem extends createSystem({}) {
 
   /** THE WAVES PAGE — where you are on the ladder, what this wave is
    *  teaching, and what is coming after it. Read-only: the siege has one
-   *  way forward and it is the horn. */
+   *  way forward and it is the next wave. */
   private paintWaves(g: CanvasRenderingContext2D, cw: number, ch: number): void {
     const sg = plant.siege;
     let y = CARD_BODY + 10;

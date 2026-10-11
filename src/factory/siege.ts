@@ -8,7 +8,7 @@
  *   core   — the floor waits for its CORE. Where it lands roots THE FIELD
  *            (factory/field.ts): from then on every spot of the room
  *            knows its way to the core.
- *   build  — the clock runs down (or the horn is sounded early). Towers
+ *   build  — the clock runs down (or START is pressed early). Towers
  *            go anywhere on the floor, right up against the core.
  *   wave   — they come out of EVERY wall: a tide climbing out of the
  *            plaster all round the room, and PACKS splitting the floor
@@ -145,9 +145,9 @@ function beginBuild(n: number): void {
   sg.breaches = [];
 }
 
-/** SOUND THE HORN — the build phase ends now (the card's button, and the
+/** START THE WAVE — the build phase ends now (the START buttons, and the
  *  clock running out, both come through here). */
-export function soundHorn(): void {
+export function startWave(): void {
   const sg = plant.siege;
   if (sg.phase !== 'build') return;
   const spec = waveSpec(sg.wave);
@@ -168,7 +168,7 @@ export function soundHorn(): void {
   const core = dockUnit();
   if (core) {
     cellCenter(core.i, core.j, _c);
-    fx({ kind: 'horn', x: _c.x, y: 0, z: _c.z });
+    fx({ kind: 'wave-start', x: _c.x, y: 0, z: _c.z });
   }
 }
 
@@ -414,7 +414,7 @@ function tickSiege(dt: number): void {
 
   if (sg.phase === 'build') {
     sg.buildT -= dt;
-    if (sg.buildT <= 0) soundHorn();
+    if (sg.buildT <= 0) startWave();
   } else if (sg.phase === 'wave') {
     sg.waveT += dt;
     // THE STREAMS pour, as fast as their gap — and hold while the floor
@@ -1319,7 +1319,7 @@ export function debugWakeAll(): void {
 }
 
 /** Headless: a clean floor for a portrait — every crawler, round, fire
- *  and rift gone, and the build clock held so no horn interrupts. */
+ *  and rift gone, and the build clock held so no wave interrupts. */
 export function debugClear(): void {
   const sg = plant.siege;
   sg.horde.clear();

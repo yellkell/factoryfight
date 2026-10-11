@@ -833,8 +833,8 @@ export function clangWreck(): void {
   whooshNoise(0.45, 0.14, 1500, 150);
 }
 
-/** THE HORN — a wave begins. Two low brass blasts, out of the walls. */
-export function siegeHorn(): void {
+/** A WAVE BEGINS. Two low brass blasts, out of the walls. */
+export function waveStart(): void {
   for (const [delay, f] of [
     [0, 98],
     [0.62, 92],
