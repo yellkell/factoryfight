@@ -4,7 +4,7 @@
  * The sim (factory/siege.ts) decides everything; this system owns only
  * what it looks and sounds like, the TUBES split exactly:
  *
- *   THE SWARM      every crawler in one draw call (systems/swarm.ts):
+ *   THE SWARM      every crawler in three draw calls (systems/swarm.ts):
  *                  thousands of neon mites whose legs walk on the sim's
  *                  own stride counter, on the GPU. When they die they
  *                  come apart — shards that bounce, splats that glow on

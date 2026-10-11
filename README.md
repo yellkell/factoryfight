@@ -150,7 +150,7 @@ node tools/horde-look.mjs   # 3,600 alive at once (sim cost; CROWD=8000 for more
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
 node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
-node tools/enemy-look.mjs   # the three kinds, close up, and a crowd
+node tools/enemy-look.mjs   # the three kinds: a line-up, each close from three angles, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
 ```
 
@@ -166,8 +166,8 @@ src/factory/siege.ts      the fight's sim: waves (streams), the rim and rifts, t
                           the chew, leaks, coins, the five
                           towers and their levels, shells, bolts, burning
 src/systems/crack.ts      a pack's crack in the floor: the gash, its burning lips, the fractures
-src/systems/swarm.ts      the horde drawn: every crawler in ONE instanced draw call with
-                          its legs animated on the GPU; shards and floor splats
+src/systems/swarm.ts      the horde drawn: three bodies (mite, beetle, hulk), one instanced
+                          draw call each, legs and jaws animated on the GPU; shards and splats
 src/systems/SiegeSystem.ts  the fight drawn and voiced: the swarm, deaths, tracers,
                           lobbed shells, bolts, fire, the hammer's swing, level rings, the core's crystal
 src/systems/HandSystem.ts reads controllers or hands into intents; owns the palm panel

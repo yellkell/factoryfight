@@ -913,10 +913,10 @@ export const CEREMONY_S = 4.2;
  */
 
 /**
- * THE HORDE. Three kinds, one body: a neon-legged mite, drawn thousands at
- * a time in a single draw call (systems/swarm.ts). They differ in size,
- * colour, and how much it takes to put them down — the MITE is the tide,
- * the BEETLE the stiffening in it, the HULK the thing it is carrying.
+ * THE HORDE. Three kinds, three bodies, neon-legged and drawn thousands at
+ * a time, a draw call a kind (systems/swarm.ts). They differ in size,
+ * colour, shape and how much it takes to put them down — the MITE is the
+ * tide, the BEETLE the stiffening in it, the HULK the thing it is carrying.
  */
 export type EnemyId = 'mite' | 'beetle' | 'hulk';
 

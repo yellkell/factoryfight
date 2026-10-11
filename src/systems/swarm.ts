@@ -1,16 +1,28 @@
 /**
- * THE SWARM, DRAWN — every crawler on the floor in ONE draw call.
+ * THE SWARM, DRAWN — every crawler on the floor in three draw calls.
  *
- * A mite is 62 triangles: a faceted abdomen, a head, two hot eyes and
- * six neon legs, each two tapering spikes. It is one geometry, instanced: each crawler is two vec4s
- * (where it stands and which way it faces; its stride, hit flash, burn
- * and how far out of the wall it is) and a kind. Everything else happens
- * on the GPU — the legs swing in a tripod gait off the stride, the body
- * bobs, the rim burns neon, a hit flashes it white and fire flickers it
- * orange. The CPU's whole job per frame is copying the horde's columns
- * into two buffers.
+ * Three kinds, three bodies, built here out of flat facets and drawn
+ * instanced, one draw call per kind:
  *
- * BEETLES and HULKS are the same body, larger and in their own colour.
+ *   THE MITE     66 triangles, and there are thousands. A lean, segmented
+ *                dart of a thing: a pointed head with snapping mandibles
+ *                and feelers, a neon ridge down its spine, two hot eyes,
+ *                and six long legs with a knee that burns.
+ *   THE BEETLE   145. A domed, split wing-case with a neon seam down the
+ *                middle and neon rims, a shield behind a broad head, a
+ *                horn and a pair of pincers, and six short, thick legs.
+ *   THE HULK     296. Layered back plates with neon lips, spikes, a core
+ *                that throbs through the cracks between them, two great
+ *                clawed forelimbs and four stomping legs.
+ *
+ * Each crawler is three small vecs: where it stands and which way it
+ * faces; its stride, hit flash, burn and how far out of the floor it is;
+ * and how high it is, whether it is thrashing and whether it is biting.
+ * Everything else happens on the GPU — the legs walk a tripod gait off
+ * the stride (each kind at its own weight), the body bobs and rolls, a
+ * biter's head nods and its jaws snap, a hulk's fists come down, the
+ * core pulses, a hit flashes it white and fire flickers it orange. The
+ * CPU's whole job per frame is one pass over the horde, copying columns.
  *
  * THE AFTERMATH is here too, because a swarm is only satisfying if it
  * comes apart: SHARDS (instanced tetrahedra with real gravity, bounce
@@ -31,214 +43,590 @@ import {
   PlaneGeometry,
   ShaderMaterial,
   Vector3,
+  Vector4,
   type Group,
 } from 'three';
 import { ENEMIES, HORDE_KINDS } from '../config.js';
-import { HORDE_CAP, PHASE_EMERGE, PHASE_FLY, PHASE_HELD, type Horde } from '../factory/horde.js';
+import { HORDE_CAP, PHASE_BITE, PHASE_EMERGE, PHASE_FLY, PHASE_HELD, type Horde } from '../factory/horde.js';
 
 /** The hostile body: near-black, so the neon carries the shape. */
 const BODY = 0x0b0a10;
 
-/* ── the mite ───────────────────────────────────────────────────────────── */
+/* ── the builder ────────────────────────────────────────────────────────── */
+
+type V3 = [number, number, number];
+/** A corner and how hot it is: x, y, z, glow (0 shell → 1 neon → 2+ hot
+ *  white). Glow is per CORNER, so a facet can burn at one edge and be
+ *  black at the other — that is how a plate gets a neon rim for free. */
+type P = [number, number, number, number];
+
+/** What a triangle hangs off; the vertex shader moves each its own way. */
+const PART_BODY = 0;
+const PART_LEG = 1;
+const PART_HEAD = 2;
+const PART_JAW = 3;
+const PART_ARM = 4;
+const PART_CORE = 5;
 
 /**
- * Local frame: unit RADIUS (the crawler's spec radius scales it), +Z
- * forward, standing on y = 0. Attributes: glow (0 shell → 1 neon → 2 hot
- * white), leg (x: tripod group 0/1, y: 1 on a leg), hip (the leg's root,
- * which the swing turns about).
+ * A body, triangle by triangle. Local frame: unit RADIUS (the crawler's
+ * spec radius scales it), +Z forward, standing on y = 0. No normals: the
+ * fragment shader takes each facet's own from its screen derivatives, so
+ * it stays a crisp flat facet however the legs and jaws bend it.
  */
-function miteGeometry(): BufferGeometry {
-  const pos: number[] = [];
-  const nor: number[] = [];
-  const glow: number[] = [];
-  const leg: number[] = [];
-  const hip: number[] = [];
-  const a = new Vector3();
-  const b = new Vector3();
-  const c = new Vector3();
-  const n = new Vector3();
-  const tri = (
-    p: [number, number, number],
-    q: [number, number, number],
-    r: [number, number, number],
-    g: number,
-    lg = 0,
-    on = 0,
-    h: [number, number, number] = [0, 0, 0],
-  ): void => {
-    a.set(...p);
-    b.set(...q);
-    c.set(...r);
-    n.copy(b).sub(a).cross(c.clone().sub(a)).normalize();
+class Body {
+  private readonly pos: number[] = [];
+  private readonly glow: number[] = [];
+  private readonly rig: number[] = [];
+  private readonly pivot: number[] = [];
+  private part = PART_BODY;
+  private beat = 0;
+  private at: V3 = [0, 0, 0];
+
+  /** Hang what follows off a part, turning about `at`, in gait half `beat`. */
+  on(part: number, at: V3 = [0, 0, 0], beat = 0): this {
+    this.part = part;
+    this.at = at;
+    this.beat = beat;
+    return this;
+  }
+
+  tri(a: P, b: P, c: P): void {
     for (const v of [a, b, c]) {
-      pos.push(v.x, v.y, v.z);
-      nor.push(n.x, n.y, n.z);
-      glow.push(g);
-      leg.push(lg, on);
-      hip.push(...h);
+      this.pos.push(v[0], v[1], v[2]);
+      this.glow.push(v[3]);
+      this.rig.push(this.part, this.beat);
+      this.pivot.push(...this.at);
     }
-  };
-  /** A bipyramid round (cx, cy, cz): `k` sides, radii rx/rz, apexes up/down. */
-  const gem = (
-    cx: number,
-    cy: number,
-    cz: number,
-    rx: number,
-    rz: number,
-    up: number,
-    down: number,
-    k: number,
-    gTop: number,
-    gBot: number,
-  ): void => {
-    const ring: Array<[number, number, number]> = [];
+  }
+
+  quad(a: P, b: P, c: P, d: P): void {
+    this.tri(a, b, c);
+    this.tri(a, c, d);
+  }
+
+  /** Rings joined band to band (each a closed loop), capped by apexes. */
+  loft(rings: P[][], front?: P, back?: P): void {
+    for (let r = 0; r + 1 < rings.length; r++) {
+      const A = rings[r];
+      const B = rings[r + 1];
+      for (let s = 0; s < A.length; s++) this.quad(A[s], A[(s + 1) % A.length], B[(s + 1) % B.length], B[s]);
+    }
+    if (front) this.fan(front, rings[0]);
+    if (back) this.fan(back, rings[rings.length - 1]);
+  }
+
+  fan(apex: P, ring: P[]): void {
+    for (let s = 0; s < ring.length; s++) this.tri(apex, ring[s], ring[(s + 1) % ring.length]);
+  }
+
+  /**
+   * A bipyramid round c: k corners on a flat ring (radii rx across, rz
+   * along; corner 0 dead ahead), apexes up and down. Returns its corners
+   * so a caller can set eyes into its faces.
+   */
+  gem(c: V3, rx: number, rz: number, up: number, down: number, k: number, ringGlow: (s: number) => number, gTop: number, gBot = 0): { ring: P[]; top: P } {
+    const ring: P[] = [];
     for (let s = 0; s < k; s++) {
       const t = (s / k) * Math.PI * 2;
-      ring.push([cx + Math.sin(t) * rx, cy, cz + Math.cos(t) * rz]);
+      ring.push([c[0] + Math.sin(t) * rx, c[1], c[2] + Math.cos(t) * rz, ringGlow(s)]);
     }
-    for (let s = 0; s < k; s++) {
-      const p = ring[s];
-      const q = ring[(s + 1) % k];
-      tri([cx, cy + up, cz], q, p, gTop);
-      tri([cx, cy - down, cz], p, q, gBot);
-    }
-  };
-  // The abdomen: a faceted, flattened gem behind the legs, with a neon
-  // keel down its back (the upper facets glow a little).
-  gem(0, 0.62, -0.35, 0.7, 0.95, 0.42, 0.3, 6, 0.08, 0);
-  // The head, forward and lower.
-  gem(0, 0.55, 0.72, 0.42, 0.42, 0.24, 0.2, 5, 0.2, 0);
-  // Two eyes: white-hot slivers on the head's front.
-  for (const sx of [-1, 1]) {
-    const ex = sx * 0.17;
-    tri([ex - 0.08, 0.66, 1.08], [ex + 0.08, 0.66, 1.08], [ex, 0.76, 1.02], 2.2);
-    tri([ex - 0.08, 0.66, 1.08], [ex, 0.57, 1.04], [ex + 0.08, 0.66, 1.08], 2.2);
+    const top: P = [c[0], c[1] + up, c[2], gTop];
+    this.fan(top, ring);
+    this.fan([c[0], c[1] - down, c[2], gBot], ring);
+    return { ring, top };
   }
-  // Six legs: hip on the body's side, knee high and out, foot on the
-  // floor further out. Tripod groups: L1 R2 L3 | R1 L2 R3.
-  const spike = (
-    p: [number, number, number],
-    q: [number, number, number],
-    w: number,
-    g: number,
-    lg: number,
-    h: [number, number, number],
-  ): void => {
-    // A thin three-sided spike from p, tapering to a point at q: three
-    // triangles where a prism took six — legs are most of a mite, and
-    // there are thousands of mites.
+
+  /**
+   * A limb from p to q: a `sides`-sided tube, w0 across at p and w1 at q
+   * (w1 = 0 tapers it to a point), glow g0 → g1 along it — on its top
+   * ridge; the other corners get `side` of that, so side 0 is a dark,
+   * armoured limb with one neon line down its back. Open-ended: its ends
+   * are always buried in the next piece.
+   */
+  limb(p: V3, q: V3, w0: number, w1: number, g0: number, g1: number, sides = 3, side = 1): void {
     const d = new Vector3(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
-    const u = new Vector3(0, 1, 0).cross(d);
-    if (u.lengthSq() < 1e-6) u.set(1, 0, 0);
-    u.normalize().multiplyScalar(w);
-    const v = d.clone().cross(u).normalize().multiplyScalar(w);
-    const ring = (o: [number, number, number]): Array<[number, number, number]> => [0, 1, 2].map((s) => {
-      const t = (s / 3) * Math.PI * 2;
-      return [o[0] + u.x * Math.cos(t) + v.x * Math.sin(t), o[1] + u.y * Math.cos(t) + v.y * Math.sin(t), o[2] + u.z * Math.cos(t) + v.z * Math.sin(t)];
-    });
-    const r0 = ring(p);
-    for (let s = 0; s < 3; s++) tri(r0[s], q, r0[(s + 1) % 3], g, lg, 1, h);
-  };
-  const zs = [0.42, 0.02, -0.38];
-  for (let k = 0; k < 3; k++) {
-    for (const sx of [-1, 1]) {
-      const group = (k % 2 === 0) === (sx < 0) ? 0 : 1;
-      const z = zs[k];
-      const splay = (k - 1) * 0.35;
-      const h: [number, number, number] = [sx * 0.42, 0.6, z];
-      const knee: [number, number, number] = [sx * 1.05, 1.0, z + splay * 0.6];
-      const foot: [number, number, number] = [sx * 1.55, 0.0, z + splay * 1.2];
-      spike(h, knee, 0.08, 1, group, h);
-      spike(knee, foot, 0.065, 1.25, group, h);
+    const v = new Vector3(0, 1, 0).addScaledVector(d, -d.y);
+    if (v.lengthSq() < 1e-6) v.set(0, 0, 1);
+    v.normalize();
+    const u = new Vector3().crossVectors(d, v);
+    const at = (o: V3, w: number, g: number, s: number): P => {
+      // Corner 0 straight up, so the top edge (what a standing player
+      // sees) is always a ridge, never a flat.
+      if (s % sides !== 0) g *= side;
+      const t = (s / sides) * Math.PI * 2;
+      const cu = Math.sin(t) * w;
+      const cv = Math.cos(t) * w;
+      return [o[0] + u.x * cu + v.x * cv, o[1] + u.y * cu + v.y * cv, o[2] + u.z * cu + v.z * cv, g];
+    };
+    for (let s = 0; s < sides; s++) {
+      const a = at(p, w0, g0, s);
+      const b = at(p, w0, g0, s + 1);
+      if (w1 <= 0) this.tri(a, b, [q[0], q[1], q[2], g1]);
+      else this.quad(a, b, at(q, w1, g1, s + 1), at(q, w1, g1, s));
     }
   }
-  const g = new BufferGeometry();
-  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new Float32BufferAttribute(nor, 3));
-  g.setAttribute('aGlow', new Float32BufferAttribute(glow, 1));
-  g.setAttribute('aLeg', new Float32BufferAttribute(leg, 2));
-  g.setAttribute('aHip', new Float32BufferAttribute(hip, 3));
-  return g;
+
+  /**
+   * A blade: two triangles folded along a crease that rides on top, from
+   * a base w across at p to a point at q. Seen from above, from the side
+   * or from below it is never edge-on — the cheapest leg that always
+   * reads, and a mite has twelve of them.
+   */
+  blade(p: V3, q: V3, w: number, g0: number, g1: number): void {
+    const d = new Vector3(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
+    const v = new Vector3(0, 1, 0).addScaledVector(d, -d.y);
+    if (v.lengthSq() < 1e-6) v.set(0, 0, 1);
+    v.normalize();
+    const u = new Vector3().crossVectors(d, v).multiplyScalar(w);
+    v.multiplyScalar(w * 0.7);
+    const l: P = [p[0] - u.x, p[1] - u.y, p[2] - u.z, g0];
+    const r: P = [p[0] + u.x, p[1] + u.y, p[2] + u.z, g0];
+    const c: P = [p[0] + v.x, p[1] + v.y, p[2] + v.z, g0];
+    const tip: P = [q[0], q[1], q[2], g1];
+    this.tri(l, c, tip);
+    this.tri(c, r, tip);
+  }
+
+  /** A face's middle, shrunk to `k` of it and lifted off it (away from
+   *  `inside`): an eye set into a head, a vent into a flank. */
+  inset(a: P, b: P, c: P, inside: V3, k: number, lift: number, g: number): void {
+    const o = (1 - k) / 3;
+    this.decal(a, b, c, inside, [[o + k, o, o], [o, o + k, o], [o, o, o + k]], lift, g);
+  }
+
+  /** A triangle laid on face abc (each corner a blend of a, b and c),
+   *  lifted off it, away from `inside`. */
+  decal(a: P, b: P, c: P, inside: V3, w: [V3, V3, V3], lift: number, g: number): void {
+    const A = new Vector3(a[0], a[1], a[2]);
+    const B = new Vector3(b[0], b[1], b[2]);
+    const C = new Vector3(c[0], c[1], c[2]);
+    const n = B.clone().sub(A).cross(C.clone().sub(A)).normalize();
+    const m = A.clone().add(B).add(C).divideScalar(3);
+    if (n.dot(m.sub(new Vector3(...inside))) < 0) n.negate();
+    const pt = (k: V3): P => {
+      const o = A.clone().multiplyScalar(k[0]).addScaledVector(B, k[1]).addScaledVector(C, k[2]).addScaledVector(n, lift);
+      return [o.x, o.y, o.z, g];
+    };
+    this.tri(pt(w[0]), pt(w[1]), pt(w[2]));
+  }
+
+  /**
+   * Indexed: a corner shared by several facets (same place, glow and
+   * part) is ONE vertex. With no normals to keep apart, the flat facets
+   * cost nothing to share, and the GPU runs the vertex shader for each
+   * corner once instead of once per triangle — roughly a third of the
+   * work, times eight thousand mites.
+   */
+  geometry(): InstancedBufferGeometry {
+    const seen = new Map<string, number>();
+    const index: number[] = [];
+    const pos: number[] = [];
+    const glow: number[] = [];
+    const rig: number[] = [];
+    const pivot: number[] = [];
+    for (let v = 0; v < this.glow.length; v++) {
+      const p = this.pos.slice(v * 3, v * 3 + 3);
+      const r = this.rig.slice(v * 2, v * 2 + 2);
+      const o = this.pivot.slice(v * 3, v * 3 + 3);
+      const key = [...p, this.glow[v], ...r, ...o].map((x) => x.toFixed(5)).join();
+      let i = seen.get(key);
+      if (i === undefined) {
+        i = glow.length;
+        seen.set(key, i);
+        pos.push(...p);
+        glow.push(this.glow[v]);
+        rig.push(...r);
+        pivot.push(...o);
+      }
+      index.push(i);
+    }
+    const g = new InstancedBufferGeometry();
+    g.setIndex(index);
+    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    g.setAttribute('aGlow', new Float32BufferAttribute(glow, 1));
+    g.setAttribute('aRig', new Float32BufferAttribute(rig, 2));
+    g.setAttribute('aPivot', new Float32BufferAttribute(pivot, 3));
+    return g;
+  }
 }
+
+/** A cross-section round the Z axis at depth z: k corners, corner 0 on
+ *  top, glow by corner. */
+function ring(z: number, y: number, rx: number, up: number, down: number, k: number, glow: (s: number) => number): P[] {
+  const out: P[] = [];
+  for (let s = 0; s < k; s++) {
+    const t = (s / k) * Math.PI * 2;
+    const c = Math.cos(t);
+    out.push([Math.sin(t) * rx, y + c * (c >= 0 ? up : down), z, glow(s)]);
+  }
+  return out;
+}
+
+/* ── the mite ───────────────────────────────────────────────────────────── */
+
+/** Where a mite's head turns: the neck. */
+const MITE_NECK: V3 = [0, 0.58, 0.44];
+
+/**
+ * THE MITE. Three segments, each a diamond in section so its spine is a
+ * RIDGE — and the ridge corners burn, so from above a mite is a dashed
+ * neon line with legs: thorax, pinch, abdomen, pinch, stinger. A dart of
+ * a head, two slanted eyes, mandibles that snap, feelers out in front,
+ * and six long legs whose knees ride high above its back and glow hot.
+ */
+function miteBody(): Body {
+  const b = new Body();
+  const spine = (s: number): number => (s === 0 ? 1 : 0);
+  // The abdomen: waist, swell, taper, a hot stinger at the tail.
+  b.loft(
+    [ring(-0.5, 0.6, 0.46, 0.3, 0.22, 4, spine), ring(-0.95, 0.55, 0.34, 0.24, 0.16, 4, spine)],
+    [0, 0.52, -0.14, 1],
+    [0, 0.45, -1.38, 1.3],
+  );
+  // The thorax, where the legs root.
+  b.loft([ring(0.2, 0.6, 0.3, 0.28, 0.2, 4, spine)], [0, 0.6, -0.08, 1], [0, 0.6, 0.46, 1]);
+  // The head: a dart, two eyes slanted into its upper faces.
+  b.on(PART_HEAD, MITE_NECK);
+  const crown: P[] = ring(0.62, 0.58, 0.3, 0.2, 0.18, 4, (s) => (s === 0 ? 0.6 : 0));
+  const snout: P = [0, 0.5, 1.0, 0.45];
+  b.loft([crown], [0, 0.58, 0.42, 0.2], snout);
+  for (const s of [1, 3]) b.inset(crown[0], crown[s], snout, [0, 0.56, 0.66], 0.5, 0.02, 2.6);
+  // Feelers, out ahead and up.
+  for (const sx of [-1, 1]) b.blade([sx * 0.08, 0.72, 0.7], [sx * 0.62, 1.15, 1.4], 0.05, 1, 1.4);
+  // Mandibles: hooked in toward each other in front of the snout.
+  for (const sx of [-1, 1]) {
+    const base: V3 = [sx * 0.14, 0.46, 0.86];
+    b.on(PART_JAW, base);
+    b.blade(base, [sx * 0.05, 0.42, 1.3], 0.07, 0.7, 1.6);
+  }
+  // Six legs: hip on the thorax, knee high above the back, foot far out.
+  // Tripod groups: L1 R2 L3 | R1 L2 R3. Thigh and shin are both blades
+  // spreading FROM the knee — back to the hip, down to a point on the
+  // floor — so the knee is the leg's widest, hottest point: a joint you
+  // can see from across the room.
+  const legs: Array<[number, V3, V3]> = [
+    [0.32, [0.75, 1.0, 0.75], [1.15, 0, 1.38]],
+    [0.2, [0.98, 1.1, 0.28], [1.68, 0, 0.42]],
+    [0.08, [0.8, 1.02, -0.32], [1.36, 0, -1.06]],
+  ];
+  legs.forEach(([z, knee, foot], k) => {
+    for (const sx of [-1, 1]) {
+      const hip: V3 = [sx * 0.26, 0.58, z];
+      b.on(PART_LEG, hip, (k % 2 === 0) === sx < 0 ? 0 : 1);
+      const kn: V3 = [sx * knee[0], knee[1], knee[2]];
+      b.blade(kn, hip, 0.075, 1.45, 0.9);
+      b.blade(kn, [sx * foot[0], foot[1], foot[2]], 0.07, 1.45, 1.0);
+    }
+  });
+  return b;
+}
+
+/* ── the beetle ─────────────────────────────────────────────────────────── */
+
+const BEETLE_NECK: V3 = [0, 0.5, 0.72];
+
+/**
+ * THE BEETLE. A domed wing-case, split: in section it rises from a neon
+ * RIM over a dark shoulder to a crest each side, and dips to a neon SEAM
+ * down the middle — so from above it is a black shell drawn in three
+ * neon lines, closing to a hot point at the tail. A shield in front of
+ * it with a burning lip, a broad low head, a horn, a pair of pincers,
+ * and six short, thick legs. It looks like it would take a slug or five.
+ */
+function beetleBody(): Body {
+  const b = new Body();
+  const shell = (z: number, y0: number, w: number, h: number, belly: number): P[] => [
+    [-w, y0, z, 1],
+    [-0.78 * w, y0 + 0.6 * h, z, 0],
+    [-0.32 * w, y0 + h, z, 0.12],
+    [0, y0 + 0.9 * h, z, 1],
+    [0.32 * w, y0 + h, z, 0.12],
+    [0.78 * w, y0 + 0.6 * h, z, 0],
+    [w, y0, z, 1],
+    [0, y0 - belly, z, 0],
+  ];
+  // Open in front: the shield covers it.
+  b.loft(
+    [
+      shell(0.3, 0.38, 0.7, 0.42, 0.2),
+      shell(-0.1, 0.36, 0.86, 0.6, 0.22),
+      shell(-0.58, 0.36, 0.78, 0.52, 0.2),
+      shell(-0.95, 0.38, 0.44, 0.3, 0.14),
+    ],
+    undefined,
+    [0, 0.5, -1.16, 1.1],
+  );
+  // The shield (pronotum): wide and low, its front lip burning.
+  b.gem([0, 0.6, 0.48], 0.66, 0.36, 0.32, 0.22, 6, (s) => (s === 0 || s === 1 || s === 5 ? 1 : 0), 0.15);
+  // The head, broad and low, eyes on its shoulders.
+  b.on(PART_HEAD, BEETLE_NECK);
+  const head = b.gem([0, 0.48, 0.9], 0.4, 0.24, 0.17, 0.14, 5, (s) => (s === 0 ? 0.55 : 0), 0);
+  for (const s of [0, 4]) b.inset(head.top, head.ring[s], head.ring[(s + 1) % 5], [0, 0.48, 0.9], 0.6, 0.015, 2.4);
+  // The horn, curving up off the brow.
+  b.limb([0, 0.58, 0.92], [0, 1.05, 1.2], 0.09, 0, 0.3, 1.7);
+  // Pincers: out, then hooked back in, hot at the tips.
+  for (const sx of [-1, 1]) {
+    const base: V3 = [sx * 0.22, 0.42, 1.0];
+    const elbow: V3 = [sx * 0.42, 0.42, 1.3];
+    b.on(PART_JAW, base);
+    b.blade(base, elbow, 0.085, 0.6, 1.1);
+    b.blade(elbow, [sx * 0.12, 0.4, 1.56], 0.07, 1.0, 1.7);
+  }
+  // Six legs: short, thick, armoured thighs (three-sided tubes, neon only
+  // down the top ridge), a hot knee, and a neon spike of a shin.
+  const legs: Array<[number, V3, V3]> = [
+    [0.3, [0.92, 0.62, 0.62], [1.18, 0, 0.98]],
+    [-0.05, [1.06, 0.66, -0.02], [1.38, 0, 0.06]],
+    [-0.4, [0.96, 0.62, -0.62], [1.22, 0, -1.02]],
+  ];
+  legs.forEach(([z, knee, foot], k) => {
+    for (const sx of [-1, 1]) {
+      const hip: V3 = [sx * 0.5, 0.36, z];
+      b.on(PART_LEG, hip, (k % 2 === 0) === sx < 0 ? 0 : 1);
+      const kn: V3 = [sx * knee[0], knee[1], knee[2]];
+      b.limb(hip, kn, 0.13, 0.09, 0.55, 1.5, 3, 0.3);
+      b.limb(kn, [sx * foot[0], foot[1], foot[2]], 0.1, 0, 1.25, 1.0);
+    }
+  });
+  return b;
+}
+
+/* ── the hulk ───────────────────────────────────────────────────────────── */
+
+const HULK_NECK: V3 = [0, 0.92, 0.62];
+
+/**
+ * THE HULK. A dark hull, and over it three back plates laid like roof
+ * tiles the wrong way round — each one's front edge reared up into a
+ * burning LIP, and between them, cracks where the CORE shows through,
+ * white-hot and throbbing. Spikes off the plates. A low head sunk under
+ * the mantle, scowling out of two hot slits over its tusks; shoulders; two
+ * forelimbs it knuckle-walks on, ending in two-pronged claws; four legs
+ * that thicken toward the floor like a thing that weighs what it is.
+ */
+function hulkBody(): Body {
+  const b = new Body();
+  // The hull, under everything.
+  const dark = (): number => 0;
+  const hull = [ring(0.55, 0.85, 0.5, 0.35, 0.3, 6, dark), ring(0, 0.85, 0.62, 0.4, 0.38, 6, dark), ring(-0.6, 0.8, 0.5, 0.35, 0.32, 6, dark)];
+  b.loft(hull, [0, 0.8, 0.82, 0], [0, 0.75, -0.95, 0]);
+  // Vents down each flank, burning with the core.
+  b.on(PART_CORE);
+  for (const s of [1, 2, 4, 5]) {
+    const n = (s + 1) % 6;
+    b.inset(hull[1][s], hull[1][n], hull[2][n], [0, 0.8, -0.3], 0.55, 0.02, 1.9);
+    b.inset(hull[1][s], hull[2][n], hull[2][s], [0, 0.8, -0.3], 0.55, 0.02, 1.9);
+  }
+  // The core: proud of the hull, so it shows in every crack.
+  b.gem([0, 1.08, -0.08], 0.42, 0.58, 0.4, 0.25, 6, () => 1.8, 2.6);
+  b.on(PART_BODY);
+  // Three plates. Top surface (rim, shoulder, crest, shoulder, rim) front
+  // to back — neon down the rims and the crest, black between — and a lip
+  // face hanging off the front edge, solid neon.
+  const plate = (zF: number, zB: number, yF: number, yB: number, w: number, h: number): void => {
+    const top = (z: number, y: number): P[] => [
+      [-w, y - 0.1, z, 1],
+      [-0.6 * w, y + 0.6 * h, z, 0],
+      [0, y + h, z, 1],
+      [0.6 * w, y + 0.6 * h, z, 0],
+      [w, y - 0.1, z, 1],
+    ];
+    const F = top(zF, yF);
+    const B = top(zB, yB);
+    for (let s = 0; s < 4; s++) b.quad(F[s], F[s + 1], B[s + 1], B[s]);
+    const L = F.map((p): P => [p[0], p[1] - 0.13, p[2] - 0.03, 1.15]);
+    const Fl = F.map((p): P => [p[0], p[1], p[2], 1.15]);
+    for (let s = 0; s < 4; s++) b.quad(Fl[s], Fl[s + 1], L[s + 1], L[s]);
+  };
+  plate(0.66, 0.2, 1.32, 1.42, 0.84, 0.26);
+  plate(0.02, -0.36, 1.46, 1.36, 0.74, 0.26);
+  plate(-0.54, -0.92, 1.34, 1.06, 0.6, 0.2);
+  // Spikes off the plates, neon at the tips.
+  const spikes: Array<[V3, V3, number]> = [
+    [[-0.46, 1.5, 0.36], [-0.78, 1.98, 0.1], 0.11],
+    [[0.46, 1.5, 0.36], [0.78, 1.98, 0.1], 0.11],
+    [[0, 1.66, -0.12], [0, 2.1, -0.46], 0.13],
+    [[0, 1.48, -0.64], [0, 1.82, -0.98], 0.1],
+    [[0, 1.54, 0.42], [0, 1.86, 0.2], 0.09],
+  ];
+  for (const [p, q, w] of spikes) b.limb(p, q, w, 0, 0.05, 1.5, 4);
+  // Shoulders: armoured knobs, burning along the outer edge.
+  for (const sx of [-1, 1]) {
+    const outer = (s: number): number => (Math.sin((s / 5) * Math.PI * 2) * sx > 0.3 ? 0.9 : 0);
+    b.gem([sx * 0.72, 1.2, 0.42], 0.32, 0.36, 0.3, 0.2, 5, outer, 0.05);
+  }
+  // The head, low under the mantle, and tusks.
+  b.on(PART_HEAD, HULK_NECK);
+  const head = b.gem([0, 0.8, 0.84], 0.36, 0.3, 0.25, 0.2, 6, (s) => (s === 0 ? 0.4 : 0), 0);
+  // Eyes: a slanted slit each side of the brow, low at the middle and
+  // rising outward — a scowl, not a face.
+  const [top, r0, r1, r5] = [head.top, head.ring[0], head.ring[1], head.ring[5]];
+  b.decal(top, r0, r1, [0, 0.8, 0.84], [[0.3, 0.65, 0.05], [0.47, 0.08, 0.45], [0.18, 0.42, 0.4]], 0.015, 2.6);
+  b.decal(top, r5, r0, [0, 0.8, 0.84], [[0.3, 0.05, 0.65], [0.47, 0.45, 0.08], [0.18, 0.4, 0.42]], 0.015, 2.6);
+  for (const sx of [-1, 1]) {
+    const base: V3 = [sx * 0.18, 0.66, 1.0];
+    b.on(PART_JAW, base);
+    b.limb(base, [sx * 0.08, 0.36, 1.4], 0.07, 0, 0.4, 1.6, 4);
+  }
+  // Forelimbs: shoulder → elbow (out, with a spur) → wrist → two claws on
+  // the floor. Knuckle-walked, and slammed down when it bites.
+  for (const sx of [-1, 1]) {
+    const sh: V3 = [sx * 0.72, 1.05, 0.42];
+    const el: V3 = [sx * 1.18, 0.86, 0.74];
+    const wr: V3 = [sx * 1.06, 0.3, 1.28];
+    b.on(PART_ARM, sh, sx < 0 ? 1 : 0);
+    b.limb(sh, el, 0.2, 0.16, 0.5, 1.4, 4, 0);
+    b.limb(el, wr, 0.19, 0.14, 1.4, 1.0, 4, 0.1);
+    b.limb(el, [sx * 1.42, 1.12, 0.46], 0.08, 0, 0.3, 1.4);
+    b.limb([sx * 1.16, 0.3, 1.3], [sx * 1.24, 0.02, 1.72], 0.1, 0, 0.9, 1.7, 4, 0.6);
+    b.limb([sx * 0.96, 0.3, 1.3], [sx * 0.8, 0.04, 1.66], 0.1, 0, 0.9, 1.7, 4, 0.6);
+  }
+  // Four legs: thighs up to a spurred knee, shins that THICKEN to a hoof.
+  const legs: Array<[V3, V3, V3, number]> = [
+    [[0.5, 0.75, -0.1], [1.16, 1.14, -0.05], [1.3, 0, 0.12], 0],
+    [[0.45, 0.75, -0.55], [1.06, 1.1, -0.76], [1.26, 0, -1.06], 1],
+  ];
+  for (const [hip, knee, foot, beat] of legs) {
+    for (const sx of [-1, 1]) {
+      const h: V3 = [sx * hip[0], hip[1], hip[2]];
+      const kn: V3 = [sx * knee[0], knee[1], knee[2]];
+      // Tripods again: L-arm R-mid L-rear | R-arm L-mid R-rear.
+      b.on(PART_LEG, h, sx < 0 ? beat : 1 - beat);
+      b.limb(h, kn, 0.17, 0.13, 0.6, 1.4, 4, 0);
+      b.limb(kn, [sx * foot[0], foot[1], foot[2]], 0.11, 0.17, 1.4, 1.0, 4, 0.1);
+      b.limb(kn, [kn[0] + sx * 0.14, kn[1] + 0.3, kn[2] - 0.12], 0.07, 0, 0.2, 1.4);
+    }
+  }
+  return b;
+}
+
+/* ── the shader ─────────────────────────────────────────────────────────── */
 
 const SWARM_VERT = /* glsl */ `
 attribute float aGlow;
-attribute vec2 aLeg;
-attribute vec3 aHip;
+attribute vec2 aRig;    // part, beat (which half of the gait)
+attribute vec3 aPivot;  // where the part turns
 attribute vec4 iPose;   // x, z, heading, radius
 attribute vec4 iAnim;   // stride, flash, burn, rise
-attribute float iKind;
-attribute vec2 iAir;    // height off the floor, flailing (0..1)
+attribute vec3 iAct;    // height off the floor, flailing (0..1), biting (0..1)
 uniform float uTime;
+uniform vec4 uGait;     // cadence, leg swing, foot lift, body bob
+uniform vec4 uMove;     // roll, jaw snap, arm swing, thrash rate
+uniform vec3 uNeck;     // where the head nods
 varying float vGlow;
-varying vec3 vN;
-varying vec3 vV;
+varying vec3 vW;
 varying float vFlash;
 varying float vBurn;
-varying float vKind;
+
+vec3 turnY(vec3 p, vec3 o, float a) {
+  vec2 r = p.xz - o.xz;
+  float c = cos(a);
+  float s = sin(a);
+  return vec3(o.x + r.x * c - r.y * s, p.y, o.z + r.x * s + r.y * c);
+}
+vec3 turnX(vec3 p, vec3 o, float a) {
+  vec2 r = p.yz - o.yz;
+  float c = cos(a);
+  float s = sin(a);
+  return vec3(p.x, o.y + r.x * c - r.y * s, o.z + r.x * s + r.y * c);
+}
 
 void main() {
   vec3 p = position;
-  vec3 n = normal;
-  float stride = iAnim.x;
-  // Legs cycle with distance walked (so a stopped crawler stands still),
-  // plus a nervous twitch so a biting crowd isn't frozen.
-  float ph = stride * 9.0 / max(iPose.w * 8.0, 0.4) + aLeg.x * 3.14159;
-  // In your fist or in the air, the legs thrash.
-  ph = mix(ph, uTime * 26.0 + aLeg.x * 3.14159 + iPose.x * 7.0, iAir.y);
-  if (aLeg.y > 0.5) {
-    vec2 rel = p.xz - aHip.xz;
-    float reach = clamp(length(rel) / 1.4, 0.0, 1.0);
-    float sw = sin(ph) * 0.42;
-    float cs = cos(sw);
-    float sn = sin(sw);
-    p.xz = aHip.xz + vec2(rel.x * cs - rel.y * sn, rel.x * sn + rel.y * cs);
-    p.y += max(0.0, cos(ph)) * 0.32 * reach;
+  float part = aRig.x;
+  float beat = aRig.y * 3.14159;
+  float seed = fract(sin(iPose.x * 12.9898 + iPose.y * 78.233) * 43758.5453) * 6.2832;
+  float fl = iAct.y;
+  float bite = iAct.z;
+  // The gait runs on distance walked (so a stopped crawler stands still),
+  // a kind's cadence per body-radius: a mite skitters, a hulk plods.
+  float ph = iAnim.x * uGait.x / max(iPose.w, 0.01);
+  // In your fist or in the air, everything thrashes.
+  ph = mix(ph, uTime * uMove.w + seed, fl);
+  // Chewing a tower: the feet scrabble where they stand.
+  ph += bite * sin(uTime * 13.0 + seed) * 0.5;
+  float lp = ph + beat;
+  float glow = aGlow;
+  if (part == 1.0 || part == 4.0) {
+    // A leg (or a hulk's arm) swings about its hip and lifts on the way
+    // forward, the farther from the hip the higher.
+    float reach = clamp(length(p.xz - aPivot.xz) / 1.2, 0.0, 1.0);
+    float sw = sin(lp) * (part == 4.0 ? uMove.z : uGait.y);
+    p = turnY(p, aPivot, sw);
+    p.y += pow(max(0.0, cos(lp)), 0.7) * uGait.z * reach;
+    if (part == 4.0) {
+      // Biting, a hulk raises both fists and brings them down.
+      float slam = pow(0.5 + 0.5 * sin(uTime * 5.0 + seed + beat * 0.4), 3.0);
+      p = turnX(p, aPivot, -bite * slam * 1.1 - fl * 0.5 * (0.5 + 0.5 * sin(uTime * 9.0 + beat)));
+    }
   } else {
-    p.y += abs(sin(ph)) * 0.07;
+    if (part == 3.0) {
+      // Jaws: idly working as it walks; snapping when it bites.
+      float open = mix(0.3 + 0.3 * sin(ph * 0.5 + seed + uTime * 3.0), 0.5 + 0.5 * sin(uTime * 24.0 + seed), max(bite, fl));
+      p = turnY(p, aPivot, open * uMove.y * (aPivot.x < 0.0 ? 1.0 : -1.0));
+    }
+    if (part == 2.0 || part == 3.0) {
+      // Heads nod into a bite.
+      float nod = bite * (sin(uTime * 26.0 + seed) * 0.14 - 0.12) + sin(ph * 0.5) * 0.04;
+      p = turnX(p, uNeck, nod);
+    }
+    if (part == 5.0) {
+      // The core breathes, and races when it is in a fight.
+      glow *= 0.75 + 0.25 * sin(uTime * mix(3.0, 9.0, max(bite, fl)) + seed);
+    }
+    // The body rides the legs: up and down with each step, and a roll
+    // from side to side on the heavy ones.
+    p.y += abs(sin(ph)) * uGait.w + p.x * sin(ph) * uMove.x;
   }
-  // Climbing out of the wall: it grows to full size as it comes.
-  float rise = iAnim.w;
-  float s = iPose.w * mix(0.45, 1.0, rise);
+  // Climbing out of the floor: it grows to full size as it comes.
+  float s = iPose.w * mix(0.45, 1.0, iAnim.w);
   float h = iPose.z;
   float ch = cos(h);
   float sh = sin(h);
   vec3 w = vec3(p.x * ch + p.z * sh, p.y, -p.x * sh + p.z * ch) * s;
-  vec3 wn = vec3(n.x * ch + n.z * sh, n.y, -n.x * sh + n.z * ch);
   w.x += iPose.x;
-  w.y += iAir.x;
+  w.y += iAct.x;
   w.z += iPose.y;
-  vec4 mv = modelViewMatrix * vec4(w, 1.0);
-  vN = normalize(normalMatrix * wn);
-  vV = -mv.xyz;
-  vGlow = aGlow;
+  vec4 wp = modelMatrix * vec4(w, 1.0);
+  vW = wp.xyz;
+  vGlow = glow;
   vFlash = iAnim.y;
   vBurn = iAnim.z;
-  vKind = iKind;
-  gl_Position = projectionMatrix * mv;
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
 
 const SWARM_FRAG = /* glsl */ `
-uniform vec3 uKind[3];
+uniform vec3 uNeon;
 uniform vec3 uBody;
 uniform float uTime;
 varying float vGlow;
-varying vec3 vN;
-varying vec3 vV;
+varying vec3 vW;
 varying float vFlash;
 varying float vBurn;
-varying float vKind;
 
 void main() {
-  vec3 neon = vKind < 0.5 ? uKind[0] : (vKind < 1.5 ? uKind[1] : uKind[2]);
-  float facing = abs(dot(normalize(vN), normalize(vV)));
-  float rim = pow(1.0 - facing, 3.0);
-  vec3 col = mix(uBody, neon, clamp(vGlow, 0.0, 1.0));
-  col += neon * rim * 0.75;
-  col += vec3(1.0) * max(vGlow - 1.0, 0.0) * 0.8;
+  // Each facet's own normal, from how the surface moves across the
+  // screen: flat-shaded whatever the legs did to it.
+  vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
+  vec3 v = normalize(cameraPosition - vW);
+  if (dot(n, v) < 0.0) n = -n;
+  float facing = clamp(dot(n, v), 0.0, 1.0);
+  // The shell: near-black, but every facet catches the light from above
+  // a little differently (crystal, not a blob), a glint on the ones
+  // square to it, and the kind's neon creeping round the silhouette.
+  float key = clamp(dot(n, normalize(vec3(0.3, 1.0, 0.35))), 0.0, 1.0);
+  vec3 shell = uBody * (0.35 + 2.4 * key) + uNeon * (pow(1.0 - facing, 4.0) * 0.08 + pow(key, 24.0) * 0.012);
+  // Neon: a corner's glow fades across its facets, and the curve turns
+  // that fade into a hard-ish neon edge with a faint tint behind it.
+  float g = clamp(vGlow, 0.0, 1.0);
+  float lit = smoothstep(0.86, 1.0, g) + g * 0.015;
+  vec3 col = mix(shell, uNeon * (0.75 + 0.35 * facing), lit);
+  // Past 1, neon goes white-hot (eyes, knees, tips, the core).
+  col = mix(col, vec3(1.0, 0.97, 0.92), clamp((vGlow - 1.0) * 0.6, 0.0, 0.9));
   // On fire: it flickers toward flame.
-  float flick = 0.6 + 0.4 * sin(uTime * 37.0 + vV.x * 40.0);
+  float flick = 0.6 + 0.4 * sin(uTime * 37.0 + vW.x * 60.0 + vW.z * 40.0);
   col = mix(col, vec3(1.0, 0.5, 0.12), vBurn * 0.55 * flick);
   col = mix(col, vec3(1.0), vFlash);
   gl_FragColor = vec4(col, 1.0);
@@ -246,88 +634,112 @@ void main() {
 }
 `;
 
-export class SwarmMesh {
-  readonly mesh: Mesh;
-  private readonly geo: InstancedBufferGeometry;
-  private readonly pose: InstancedBufferAttribute;
-  private readonly anim: InstancedBufferAttribute;
-  private readonly kind: InstancedBufferAttribute;
-  private readonly air: InstancedBufferAttribute;
-  private readonly mat: ShaderMaterial;
+/**
+ * How each kind walks: cadence (gait radians per body-radius walked), leg
+ * swing, foot lift, body bob; then roll, jaw snap, arm swing, thrash rate.
+ */
+const GAITS: Array<{ body: () => Body; neck: V3; gait: Vector4; move: Vector4 }> = [
+  { body: miteBody, neck: MITE_NECK, gait: new Vector4(2.6, 0.46, 0.38, 0.06), move: new Vector4(0, 0.45, 0, 30) },
+  { body: beetleBody, neck: BEETLE_NECK, gait: new Vector4(3.0, 0.3, 0.24, 0.04), move: new Vector4(0.03, 0.35, 0, 22) },
+  { body: hulkBody, neck: HULK_NECK, gait: new Vector4(3.8, 0.24, 0.42, 0.07), move: new Vector4(0.07, 0.3, 0.3, 12) },
+];
 
-  constructor(parent: Group) {
-    const base = miteGeometry();
-    this.geo = new InstancedBufferGeometry();
-    for (const name of ['position', 'normal', 'aGlow', 'aLeg', 'aHip']) {
-      this.geo.setAttribute(name, base.getAttribute(name));
-    }
-    this.pose = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 4), 4).setUsage(DynamicDrawUsage);
-    this.anim = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 4), 4).setUsage(DynamicDrawUsage);
-    this.kind = new InstancedBufferAttribute(new Float32Array(HORDE_CAP), 1).setUsage(DynamicDrawUsage);
+/** One kind's mesh: its own body, its own instance columns. */
+class Brood {
+  readonly mesh: Mesh;
+  readonly geo: InstancedBufferGeometry;
+  readonly pose = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 4), 4).setUsage(DynamicDrawUsage);
+  readonly anim = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 4), 4).setUsage(DynamicDrawUsage);
+  readonly act = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 3), 3).setUsage(DynamicDrawUsage);
+
+  constructor(parent: Group, kind: number, time: { value: number }) {
+    const spec = GAITS[kind];
+    this.geo = spec.body().geometry();
     this.geo.setAttribute('iPose', this.pose);
     this.geo.setAttribute('iAnim', this.anim);
-    this.geo.setAttribute('iKind', this.kind);
-    this.air = new InstancedBufferAttribute(new Float32Array(HORDE_CAP * 2), 2).setUsage(DynamicDrawUsage);
-    this.geo.setAttribute('iAir', this.air);
+    this.geo.setAttribute('iAct', this.act);
     this.geo.instanceCount = 0;
-    this.mat = new ShaderMaterial({
+    const mat = new ShaderMaterial({
       vertexShader: SWARM_VERT,
       fragmentShader: SWARM_FRAG,
       side: DoubleSide,
       uniforms: {
-        uKind: { value: HORDE_KINDS.map((k) => new Color(ENEMIES[k].neon)) },
+        uNeon: { value: new Color(ENEMIES[HORDE_KINDS[kind]].neon) },
         uBody: { value: new Color(BODY) },
-        uTime: { value: 0 },
+        uGait: { value: spec.gait },
+        uMove: { value: spec.move },
+        uNeck: { value: new Vector3(...spec.neck) },
+        uTime: time,
       },
     });
-    this.mesh = new Mesh(this.geo, this.mat);
+    this.mesh = new Mesh(this.geo, mat);
     this.mesh.frustumCulled = false;
-    this.mesh.name = 'swarm';
+    this.mesh.name = `swarm-${HORDE_KINDS[kind]}`;
     parent.add(this.mesh);
   }
 
-  /** Copy the horde into the instance buffers. */
-  update(h: Horde, clock: number): void {
-    const P = this.pose.array as Float32Array;
-    const A = this.anim.array as Float32Array;
-    const K = this.kind.array as Float32Array;
-    const R = this.air.array as Float32Array;
-    const radii = HORDE_KINDS.map((k) => ENEMIES[k].radius);
-    let n = 0;
-    for (let i = 0; i < h.n; i++) {
-      if (h.dead[i]) continue;
-      const o = n * 4;
-      P[o] = h.x[i];
-      P[o + 1] = h.z[i];
-      P[o + 2] = h.heading[i];
-      P[o + 3] = radii[h.kind[i]];
-      A[o] = h.stride[i];
-      A[o + 1] = h.flash[i] > 0 ? Math.min(1, h.flash[i] / 0.12) : 0;
-      A[o + 2] = h.burnT[i] > 0 ? 1 : 0;
-      A[o + 3] = h.phase[i] === PHASE_EMERGE ? Math.min(1, h.phaseT[i] * 1.6) : 1;
-      K[n] = h.kind[i];
-      const ph = h.phase[i];
-      R[n * 2] = h.y[i];
-      R[n * 2 + 1] = ph === PHASE_HELD || ph === PHASE_FLY ? 1 : 0;
-      n++;
-    }
+  /** Hand this frame's first `n` crawlers to the GPU. */
+  flush(n: number): void {
     this.geo.instanceCount = n;
     this.mesh.visible = n > 0;
-    if (n > 0) {
-      this.pose.clearUpdateRanges();
-      this.anim.clearUpdateRanges();
-      this.kind.clearUpdateRanges();
-      this.pose.addUpdateRange(0, n * 4);
-      this.anim.addUpdateRange(0, n * 4);
-      this.kind.addUpdateRange(0, n);
-      this.air.clearUpdateRanges();
-      this.air.addUpdateRange(0, n * 2);
-      this.air.needsUpdate = true;
-      this.pose.needsUpdate = true;
-      this.anim.needsUpdate = true;
-      this.kind.needsUpdate = true;
+    if (n === 0) return;
+    for (const at of [this.pose, this.anim, this.act]) {
+      at.clearUpdateRanges();
+      at.addUpdateRange(0, n * at.itemSize);
+      at.needsUpdate = true;
     }
-    this.mat.uniforms.uTime.value = clock;
+  }
+}
+
+export class SwarmMesh {
+  /** One per kind, in HORDE_KINDS order: mites, beetles, hulks. */
+  private readonly broods: Brood[];
+  private readonly time = { value: 0 };
+  private readonly radii: Float32Array;
+  /** Each kind's columns, held as plain views so the hot loop is array
+   *  reads and writes and nothing else. */
+  private readonly P: Float32Array[];
+  private readonly A: Float32Array[];
+  private readonly R: Float32Array[];
+  private readonly count = new Int32Array(HORDE_KINDS.length);
+
+  constructor(parent: Group) {
+    this.broods = HORDE_KINDS.map((_, k) => new Brood(parent, k, this.time));
+    this.radii = Float32Array.from(HORDE_KINDS, (k) => ENEMIES[k].radius);
+    this.P = this.broods.map((b) => b.pose.array as Float32Array);
+    this.A = this.broods.map((b) => b.anim.array as Float32Array);
+    this.R = this.broods.map((b) => b.act.array as Float32Array);
+  }
+
+  /** Copy the horde into the instance buffers: one pass, each crawler
+   *  into its own kind's columns. */
+  update(h: Horde, clock: number): void {
+    const { P, A, R, radii, count } = this;
+    count.fill(0);
+    for (let i = 0; i < h.n; i++) {
+      if (h.dead[i]) continue;
+      const k = h.kind[i];
+      const n = count[k]++;
+      const o = n * 4;
+      const pose = P[k];
+      const anim = A[k];
+      const act = R[k];
+      pose[o] = h.x[i];
+      pose[o + 1] = h.z[i];
+      pose[o + 2] = h.heading[i];
+      pose[o + 3] = radii[k];
+      anim[o] = h.stride[i];
+      anim[o + 1] = h.flash[i] > 0 ? Math.min(1, h.flash[i] / 0.12) : 0;
+      anim[o + 2] = h.burnT[i] > 0 ? 1 : 0;
+      const ph = h.phase[i];
+      anim[o + 3] = ph === PHASE_EMERGE ? Math.min(1, h.phaseT[i] * 1.6) : 1;
+      const q = n * 3;
+      act[q] = h.y[i];
+      act[q + 1] = ph === PHASE_HELD || ph === PHASE_FLY ? 1 : 0;
+      act[q + 2] = ph === PHASE_BITE ? 1 : 0;
+    }
+    for (let k = 0; k < this.broods.length; k++) this.broods[k].flush(count[k]);
+    this.time.value = clock;
   }
 }
 
