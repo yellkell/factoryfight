@@ -24,6 +24,9 @@ from every side at once: a *They Are Billions* horde in your living room.
   | TESLA COIL | 100 | a bolt that chains through ten of them at once |
   | MORTAR | 120 | lobs shells into the thick of the crowd; long reach, blind up close |
 
+- **Ask a tower how it's holding up.** Point at one (or hover the mouse,
+  in the emulator), reach a fingertip toward it, or open its panel, and it
+  shows a health gauge like the core's; otherwise towers stay clean.
 - **Touch a tower to UPGRADE or SELL it.** The panel is just the tower, its
   level dots and two big buttons: UPGRADE (with its price) and SELL (with what
   you get back). Three levels, each buying damage, reach and rate of fire. An

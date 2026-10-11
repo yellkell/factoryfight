@@ -85,6 +85,11 @@ export interface Site {
    * it can't also stamp a rail) and never the machine.
    */
   inspect: number;
+  /** What you are ASKING ABOUT without opening it — the unit under the
+   *  pointing ray (or the mouse, in the emulator), and the one a bare
+   *  fingertip is reaching for (−1 none). A tower shows its health while
+   *  either is on it. */
+  hover: { ray: number; hand: number };
   /**
    * THANKS FOR PLAYING. Raised once, when the goop is on its feet and
    * dancing on your actual floor. Nothing else in the game sets it and
@@ -114,6 +119,7 @@ export const site: Site = {
   ceremonyT: 0,
   paused: false,
   inspect: -1,
+  hover: { ray: -1, hand: -1 },
   finale: false,
   generation: 0,
   wallsReady: false,

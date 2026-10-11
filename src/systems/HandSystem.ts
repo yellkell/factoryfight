@@ -565,6 +565,7 @@ export class HandSystem extends createSystem({}) {
       !site.paused &&
       site.inspect < 0 &&
       (buildView.armed?.() ?? null) === null;
+    site.hover.hand = -1;
     for (const hand of ['left', 'right'] as const) {
       const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.[hand]?.object3D as Object3D | undefined;
       if (!can || intents[hand].mode !== 'hand' || !tipObj) {
@@ -573,6 +574,7 @@ export class HandSystem extends createSystem({}) {
       }
       tipObj.getWorldPosition(_tip);
       let hit: number = -1;
+      let reach: number = -1;
       let near = Infinity;
       for (const u of plant.units) {
         if (u.type !== 'dock' && !isWeapon(u.type)) continue;
@@ -580,9 +582,14 @@ export class HandSystem extends createSystem({}) {
         const r = Math.hypot(_tip.x - _cc.x * PLANT_SCALE, _tip.z - _cc.z * PLANT_SCALE);
         if (r < near) {
           near = r;
+          const inBand = _tip.y > TOWER_TOUCH.y0 * 0.5 && _tip.y < TOWER_TOUCH.y1 + 0.2;
+          if (r < TOWER_TOUCH.r * 2.5 && inBand) reach = u.id;
           if (r < TOWER_TOUCH.r && _tip.y > TOWER_TOUCH.y0 && _tip.y < TOWER_TOUCH.y1) hit = u.id;
         }
       }
+      // REACHING FOR ONE: a fingertip near a tower (closer than the touch
+      // that opens it) is asking about it, and it shows its health.
+      if (reach >= 0) site.hover.hand = reach;
       if (hit >= 0 && this.towerArmed[hand]) {
         this.towerArmed[hand] = false;
         site.inspect = hit;

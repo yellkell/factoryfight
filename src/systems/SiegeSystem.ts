@@ -33,6 +33,7 @@
 import { createSystem } from '@iwsdk/core';
 import {
   AdditiveBlending,
+  Box3,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
@@ -50,7 +51,6 @@ import {
   Quaternion,
   RingGeometry,
   SphereGeometry,
-  SRGBColorSpace,
   Vector3,
 } from 'three';
 import { ENEMIES, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
@@ -60,7 +60,7 @@ import { intents } from '../input/intents.js';
 import { site } from '../game/state.js';
 import { siegeFallen } from '../game/flow.js';
 import { cellCenter } from '../floor/grid.js';
-import { ensurePlantRoot, toPlant } from '../factory/frame.js';
+import { PLANT_SCALE, ensurePlantRoot, toPlant } from '../factory/frame.js';
 import { NEON } from '../factory/neon.js';
 import {
   bindRoom,
@@ -91,11 +91,12 @@ import {
   waveSpec,
 } from '../factory/siege.js';
 import { dockUnit, isWeapon } from '../factory/sim.js';
-import { plant, type SiegeFx } from '../factory/state.js';
+import { plant, type SiegeFx, type Unit } from '../factory/state.js';
 import { glintTexture, sizedPointsMaterial } from '../materials/glow.js';
 import { fxN, fxQ, pinFxQ, sampleFrame } from '../game/load.js';
 import { liveUnitRefs } from './FactorySystem.js';
 import { FloorCrack } from './crack.js';
+import { Gauge } from './gauge.js';
 import { Bolts, Glows } from './glows.js';
 import { Shards, Splats, SwarmMesh } from './swarm.js';
 import { walls } from './WallSystem.js';
@@ -163,6 +164,8 @@ export const siegeView: {
   }>;
   /** TOOLS ONLY: coins into the purse. */
   coins?: (n: number) => void;
+  /** Which towers are wearing a health gauge right now, and how faded in. */
+  towerGauges?: () => Array<{ unit: number; fade: number }>;
   /** TOOLS ONLY: pin THE LOAD's effect budget (0.35..1; null lets it
    *  float) — and read it back, with the frame EMA it is reading. */
   fxQuality?: (v?: number | null) => { q: number; ema: number; beat: number };
@@ -526,10 +529,12 @@ export class SiegeSystem extends createSystem({}) {
   /** Whether each fist took what it holds (a walk's headless grab is
    *  left to the walk). */
   private fistOwns = [false, false];
-  private gauge!: Mesh;
-  private gaugeCtx!: CanvasRenderingContext2D;
-  private gaugeTex!: CanvasTexture;
-  private gaugeKey = '';
+  private gauge!: Gauge;
+  /** THE TOWERS' gauges: a few, worn by whichever towers you are pointing
+   *  at, reaching for, or have open — each fading in and out. */
+  private towerGauges: Array<{ g: Gauge; unit: number; fade: number; hp: number; hit: number }> = [];
+  /** Each tower's height to its top (plant m), measured once a level. */
+  private towerTops = new Map<number, { level: number; top: number }>();
   private lastPhase = '';
   private fireClock = 0;
   /** Seconds since the core went — the fall plays before the card. */
@@ -619,19 +624,13 @@ export class SiegeSystem extends createSystem({}) {
     this.root.add(this.coreRing);
 
     // THE GAUGE — the core's health, and nothing else, over the crystal.
-    const canvas = document.createElement('canvas');
-    canvas.width = GAUGE.px[0];
-    canvas.height = GAUGE.px[1];
-    this.gaugeCtx = canvas.getContext('2d')!;
-    this.gaugeTex = new CanvasTexture(canvas);
-    this.gaugeTex.colorSpace = SRGBColorSpace;
-    this.gauge = new Mesh(
-      new PlaneGeometry(GAUGE.w, (GAUGE.w * GAUGE.px[1]) / GAUGE.px[0]),
-      new MeshBasicMaterial({ map: this.gaugeTex, transparent: true, depthWrite: false, side: DoubleSide }),
-    );
-    this.gauge.visible = false;
-    this.gauge.renderOrder = 17;
-    this.root.add(this.gauge);
+    this.gauge = new Gauge(GAUGE.w);
+    this.root.add(this.gauge.mesh);
+    for (let k = 0; k < 4; k++) {
+      const g = new Gauge(TOWER_GAUGE.w);
+      this.root.add(g.mesh);
+      this.towerGauges.push({ g, unit: -1, fade: 0, hp: 0, hit: 0 });
+    }
 
     siegeView.state = () => {
       const sg = plant.siege;
@@ -699,6 +698,8 @@ export class SiegeSystem extends createSystem({}) {
       }
       return out;
     };
+    siegeView.towerGauges = () =>
+      this.towerGauges.filter((t) => t.g.mesh.visible).map((t) => ({ unit: t.unit, fade: t.fade }));
     siegeView.turrets = () =>
       plant.units
         .filter((u) => isWeapon(u.type))
@@ -776,6 +777,7 @@ export class SiegeSystem extends createSystem({}) {
     this.sparks.tick(dt);
     this.flames.tick(dt);
     this.tickCore(delta);
+    this.tickTowerGauges(delta);
     if (this.rumbleS > 0) {
       buzz(this.world, 'both', this.rumbleS, this.rumbleMs);
       this.rumbleS = 0;
@@ -1228,12 +1230,6 @@ export class SiegeSystem extends createSystem({}) {
       const r = ENEMIES[HORDE_KINDS[h.kind[i]]].radius;
       put(h.x[i], r * 2.2 + 0.06, h.z[i], Math.max(0, h.hp[i] / h.maxHp[i]), Math.max(0.12, r * 1.6), 0xff5a3a);
     }
-    for (const u of plant.units) {
-      if (u.hp >= u.maxHp - 0.01 || u.type === 'dock') continue;
-      cellCenter(u.i, u.j, _c);
-      const f = Math.max(0, u.hp / u.maxHp);
-      put(_c.x, u.type === 'wall' ? 0.74 : 1.12, _c.z, f, 0.26, f > 0.5 ? 0x6cff9a : f > 0.25 ? 0xffc23a : 0xff4030);
-    }
     for (const m of [this.barBacks, this.bars]) {
       m.count = n;
       m.visible = n > 0;
@@ -1441,7 +1437,7 @@ export class SiegeSystem extends createSystem({}) {
     const core = dockUnit();
     if (!core) {
       this.coreRing.visible = false;
-      this.gauge.visible = false;
+      this.gauge.mesh.visible = false;
       return;
     }
     cellCenter(core.i, core.j, _c);
@@ -1478,62 +1474,83 @@ export class SiegeSystem extends createSystem({}) {
     this.coreRingMat.opacity = 0.55 + 0.3 * Math.sin(this.clock * (frac < 0.25 ? 10 : 2)) ** 2;
 
     // The gauge rides over the crystal, turned to face you.
-    this.gauge.position.set(_c.x, GAUGE.y, _c.z);
-    this.gauge.rotation.y = Math.atan2(_cam.x - _c.x, _cam.z - _c.z);
-    this.gauge.visible = !site.paused;
-    const low = frac < 0.25 ? 0.6 + 0.4 * Math.sin(this.clock * 9) ** 2 : 1;
-    (this.gauge.material as MeshBasicMaterial).opacity = low;
-    this.paintGauge(frac);
+    this.gauge.place(_c.x, GAUGE.y, _c.z, _cam.x, _cam.z);
+    this.gauge.mesh.visible = !site.paused;
+    this.gauge.mat.opacity = frac < 0.25 ? 0.6 + 0.4 * Math.sin(this.clock * 9) ** 2 : 1;
+    this.gauge.paint(frac, this.coreHit);
   }
 
   /**
-   * THE GAUGE: ten segments in a dark pill, as many lit as the core has
-   * tenths left (the last one part-lit), green → amber → red. A hit
-   * flashes the lit ones white. Repainted only when it changes.
+   * A TOWER'S HEALTH, ON ASK. Every tower has a gauge like the core's,
+   * but it is only worn while you are pointing at the tower (the ray, or
+   * the mouse in the emulator), your fingertip is reaching for it, or its
+   * panel is open — a floor of sixty bars would be a second carpet.
+   * Each fades in and out, sits just over the tower's top, and flashes
+   * when the tower is bitten.
    */
-  private paintGauge(frac: number): void {
-    const hit = Math.round(this.coreHit * 8);
-    const key = `${Math.round(frac * 200)}|${hit}`;
-    if (key === this.gaugeKey) return;
-    this.gaugeKey = key;
-    const g = this.gaugeCtx;
-    const [W, H] = GAUGE.px;
-    g.clearRect(0, 0, W, H);
-    // The pill it sits in: dark enough to read against a bright room.
-    g.fillStyle = 'rgba(8,7,5,0.62)';
-    g.beginPath();
-    g.roundRect(2, 2, W - 4, H - 4, (H - 4) / 2);
-    g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.14)';
-    g.lineWidth = 2;
-    g.stroke();
-    _col.set(frac > 0.5 ? 0x6cff9a : frac > 0.25 ? 0xffc23a : 0xff4030);
-    if (this.coreHit > 0) _col.lerp(_tmpWhite, this.coreHit * 0.7);
-    const lit = `#${_col.getHexString()}`;
-    const N = GAUGE.segments;
-    const pad = 12;
-    const gap = 6;
-    const sh = H - pad * 2;
-    const sw = (W - pad * 2 - gap * (N - 1)) / N;
-    for (let k = 0; k < N; k++) {
-      const x = pad + k * (sw + gap);
-      const fill = Math.max(0, Math.min(1, frac * N - k));
-      g.fillStyle = 'rgba(255,255,255,0.1)';
-      g.beginPath();
-      g.roundRect(x, pad, sw, sh, 4);
-      g.fill();
-      if (fill <= 0) continue;
-      g.fillStyle = lit;
-      g.beginPath();
-      g.roundRect(x, pad, Math.max(4, sw * fill), sh, 4);
-      g.fill();
+  private tickTowerGauges(delta: number): void {
+    // Who is asked about, this frame (at most one each way).
+    _asked.length = 0;
+    for (const id of [site.inspect, site.hover.ray, site.hover.hand]) {
+      if (id < 0 || _asked.includes(id)) continue;
+      const u = plant.units.find((x) => x.id === id);
+      if (u && isWeapon(u.type)) _asked.push(id);
     }
-    this.gaugeTex.needsUpdate = true;
+    // A gauge already on an asked tower keeps it; free ones take the rest.
+    for (const id of _asked) {
+      if (this.towerGauges.some((t) => t.unit === id)) continue;
+      const free = this.towerGauges.find((t) => !_asked.includes(t.unit) && t.fade < 0.05);
+      if (!free) continue;
+      const u = plant.units.find((x) => x.id === id)!;
+      free.unit = id;
+      free.hp = u.hp;
+      free.hit = 0;
+    }
+    for (const t of this.towerGauges) {
+      const u = t.unit >= 0 ? plant.units.find((x) => x.id === t.unit) : undefined;
+      const want = u && _asked.includes(t.unit) ? 1 : 0;
+      t.fade += (want - t.fade) * Math.min(1, delta * (want ? 14 : 6));
+      if (!u || t.fade < 0.02) {
+        t.g.mesh.visible = false;
+        if (!u || !want) t.unit = -1;
+        continue;
+      }
+      // A bite since last frame flashes it.
+      if (u.hp < t.hp - 0.01) t.hit = 1;
+      t.hp = u.hp;
+      t.hit = Math.max(0, t.hit - delta * 3);
+      cellCenter(u.i, u.j, _c);
+      t.g.place(_c.x, this.towerTop(u) + TOWER_GAUGE.over, _c.z, _cam.x, _cam.z);
+      t.g.mat.opacity = t.fade;
+      t.g.mesh.visible = true;
+      t.g.paint(Math.max(0, u.hp / u.maxHp), t.hit);
+    }
+  }
+
+  /** How tall tower `u` stands (plant m), measured off its model once per
+   *  level (a level makes it bigger). */
+  private towerTop(u: Unit): number {
+    const level = levelOf(u);
+    const known = this.towerTops.get(u.id);
+    if (known && known.level === level) return known.top;
+    let top = 0.6;
+    const refs = liveUnitRefs.get(u.id);
+    if (refs) {
+      _box.setFromObject(refs.group);
+      if (!_box.isEmpty()) top = _box.max.y / PLANT_SCALE;
+    }
+    this.towerTops.set(u.id, { level, top });
+    return top;
   }
 }
 
-/** The core's gauge: its canvas, width (plant m), height over the floor,
- *  and how many segments. */
-const GAUGE = { px: [512, 64] as [number, number], w: 0.4, y: 1.0, segments: 10 };
+/** The towers' gauges: narrower than the core's, and how far over a
+ *  tower's top they ride (plant m). */
+const TOWER_GAUGE = { w: 0.3, over: 0.09 };
+const _asked: number[] = [];
+const _box = new Box3();
+
+/** The core's gauge: its width (plant m) and height over the floor. */
+const GAUGE = { w: 0.4, y: 1.0 };
 
 const _tmpWhite = new Color(0xffffff);

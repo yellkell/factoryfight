@@ -343,6 +343,30 @@ console.log('THE CHEW');
   await lookAt(cx * S + 0.5, cz * S + 0.9, -0.6, cx * S, 0.05, cz * S);
   await shot('04-the-chew');
   check((await siege()).core === before, 'and while the ring stands, nothing reaches the core');
+
+  // A TOWER'S HEALTH, ON ASK: no gauge until you point at one.
+  const gaugesNow = () => page.evaluate(() => window.__tubes.siege.towerGauges());
+  // (The walk's aim is still parked on the last turret it stood: look away.)
+  await aim(core.i + 6, core.j + 6);
+  await page.waitForTimeout(700);
+  check((await gaugesNow()).length === 0, 'no tower wears a health gauge until it is asked about');
+  const hurt = (await page.evaluate(() => window.__tubes.siege.turrets())).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+  const hurtAt = (await plan()).find((u) => u.id === hurt.id);
+  await aim(hurtAt.i, hurtAt.j);
+  await page.waitForTimeout(400);
+  let gs = await gaugesNow();
+  check(gs.length === 1 && gs[0].unit === hurt.id && gs[0].fade > 0.5, `point at the chewed turret and its gauge comes up (${JSON.stringify(gs)})`);
+  await lookAt(cx * S + 0.6, cz * S + 1.0, -0.35, cx * S, 0.4, cz * S);
+  await shot('04b-tower-health');
+  await aim(core.i + 6, core.j + 6);
+  await page.waitForTimeout(700);
+  gs = await gaugesNow();
+  check(gs.length === 0, `point away and it fades (${gs.length} showing)`);
+  await page.evaluate((id) => window.__tubes.menu.inspect(id), hurt.id);
+  await page.waitForTimeout(400);
+  gs = await gaugesNow();
+  check(gs.some((g) => g.unit === hurt.id), 'open its panel (a poke, or the trigger) and it shows while the panel is up');
+  await page.evaluate(() => window.__tubes.menu.act('box:close'));
   await page.evaluate(() => {
     const p = window.__tubes;
     p.siege.clear();
