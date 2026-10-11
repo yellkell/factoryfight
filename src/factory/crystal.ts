@@ -10,6 +10,26 @@
  * inside three orbiting halo rings, and cracks and dims as the tide gets
  * into it (SiegeSystem drives that from the core's health).
  *
+ * FIVE SILHOUETTES. A tower is told at a glance by its SHAPE, not its
+ * colour: the TURRET is a squat armoured cupola with two long lances
+ * out the front; the HAMMER a crystal pylon with a great hex head
+ * slung off its arm; the FLAMER a fat banded fuel drum with a flared
+ * bell for a nozzle; the TESLA COIL the tallest and slimmest, a spire
+ * through a stack of plates with a crackling orb on its point; the
+ * MORTAR the widest and lowest, a crown of shards round a fat stubby
+ * tube cocked at the sky. Each level ADDS a part (an armour skirt, a
+ * third lance, a second plate…), so a levelled tower reads as one.
+ *
+ * MERGED, NOT ASSEMBLED. three.js walks every object in the scene every
+ * frame, and with sixty towers on the floor that walk was the biggest
+ * thing on the CPU: a tower used to be thirty-odd meshes and groups. Now
+ * every rigid PIECE of a tower — what stands still, the head that turns,
+ * the barrel that kicks, the arm that swings — is ONE mesh: its glass,
+ * its neon tube, its neon halo and its pilot light are groups of one
+ * geometry drawn with a material each. A tower is five to eight objects.
+ * The geometry of each piece is made once per kind (and per level) and
+ * shared by every tower of that kind; a level-up swaps it (`dress`).
+ *
  * Built in plant metres, out along +Z, like every other builder. The
  * contract with SiegeSystem is GunRefs (units.ts) plus CoreRefs here.
  */
@@ -23,16 +43,18 @@ import {
   DoubleSide,
   EdgesGeometry,
   Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Object3D,
   OctahedronGeometry,
   SphereGeometry,
-  type Object3D,
+  type Material,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { beamGradientTexture } from '../materials/glow.js';
-import { NEON, Trim } from './neon.js';
+import { NEON, Trim, haloMat, tubeMat } from './neon.js';
 import type { GunRefs } from './units.js';
 
 /* ── materials ──────────────────────────────────────────────────────────── */
@@ -98,27 +120,169 @@ function shardGeo(r: number, up: number, down: number, sides = 6): BufferGeometr
   return g;
 }
 
-/** A faceted solid of glass, its edges in neon — added to `parent`. */
-function crystal(parent: Object3D, geo: BufferGeometry, hex: number, r?: number): Mesh {
-  const m = new Mesh(geo, glass(hex));
-  parent.add(m);
-  const g = new Group();
-  traceEdges(new Trim(), geo, r).into(g, hex);
-  m.add(g);
-  return m;
+/** A four-sided prism turned square to the axes: a block, a slab. */
+function blockGeo(r0: number, r1: number, h: number): BufferGeometry {
+  return prismGeo(r0, r1, h, 4).rotateY(Math.PI / 4);
+}
+
+const _o = new Object3D();
+/** A placement, as a matrix to bake into a part's geometry. */
+function at(x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx): Matrix4 {
+  _o.position.set(x, y, z);
+  _o.rotation.set(rx, ry, rz);
+  _o.scale.set(sx, sy, sz);
+  _o.updateMatrix();
+  return _o.matrix.clone();
+}
+
+/** A part that never moves on its tower: its matrix is made once, not
+ *  every frame (three.js still walks it, but skips the compose). */
+function still<T extends Object3D>(o: T): T {
+  o.updateMatrix();
+  o.matrixAutoUpdate = false;
+  return o;
+}
+
+/** Position + normal, indexed: every part made mergeable with every other. */
+function plain(g: BufferGeometry): BufferGeometry {
+  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+  if (!g.getAttribute('normal')) g.computeVertexNormals();
+  if (!g.index) {
+    const n = g.getAttribute('position').count;
+    const idx = new Array<number>(n);
+    for (let k = 0; k < n; k++) idx[k] = k;
+    g.setIndex(idx);
+  }
+  return g;
+}
+
+/* ── pieces ─────────────────────────────────────────────────────────────── */
+
+/** The material slots every piece is drawn with, in this order. */
+const GLASS = 0;
+const TUBE = 1;
+const HALO = 2;
+const LIT = 3;
+
+/**
+ * A PIECE being cut: one rigid part of a tower, everything in it moving
+ * together. Add posed solids (traced in neon), bare neon strokes and
+ * pilot-lit bits; `bake` merges them into one geometry per level, with a
+ * group per material. `from` is the level the next parts arrive at.
+ */
+class Piece {
+  private parts: Array<{ slot: number; geo: BufferGeometry; lv: number }> = [];
+  private trims: Array<{ t: Trim; m: Matrix4 | null; lv: number }> = [];
+  from = 1;
+
+  /** A faceted solid of glass, posed, its edges traced in neon. */
+  solid(geo: BufferGeometry, m: Matrix4, r?: number): this {
+    geo.applyMatrix4(m);
+    this.parts.push({ slot: GLASS, geo: plain(geo), lv: this.from });
+    if (r !== 0) this.trims.push({ t: traceEdges(new Trim(), geo, r), m: null, lv: this.from });
+    return this;
+  }
+
+  /** Neon strokes (drawn in the piece's frame, or posed by `m`). */
+  neon(t: Trim, m: Matrix4 | null = null): this {
+    this.trims.push({ t, m, lv: this.from });
+    return this;
+  }
+
+  /** A bit lit by the tower's pilot light. */
+  lit(geo: BufferGeometry, m: Matrix4): this {
+    geo.applyMatrix4(m);
+    this.parts.push({ slot: LIT, geo: plain(geo), lv: this.from });
+    return this;
+  }
+
+  /** One merged geometry per level (1–3); a level that adds nothing to
+   *  this piece shares the one below. */
+  bake(): BufferGeometry[] {
+    const out: BufferGeometry[] = [];
+    for (let L = 1; L <= 3; L++) {
+      const adds = this.parts.some((p) => p.lv === L) || this.trims.some((t) => t.lv === L);
+      if (L > 1 && !adds) {
+        out.push(out[L - 2]);
+        continue;
+      }
+      const slots: BufferGeometry[][] = [[], [], [], []];
+      for (const p of this.parts) if (p.lv <= L) slots[p.slot].push(p.geo);
+      for (const { t, m, lv } of this.trims) {
+        if (lv > L) continue;
+        for (const [slot, fat] of [
+          [TUBE, false],
+          [HALO, true],
+        ] as Array<[number, boolean]>) {
+          const g = t.geometry(fat);
+          if (!g) continue;
+          if (m) g.applyMatrix4(m);
+          slots[slot].push(plain(g));
+        }
+      }
+      const blocks: BufferGeometry[] = [];
+      const index: number[] = [];
+      slots.forEach((list, slot) => {
+        if (list.length === 0) return;
+        blocks.push(list.length === 1 ? list[0] : mergeGeometries(list)!);
+        index.push(slot);
+      });
+      const g = mergeGeometries(blocks, true)!;
+      g.groups.forEach((gr, k) => (gr.materialIndex = index[k]));
+      g.computeBoundingSphere();
+      out.push(g);
+    }
+    return out;
+  }
+}
+
+/** Every kind's pieces, baked once and shared by every tower of it. */
+const kits = new Map<string, Record<string, BufferGeometry[]>>();
+function kit(kind: string, cut: () => Record<string, Piece>): Record<string, BufferGeometry[]> {
+  let k = kits.get(kind);
+  if (!k) {
+    k = {};
+    for (const [name, piece] of Object.entries(cut())) k[name] = piece.bake();
+    kits.set(kind, k);
+  }
+  return k;
+}
+
+/**
+ * One tower's wardrobe: the meshes it wears, each with its geometry for
+ * every level. `dress(level)` swaps them all — free when nothing changed.
+ */
+class Wardrobe {
+  private worn: Array<[Mesh, BufferGeometry[]]> = [];
+  private level = 1;
+  constructor(private hex: number) {}
+
+  /** A mesh of one piece, drawn in glass, tube, halo (and `lit`). */
+  wear(geos: BufferGeometry[], lit?: Material): Mesh {
+    const mats: Material[] = [glass(this.hex), tubeMat(this.hex), haloMat(this.hex)];
+    if (lit) mats.push(lit);
+    const m = new Mesh(geos[0], mats);
+    this.worn.push([m, geos]);
+    return m;
+  }
+
+  dress = (level: number): void => {
+    const L = Math.max(1, Math.min(3, Math.round(level)));
+    if (L === this.level) return;
+    this.level = L;
+    for (const [m, geos] of this.worn) m.geometry = geos[L - 1];
+  };
 }
 
 /**
  * THE HEX PAD: a low hexagonal plinth of glass, its rim and an inner hex
- * traced in light, and a soft hex of glow on the floor round it.
+ * traced in light (cut into the standing piece) — and a soft hex of glow
+ * on the floor round it, its own mesh, so the photo studio can leave it
+ * out of a portrait.
  */
-function hexPad(group: Group, hex: number, radius = 0.15): void {
+function hexPad(p: Piece, radius = 0.15): void {
   const h = 0.03;
-  const geo = prismGeo(radius + 0.01, radius, h);
-  geo.translate(0, h / 2, 0);
-  const pad = new Mesh(geo, glass(hex));
-  pad.rotation.y = Math.PI / 6;
-  group.add(pad);
+  p.solid(prismGeo(radius + 0.01, radius, h), at(0, h / 2, 0, 0, Math.PI / 6), 0);
   const t = new Trim();
   const hexLine = (y: number, r: number, w?: number): void => {
     for (let k = 0; k < 6; k++) {
@@ -130,17 +294,29 @@ function hexPad(group: Group, hex: number, radius = 0.15): void {
   hexLine(h + 0.001, radius, 0.006);
   hexLine(h + 0.002, radius * 0.62, 0.0035);
   hexLine(0.004, radius + 0.012, 0.004);
-  const lines = new Group();
-  lines.rotation.y = Math.PI / 6;
-  t.into(lines, hex);
-  group.add(lines);
-  const pool = new Mesh(new CircleGeometry(radius * 1.45, 6), additive(hex, 0.1));
+  p.neon(t, at(0, 0, 0, 0, Math.PI / 6));
+}
+
+const poolGeos = new Map<number, BufferGeometry>();
+const poolMats = new Map<number, MeshBasicMaterial>();
+function padGlow(group: Group, hex: number, radius = 0.15): void {
+  let g = poolGeos.get(radius);
+  if (!g) {
+    g = new CircleGeometry(radius * 1.45, 6);
+    g.rotateX(-Math.PI / 2);
+    g.rotateY(Math.PI / 6);
+    poolGeos.set(radius, g);
+  }
+  let m = poolMats.get(hex);
+  if (!m) {
+    m = additive(hex, 0.1);
+    poolMats.set(hex, m);
+  }
+  const pool = new Mesh(g, m);
   pool.name = 'pad-glow';
-  pool.rotation.x = -Math.PI / 2;
-  pool.rotation.z = Math.PI / 6;
   pool.position.y = 0.002;
   pool.renderOrder = 8;
-  group.add(pool);
+  group.add(still(pool));
 }
 
 const pilotMat = (hex: number): MeshBasicMaterial =>
@@ -149,189 +325,264 @@ const pilotMat = (hex: number): MeshBasicMaterial =>
 /** A short-lived flash of light (opacity driven by SiegeSystem). */
 const flashMat = (hex: number): MeshBasicMaterial => additive(hex, 0);
 
+let flashCone: BufferGeometry | null = null;
+/** A muzzle flash: an open cone, point at the bore, opening out +Z. */
+function muzzleFlash(parent: Object3D, hex: number, z: number, y = 0): { flash: MeshBasicMaterial; flashMesh: Mesh } {
+  flashCone ??= new CylinderGeometry(0, 1, 1, 10, 1, true).rotateX(-Math.PI / 2);
+  const flash = flashMat(hex);
+  const flashMesh = new Mesh(flashCone, flash);
+  flashMesh.scale.set(0.05, 0.05, 0.1);
+  flashMesh.position.set(0, y, z);
+  flashMesh.renderOrder = 14;
+  parent.add(flashMesh);
+  return { flash, flashMesh };
+}
+
 /* ── the towers ─────────────────────────────────────────────────────────── */
 
 /**
- * THE TURRET — a cut obelisk on its pad with a turntable on its top, and
- * in the turntable's yoke a long lance of crystal that slews to its
- * target and spits slugs from its point. Muzzle at 0.48.
+ * THE TURRET — a squat armoured cupola: a broad hex plinth, a faceted
+ * dome turning on it, and out of the dome's mantlet TWIN LANCES that slew
+ * to the target and spit slugs. Low, wide-shouldered, long in the nose.
+ * Level 2 bolts an armour skirt round the plinth and cheek pods on the
+ * dome; level 3 a third lance over the two. Muzzles at 0.29.
  */
 export function buildTurret(group: Group): GunRefs {
   const hex = NEON.turret;
-  hexPad(group, hex);
-  const ob = crystal(group, prismGeo(0.075, 0.05, 0.36), hex);
-  ob.position.y = 0.21;
-  const head = new Group();
-  head.position.y = 0.39;
+  const k = kit('turret', () => {
+    const base = new Piece();
+    hexPad(base, 0.15);
+    base.solid(prismGeo(0.112, 0.088, 0.2), at(0, 0.13, 0));
+    base.neon(new Trim().ring(0.17, 0.094, 0.004));
+    base.from = 2;
+    // THE SKIRT: six slabs of armour leaning on the plinth's faces.
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2 + Math.PI / 6;
+      base.solid(blockGeo(0.05, 0.04, 0.11), at(Math.sin(a) * 0.104, 0.09, Math.cos(a) * 0.104, 0, a, 0, 1, 1, 0.2), 0.0035);
+    }
+    const head = new Piece();
+    // The turntable, and the dome on it: a faceted cupola, cut flat on top.
+    head.solid(prismGeo(0.088, 0.084, 0.024), at(0, 0.012, 0), 0.0045);
+    head.solid(prismGeo(0.092, 0.066, 0.07), at(0, 0.059, 0, 0, Math.PI / 6));
+    head.solid(prismGeo(0.066, 0.034, 0.032), at(0, 0.11, 0, 0, Math.PI / 6));
+    // The mantlet: a flat-faced block on the dome's front the lances run
+    // out of.
+    head.solid(blockGeo(0.05, 0.042, 0.05), at(0, 0.064, 0.072, Math.PI / 2, 0, 0, 1.3, 1, 0.75), 0.004);
+    head.from = 2;
+    for (const sx of [-1, 1]) head.solid(prismGeo(0.03, 0.026, 0.09), at(sx * 0.098, 0.06, -0.01, Math.PI / 2, 0, 0, 1, 1, 0.75), 0.004);
+    const barrel = new Piece();
+    // THE LANCES: two long hex barrels, each with a brake at the muzzle.
+    for (const sx of [-1, 1]) {
+      barrel.solid(prismGeo(0.019, 0.015, 0.2), at(sx * 0.032, 0, 0.17, Math.PI / 2), 0.0035);
+      barrel.solid(prismGeo(0.026, 0.026, 0.036), at(sx * 0.032, 0, 0.255, Math.PI / 2), 0.004);
+    }
+    barrel.lit(new OctahedronGeometry(0.013, 0), at(0, 0.028, 0.1, 0, 0, 0, 1, 0.7, 1.4));
+    barrel.from = 3;
+    barrel.solid(prismGeo(0.012, 0.01, 0.17), at(0, 0.05, 0.15, Math.PI / 2), 0.0035);
+    barrel.solid(prismGeo(0.017, 0.017, 0.026), at(0, 0.05, 0.23, Math.PI / 2), 0.0035);
+    return { base, head, barrel };
+  });
+  const w = new Wardrobe(hex);
+  padGlow(group, hex, 0.15);
+  group.add(still(w.wear(k.base)));
+  const head = w.wear(k.head);
+  head.position.y = 0.23;
   group.add(head);
-  // The turntable: a squat hex collar riding the obelisk's top.
-  const table = crystal(head, prismGeo(0.062, 0.056, 0.03), hex, 0.004);
-  table.position.y = 0.015;
-  // The yoke: two cheek plates standing off the turntable, holding the
-  // lance between them.
-  for (const sx of [-1, 1]) {
-    const cheek = crystal(head, prismGeo(0.012, 0.01, 0.09, 4), hex, 0.0035);
-    cheek.scale.set(1, 1, 3.2);
-    cheek.position.set(sx * 0.05, 0.075, 0);
-  }
-  const barrel = new Group();
-  barrel.position.y = 0.09;
-  head.add(barrel);
-  // The lance lies along +Z: a bipyramid on its side, its long point out.
-  const lanceGeo = shardGeo(0.042, 0.22, 0.09);
-  lanceGeo.rotateX(Math.PI / 2);
-  crystal(barrel, lanceGeo, hex);
   const pilot = pilotMat(hex);
-  const eye = new Mesh(new SphereGeometry(0.016, 10, 8), pilot);
-  barrel.add(eye);
-  const flash = flashMat(0xffd0d8);
-  const flashMesh = new Mesh(new CylinderGeometry(0, 1, 1, 10, 1, true), flash);
-  flashMesh.rotation.x = -Math.PI / 2;
-  flashMesh.scale.set(0.05, 0.1, 0.05);
-  flashMesh.position.z = 0.29;
-  flashMesh.renderOrder = 14;
-  barrel.add(flashMesh);
-  return { head, barrel, kick: 0.04, flash, flashMesh, pilot };
+  const barrel = w.wear(k.barrel, pilot);
+  barrel.position.y = 0.064;
+  head.add(barrel);
+  const { flash, flashMesh } = muzzleFlash(barrel, 0xffd0d8, 0.28);
+  return { head, barrel, kick: 0.04, flash, flashMesh, pilot, dress: w.dress };
 }
 
 /**
- * THE MORTAR — a ring of six standing shards round the pad, and inside
- * them a fat hexagonal tube of glass cocked up at 55°, ringed in teal at
+ * THE MORTAR — the widest and the lowest: a crown of shards leaning out
+ * round a broad pad, a squat pedestal, and on its turntable a FAT STUBBY
+ * TUBE cocked at the sky between two trunnion cheeks, ringed in teal at
  * the mouth. It kicks down its bore and lobs a shell over the room.
- * Muzzle at 0.55.
+ * Level 2 racks shells on the pedestal and bands the tube; level 3 slings
+ * two slim tubes either side of the big one. Mouth at 0.32.
  */
 export function buildMortar(group: Group): GunRefs {
   const hex = NEON.mortar;
-  hexPad(group, hex, 0.16);
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
-    const s = crystal(group, shardGeo(0.025, 0.12, 0.02), hex, 0.0035);
-    s.position.set(Math.sin(a) * 0.135, 0.05, Math.cos(a) * 0.135);
-    s.rotation.set(Math.cos(a) * 0.25, 0, -Math.sin(a) * 0.25);
-  }
-  // The pedestal the gun turns on.
-  const ped = crystal(group, prismGeo(0.1, 0.085, 0.14), hex);
-  ped.position.y = 0.1;
-  const head = new Group();
-  head.position.y = 0.2;
+  const k = kit('mortar', () => {
+    const base = new Piece();
+    hexPad(base, 0.17);
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2 + Math.PI / 6;
+      base.solid(shardGeo(0.026, 0.11, 0.02), at(Math.sin(a) * 0.15, 0.05, Math.cos(a) * 0.15, Math.cos(a) * 0.42, 0, -Math.sin(a) * 0.42), 0.0035);
+    }
+    base.solid(prismGeo(0.112, 0.1, 0.07), at(0, 0.065, 0));
+    base.from = 2;
+    // The ready rack: three shells standing at the pedestal's back.
+    for (const s of [-1, 0, 1]) {
+      const a = Math.PI + s * 0.5;
+      base.solid(shardGeo(0.018, 0.06, 0.012, 6), at(Math.sin(a) * 0.118, 0.115, Math.cos(a) * 0.118), 0.003);
+    }
+    base.from = 3;
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
+      base.solid(shardGeo(0.018, 0.07, 0.014), at(Math.sin(a) * 0.17, 0.035, Math.cos(a) * 0.17, Math.cos(a) * 0.6, 0, -Math.sin(a) * 0.6), 0.003);
+    }
+    const head = new Piece();
+    head.solid(prismGeo(0.1, 0.088, 0.04), at(0, 0.02, 0));
+    // The trunnion cheeks the tube is slung between.
+    for (const sx of [-1, 1]) head.solid(blockGeo(0.05, 0.036, 0.1), at(sx * 0.084, 0.07, 0, 0, 0, 0, 0.3, 1, 1), 0.0035);
+    const barrel = new Piece();
+    // THE TUBE: fat and short, a hex bore with a heavy breech.
+    barrel.solid(prismGeo(0.072, 0.066, 0.2), at(0, 0, 0.07, Math.PI / 2));
+    barrel.solid(prismGeo(0.06, 0.074, 0.05), at(0, 0, -0.055, Math.PI / 2));
+    barrel.neon(new Trim().hoop(0, 0, 0.17, 0.07, 0.008).hoop(0, 0, 0.12, 0.069, 0.004).hoop(0, 0, 0.171, 0.045, 0.004));
+    barrel.lit(new CircleGeometry(0.05, 6), at(0, 0, 0.172));
+    barrel.from = 2;
+    barrel.solid(prismGeo(0.078, 0.078, 0.022), at(0, 0, 0.02, Math.PI / 2), 0.004);
+    barrel.from = 3;
+    for (const sx of [-1, 1]) {
+      barrel.solid(prismGeo(0.026, 0.024, 0.18), at(sx * 0.13, 0, 0.05, Math.PI / 2), 0.0035);
+      barrel.neon(new Trim().hoop(sx * 0.13, 0, 0.141, 0.027, 0.004));
+    }
+    barrel.neon(new Trim().line(-0.13, 0, 0, 0.13, 0, 0, 0.006));
+    return { base, head, barrel };
+  });
+  const w = new Wardrobe(hex);
+  padGlow(group, hex, 0.17);
+  group.add(still(w.wear(k.base)));
+  const head = w.wear(k.head);
+  head.position.y = 0.1;
   group.add(head);
-  const base = crystal(head, prismGeo(0.1, 0.08, 0.06), hex);
-  base.position.y = 0.0;
   const tilt = new Group();
-  tilt.position.y = 0.07;
+  tilt.position.y = 0.08;
   tilt.rotation.x = -0.96; // cocked up, firing over +Z
-  head.add(tilt);
-  const barrel = new Group();
-  tilt.add(barrel);
-  const tubeGeo = new CylinderGeometry(0.062, 0.07, 0.3, 6, 1, true).toNonIndexed();
-  tubeGeo.rotateX(Math.PI / 2);
-  tubeGeo.translate(0, 0, 0.08);
-  const tube = new Mesh(tubeGeo, glass(hex));
-  (tube.material as MeshStandardMaterial).side = DoubleSide;
-  barrel.add(tube);
-  const t = new Trim();
-  traceEdges(t, tubeGeo);
-  const mouth = new Group();
-  t.into(mouth, hex);
-  barrel.add(mouth);
-  const ringT = new Trim().hoop(0, 0, 0.23, 0.07, 0.007).hoop(0, 0, 0.16, 0.068, 0.004);
-  const rings = new Group();
-  ringT.into(rings, hex);
-  barrel.add(rings);
-  const flash = flashMat(0xe0fff4);
-  const flashMesh = new Mesh(new CylinderGeometry(0, 1, 1, 10, 1, true), flash);
-  flashMesh.rotation.x = -Math.PI / 2;
-  flashMesh.scale.set(0.09, 0.2, 0.09);
-  flashMesh.position.z = 0.33;
-  barrel.add(flashMesh);
+  head.add(still(tilt));
   const pilot = pilotMat(hex);
-  const core = new Mesh(new SphereGeometry(0.03, 10, 8), pilot);
-  core.position.z = -0.02;
-  barrel.add(core);
-  return { head, barrel, kick: 0.06, flash, flashMesh, pilot };
+  const barrel = w.wear(k.barrel, pilot);
+  tilt.add(barrel);
+  const { flash, flashMesh } = muzzleFlash(barrel, 0xe0fff4, 0.2);
+  flashMesh.scale.set(0.09, 0.09, 0.2);
+  return { head, barrel, kick: 0.06, flash, flashMesh, pilot, dress: w.dress };
 }
 
 /**
- * THE TESLA COIL — a tall twisted spire of three stacked prisms, its
- * point run up into a bright orb held inside two crossed rings. The arcs
- * leave the orb. Doesn't turn. Muzzle at 0.72.
+ * THE TESLA COIL — the tallest and the slimmest: a twisted spire run up
+ * through a stack of hex plates, like the coils in the old photographs,
+ * and on its point a bright orb held inside two crossed rings that never
+ * stop turning. The arcs leave the orb. Doesn't turn. Level 2 adds a
+ * third plate; level 3 a fourth and three lightning prongs round the orb.
+ * Orb at 0.72.
  */
 export function buildTesla(group: Group): GunRefs {
   const hex = NEON.tesla;
-  hexPad(group, hex);
-  let y = 0.03;
-  const parts: Array<[number, number, number]> = [
-    [0.07, 0.05, 0.26],
-    [0.05, 0.035, 0.22],
-    [0.035, 0.015, 0.18],
-  ];
-  parts.forEach(([r0, r1, h], k) => {
-    const p = crystal(group, prismGeo(r0, r1, h), hex);
-    p.position.y = y + h / 2;
-    p.rotation.y = k * 0.35;
-    y += h; // stacked flush: no gaps between the segments
+  const k = kit('tesla', () => {
+    const base = new Piece();
+    hexPad(base, 0.12);
+    let y = 0.03;
+    for (const [r0, r1, h, s] of [
+      [0.052, 0.038, 0.26, 0],
+      [0.038, 0.026, 0.22, 0.35],
+      [0.026, 0.01, 0.21, 0.7],
+    ]) {
+      base.solid(prismGeo(r0, r1, h), at(0, y + h / 2, 0, 0, s));
+      y += h; // stacked flush: no gaps between the segments
+    }
+    // THE PLATES: thin hex washers stacked up the spire, each smaller.
+    const plate = (py: number, r: number): void => {
+      base.solid(prismGeo(r, r * 0.9, 0.014), at(0, py, 0, 0, Math.PI / 6), 0.004);
+    };
+    plate(0.17, 0.1);
+    plate(0.33, 0.078);
+    base.from = 2;
+    plate(0.47, 0.06);
+    base.from = 3;
+    plate(0.58, 0.046);
+    const crown = new Piece();
+    for (const [rx, rz] of [
+      [Math.PI / 2, 0.5],
+      [Math.PI / 2, -0.5],
+    ]) {
+      crown.neon(new Trim().ring(0, 0.085, 0.005), at(0, 0, 0, rx, 0, rz));
+    }
+    crown.lit(new OctahedronGeometry(0.042, 1), at());
+    crown.from = 3;
+    for (let s = 0; s < 3; s++) {
+      const a = (s / 3) * Math.PI * 2;
+      crown.solid(shardGeo(0.012, 0.07, 0.01, 4), at(Math.sin(a) * 0.045, -0.05, Math.cos(a) * 0.045, Math.cos(a) * 0.5, 0, -Math.sin(a) * 0.5), 0.003);
+    }
+    return { base, crown };
   });
-  const crown = new Group();
-  crown.position.y = 0.72; // the orb sits on the spire's point (0.69)
-  group.add(crown);
-  for (const [rx, rz] of [
-    [Math.PI / 2, 0.5],
-    [Math.PI / 2, -0.5],
-  ]) {
-    const ring = new Group();
-    ring.rotation.set(rx, 0, rz);
-    new Trim().ring(0, 0.085, 0.005).into(ring, hex);
-    crown.add(ring);
-  }
+  const w = new Wardrobe(hex);
+  padGlow(group, hex, 0.12);
+  group.add(still(w.wear(k.base)));
   const pilot = pilotMat(hex);
-  const orb = new Mesh(new OctahedronGeometry(0.04, 1), pilot);
-  crown.add(orb);
+  const crown = w.wear(k.crown, pilot);
+  crown.position.y = 0.72; // the orb sits on the spire's point (0.72)
+  group.add(crown);
   const flash = flashMat(0xf3e6ff);
   const flashMesh = new Mesh(new SphereGeometry(1, 14, 10), flash);
   flashMesh.scale.setScalar(0.12);
   crown.add(flashMesh);
-  return { head: null, barrel: null, kick: 0, flash, flashMesh, pilot, spin: [crown] };
+  return { head: null, barrel: null, kick: 0, flash, flashMesh, pilot, spin: [crown], dress: w.dress };
 }
 
+let tongue: BufferGeometry | null = null;
+
 /**
- * THE FLAMER — three crystals leaning out of the pad like a brazier round
- * a central stem, and on the stem's turntable a cut cone of glass
- * pointing at the lane: the fire pours from its tip. Muzzle at 0.44.
+ * THE FLAMER — low and fat: a banded hex FUEL DRUM squatting on its pad
+ * with its gauge glowing in its side, and on its lid a pump on a
+ * turntable feeding a wide FLARED BELL that points at the lane: the fire
+ * pours from its mouth. Level 2 straps two canisters to the drum's
+ * flanks; level 3 rings the bell with heat fins. Mouth at 0.27.
  */
 export function buildFlamer(group: Group): GunRefs {
   const hex = NEON.flamer;
-  hexPad(group, hex);
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2 + Math.PI;
-    const s = crystal(group, shardGeo(0.04, 0.3, 0.03), hex);
-    s.position.set(Math.sin(a) * 0.06, 0.04, Math.cos(a) * 0.06);
-    s.rotation.set(Math.cos(a) * 0.3, 0, -Math.sin(a) * 0.3);
-  }
-  const stem = crystal(group, prismGeo(0.035, 0.028, 0.34), hex, 0.004);
-  stem.position.y = 0.2;
-  const head = new Group();
-  head.position.y = 0.44;
-  group.add(head);
-  const table = crystal(head, prismGeo(0.045, 0.04, 0.03), hex, 0.004);
-  table.position.y = -0.055;
-  const barrel = new Group();
-  head.add(barrel);
-  const nozzleGeo = new ConeGeometry(0.06, 0.2, 6, 1).toNonIndexed();
-  nozzleGeo.rotateX(Math.PI / 2);
-  nozzleGeo.translate(0, 0, 0.08);
-  crystal(barrel, nozzleGeo, hex);
+  const k = kit('flamer', () => {
+    const base = new Piece();
+    hexPad(base, 0.15);
+    // THE DRUM: fat, its shoulder chamfered, two bands round its belly.
+    base.solid(prismGeo(0.124, 0.124, 0.126), at(0, 0.093, 0, 0, Math.PI / 6), 0.0045);
+    base.solid(prismGeo(0.124, 0.088, 0.03), at(0, 0.171, 0, 0, Math.PI / 6), 0.0045);
+    base.neon(new Trim().ring(0.075, 0.13, 0.006).ring(0.125, 0.13, 0.006));
+    // The gauge: a lit window down the drum's back.
+    base.lit(new CylinderGeometry(0.007, 0.007, 0.07, 6), at(0, 0.106, -0.11));
+    base.from = 2;
+    for (const sx of [-1, 1]) {
+      base.solid(prismGeo(0.04, 0.04, 0.13), at(sx * 0.15, 0.1, -0.03), 0.0035);
+      base.solid(prismGeo(0.04, 0.012, 0.03), at(sx * 0.15, 0.18, -0.03), 0.0035);
+    }
+    const head = new Piece();
+    head.solid(prismGeo(0.06, 0.055, 0.02), at(0, 0.01, 0), 0.004);
+    head.solid(blockGeo(0.045, 0.035, 0.055), at(0, 0.045, -0.02, 0, 0, 0, 1, 1, 1.3), 0.004);
+    const barrel = new Piece();
+    // THE BELL: a short throat flaring wide at the mouth.
+    barrel.solid(prismGeo(0.022, 0.028, 0.08), at(0, 0, 0.02, Math.PI / 2), 0.004);
+    barrel.solid(prismGeo(0.028, 0.068, 0.1), at(0, 0, 0.11, Math.PI / 2));
+    barrel.solid(new OctahedronGeometry(0.042, 0), at(0, 0, -0.035, 0, 0, 0, 1, 1, 1.2));
+    barrel.neon(new Trim().hoop(0, 0, 0.16, 0.068, 0.006));
+    barrel.lit(new SphereGeometry(1, 10, 8), at(0, 0, 0.17, 0, 0, 0, 0.022, 0.022, 0.03));
+    barrel.from = 3;
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
+      barrel.solid(shardGeo(0.012, 0.035, 0.006, 4), at(Math.sin(a) * 0.056, Math.cos(a) * 0.056, 0.12, 0, 0, -a), 0.003);
+    }
+    return { base, head, barrel };
+  });
+  const w = new Wardrobe(hex);
+  padGlow(group, hex, 0.15);
   const pilot = pilotMat(0xff9a3a);
-  const flame = new Mesh(new SphereGeometry(1, 10, 8), pilot);
-  flame.scale.set(0.014, 0.014, 0.024);
-  flame.position.z = 0.19;
-  barrel.add(flame);
-  const back = crystal(barrel, new OctahedronGeometry(0.05, 0), hex);
-  back.position.z = -0.04;
-  // THE TONGUE: a cone with its point at the tip, opening along +Z. Three
-  // layers, hot white at the root and red at its reach.
-  const cone = new ConeGeometry(1, 1, 18, 1, true);
-  cone.rotateX(-Math.PI / 2);
-  cone.translate(0, 0, 0.5);
+  group.add(still(w.wear(k.base, pilot)));
+  const head = w.wear(k.head);
+  head.position.y = 0.186;
+  group.add(head);
+  const barrel = w.wear(k.barrel, pilot);
+  barrel.position.y = 0.084;
+  head.add(barrel);
+  // THE TONGUE: a cone with its point at the mouth, opening along +Z.
+  // Three layers, hot white at the root and red at its reach.
+  if (!tongue) {
+    tongue = new ConeGeometry(1, 1, 18, 1, true);
+    tongue.rotateX(-Math.PI / 2);
+    tongue.translate(0, 0, 0.5);
+  }
   const jet: Mesh[] = [];
   for (const [color, opacity] of [
     [0xff3d0a, 0.42],
@@ -348,15 +599,15 @@ export function buildFlamer(group: Group): GunRefs {
       toneMapped: false,
       map: beamGradientTexture(true),
     });
-    const m = new Mesh(cone, mat);
-    m.position.z = 0.18;
+    const m = new Mesh(tongue, mat);
+    m.position.z = 0.17;
     m.visible = false;
     m.renderOrder = 14;
     m.userData.opacity = opacity;
     barrel.add(m);
     jet.push(m);
   }
-  return { head, barrel, kick: 0.006, flash: null, flashMesh: null, pilot, jet };
+  return { head, barrel, kick: 0.006, flash: null, flashMesh: null, pilot, jet, dress: w.dress };
 }
 
 /**
@@ -364,40 +615,47 @@ export function buildFlamer(group: Group): GunRefs {
  * top, and on the end of the arm a great hex-prism head. It turns to
  * what is coming, heaves the head up, and brings it down on them.
  * SiegeSystem swings `swing` about X (0 = the arm level, + = down).
+ * Level 2 bands the head with a collar; level 3 crowns it with studs.
  */
 export function buildHammer(group: Group): GunRefs {
   const hex = NEON.hammer;
-  hexPad(group, hex, 0.16);
-  const head = new Group();
-  head.position.y = 0.03;
+  const PIV = 0.36;
+  const k = kit('hammer', () => {
+    const base = new Piece();
+    hexPad(base, 0.16);
+    // THE PYLON: one tapering crystal, turning with what it watches.
+    const head = new Piece();
+    head.solid(prismGeo(0.07, 0.05, 0.3), at(0, 0.18, -0.03));
+    const swing = new Piece();
+    // The hinge: a gem through the top of the pylon.
+    swing.solid(new OctahedronGeometry(0.045, 0), at(0, 0, 0, 0, 0, 0, 1.6, 0.8, 0.8));
+    // THE ARM: long and thin, out to the head.
+    swing.solid(prismGeo(0.016, 0.016, 0.48, 4), at(0, 0, 0.24, Math.PI / 2), 0.004);
+    // THE HEAD: a fat hex prism across the end of the arm, its striking
+    // face down (−Y in the arm's frame), ringed and lit.
+    swing.solid(prismGeo(0.07, 0.07, 0.16), at(0, -0.02, 0.5));
+    swing.neon(new Trim().ring(-0.1, 0.055, 0.006).ring(-0.1, 0.03, 0.004), at(0, 0, 0.5));
+    swing.lit(new CircleGeometry(0.06, 6), at(0, -0.101, 0.5, Math.PI / 2));
+    swing.from = 2;
+    swing.solid(prismGeo(0.078, 0.078, 0.04), at(0, -0.02, 0.5), 0.004);
+    swing.from = 3;
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
+      swing.solid(shardGeo(0.012, 0.04, 0.005, 4), at(Math.sin(a) * 0.045, 0.06, 0.5 + Math.cos(a) * 0.045), 0.003);
+    }
+    return { base, head, swing };
+  });
+  const w = new Wardrobe(hex);
+  padGlow(group, hex, 0.16);
+  group.add(still(w.wear(k.base)));
+  const head = w.wear(k.head);
   group.add(head);
-  const pylon = crystal(head, prismGeo(0.07, 0.05, 0.3), hex);
-  pylon.position.set(0, 0.15, -0.03);
-  const swing = new Group();
-  swing.position.set(0, 0.33, -0.03);
-  head.add(swing);
-  // The hinge: a gem through the top of the pylon.
-  const hinge = crystal(swing, new OctahedronGeometry(0.045, 0), hex);
-  hinge.scale.set(1.6, 0.8, 0.8);
-  const armGeo = prismGeo(0.016, 0.016, 0.48, 4);
-  armGeo.rotateX(Math.PI / 2);
-  armGeo.translate(0, 0, 0.24);
-  crystal(swing, armGeo, hex, 0.004);
-  // The head: a fat hex prism across the end of the arm, its striking
-  // face down (−Y in the arm's frame).
-  const mallet = crystal(swing, prismGeo(0.07, 0.07, 0.16), hex);
-  mallet.position.set(0, -0.02, 0.5);
-  const face = new Group();
-  face.position.set(0, -0.1, 0.5);
-  new Trim().ring(0, 0.055, 0.006).ring(0, 0.03, 0.004).into(face, hex);
-  swing.add(face);
   const pilot = pilotMat(hex);
-  const glow = new Mesh(new CircleGeometry(0.06, 6), pilot);
-  glow.rotation.x = Math.PI / 2;
-  glow.position.set(0, -0.101, 0.5);
-  swing.add(glow);
+  const swing = w.wear(k.swing, pilot);
+  swing.position.set(0, PIV, -0.03);
   swing.rotation.x = -0.55;
-  return { head, barrel: null, kick: 0, flash: null, flashMesh: null, pilot, swing };
+  head.add(swing);
+  return { head, barrel: null, kick: 0, flash: null, flashMesh: null, pilot, swing, dress: w.dress };
 }
 
 /* ── the core ───────────────────────────────────────────────────────────── */
@@ -425,13 +683,19 @@ export interface CoreRefs {
  */
 export function buildCore(group: Group): CoreRefs {
   const hex = NEON.dock;
-  hexPad(group, hex, 0.17);
-  // A low ring of shards round the pad edge holds it in place.
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    const s = crystal(group, shardGeo(0.018, 0.08, 0.01), hex, 0.003);
-    s.position.set(Math.sin(a) * 0.15, 0.04, Math.cos(a) * 0.15);
-  }
+  // The pad, and a low ring of shards round its edge holding it in
+  // place: one standing piece.
+  const k = kit('core', () => {
+    const base = new Piece();
+    hexPad(base, 0.17);
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
+      base.solid(shardGeo(0.018, 0.08, 0.01), at(Math.sin(a) * 0.15, 0.04, Math.cos(a) * 0.15), 0.003);
+    }
+    return { base };
+  });
+  padGlow(group, hex, 0.17);
+  group.add(still(new Wardrobe(hex).wear(k.base)));
   const spin = new Group();
   spin.position.y = 0.62;
   group.add(spin);

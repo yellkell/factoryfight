@@ -13,6 +13,8 @@
  * fallback room stands in for the scan (see room/walls.ts).
  */
 
+// First: every material draws in one pass (see the file).
+import './materials/onePass.js';
 import { launchXR, SessionMode, World } from '@iwsdk/core';
 import { DirectionalLight, HemisphereLight } from 'three';
 import { ensureAudio } from './audio/sfx.js';

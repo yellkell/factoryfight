@@ -463,13 +463,13 @@ export interface UnitRefs {
  *  wears the same shape; the parts it doesn't have are null. */
 export interface GunRefs {
   /** Slews about +Y to face its target (null: the tesla doesn't turn). */
-  head: Group | null;
+  head: Object3D | null;
   /** Kicks back along its local −Z when it fires. */
-  barrel: Group | null;
+  barrel: Object3D | null;
   /** How far, at full stroke (plant m). */
   kick: number;
   /** THE HAMMER's arm: swung about X (0 level, + down) by SiegeSystem. */
-  swing?: Group;
+  swing?: Object3D;
   /** Floating parts that bob gently while it stands. */
   bob?: Object3D[];
   /** Parts that turn slowly about Y while it stands. */
@@ -482,6 +482,9 @@ export interface GunRefs {
   /** THE FLAMER's tongue: nested additive cones off the nozzle, shown
    *  while it pours (outer red-orange, inner white-yellow). */
   jet?: Mesh[];
+  /** Puts on the parts a level adds (crystal.ts) — SiegeSystem calls it
+   *  every frame with the tower's level; free when nothing changed. */
+  dress?: (level: number) => void;
 }
 
 /**

@@ -189,29 +189,39 @@ function tone(o: ToneOpts): void {
   osc.stop(t0 + dur + 0.03);
 }
 
-/** Bandpass-filtered noise burst — the basis of every hiss and whoosh. */
+/** Two seconds of white noise, made once: every hiss plays a slice of
+ *  it. (It used to be rolled fresh for every shot — in a late wave that
+ *  was most of the frame's audio cost.) */
+let noiseBuf: AudioBuffer | null = null;
+function noise(c: Ctx): AudioBuffer {
+  if (noiseBuf && noiseBuf.sampleRate === c.sampleRate) return noiseBuf;
+  const frames = c.sampleRate * 2;
+  noiseBuf = c.createBuffer(1, frames, c.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+  return noiseBuf;
+}
+
+/** Bandpass-filtered noise burst — the basis of every hiss and whoosh.
+ *  A slice of the shared noise, shaped by its gain: a quick swell, then
+ *  a fall to nothing. */
 function whooshNoise(dur: number, gain: number, fromHz: number, toHz: number, delay = 0): void {
   const c = ready();
   if (!c) return;
   const t0 = c.currentTime + delay;
-  const frames = Math.floor(c.sampleRate * dur);
-  const buf = c.createBuffer(1, frames, c.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < frames; i++) {
-    const p = i / frames;
-    data[i] = (Math.random() * 2 - 1) * (p < 0.12 ? p / 0.12 : 1) * (1 - p) ** 0.8;
-  }
   const src = c.createBufferSource();
-  src.buffer = buf;
+  src.buffer = noise(c);
   const bp = c.createBiquadFilter();
   bp.type = 'bandpass';
   bp.Q.value = 1.1;
   bp.frequency.setValueAtTime(fromHz, t0);
   bp.frequency.exponentialRampToValueAtTime(toHz, t0 + dur * 0.6);
   const g = c.createGain();
-  g.gain.value = gain;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.12);
+  g.gain.linearRampToValueAtTime(0, t0 + dur);
   src.connect(bp).connect(g).connect(c._master!);
-  src.start(t0);
+  src.start(t0, Math.random() * (2 - Math.min(1.9, dur)), dur);
 }
 
 /**
@@ -756,12 +766,26 @@ export function toolStow(): void {
  */
 
 const lastAt: Record<string, number> = {};
-/** True if `key` may sound now (at most once per `gapS`). */
+/** And all of them together: at most this many new voices in any tenth
+ *  of a second. Sixty towers at full tilt would otherwise build hundreds
+ *  of little synths a second — a headset's frame, gone on sound nobody
+ *  can pick apart anyway. */
+const VOICES_PER_TENTH = 6;
+let windowAt = -1;
+let windowN = 0;
+/** True if `key` may sound now (at most once per `gapS`, and while the
+ *  moment's voice budget lasts). */
 function gate(key: string, gapS: number): boolean {
   const c = ready();
   if (!c) return false;
   const now = c.currentTime;
   if (now - (lastAt[key] ?? -1) < gapS) return false;
+  if (now - windowAt > 0.1) {
+    windowAt = now;
+    windowN = 0;
+  }
+  if (windowN >= VOICES_PER_TENTH) return false;
+  windowN++;
   lastAt[key] = now;
   return true;
 }
@@ -818,9 +842,11 @@ export function plantGnaw(): void {
   whooshNoise(0.08, 0.05, 900, 300);
 }
 
-/** A bite lands on the CORE — this one has to cut through everything. */
+/** A bite lands on the CORE — this one has to cut through everything:
+ *  a thump you feel under the two-tone alarm. */
 export function coreAlarm(): void {
   if (!gate('core', 0.35)) return;
+  subSwell(150, 55, 0.22, 0.16, 0, 0.004);
   tone({ freq: 880, type: 'square', dur: 0.12, gain: 0.05 });
   tone({ freq: 660, type: 'square', dur: 0.14, gain: 0.05, delay: 0.13 });
 }
@@ -845,8 +871,10 @@ export function waveStart(): void {
   }
 }
 
-/** The last of a wave goes down: a short rising all-clear. */
+/** The last of a wave goes down: a short rising all-clear, over a wash
+ *  of air sweeping out with the ring of light. */
 export function allClear(): void {
+  whooshNoise(1.1, 0.07, 400, 3200);
   tone({ freq: 523, type: 'triangle', dur: 0.22, gain: 0.07 });
   tone({ freq: 659, type: 'triangle', dur: 0.22, gain: 0.07, delay: 0.12 });
   tone({ freq: 784, type: 'triangle', dur: 0.4, gain: 0.08, delay: 0.24 });
@@ -939,4 +967,29 @@ export function swarmCrunch(n: number): void {
   popNoise(g * 1.2, 700, 0.5);
   popNoise(g, 2600, 0.9, 0.02);
   clank(240 + Math.random() * 60, g * 0.5, 0.18, 0.01);
+}
+
+/**
+ * A MULTI-KILL — one shot took a crowd. Deeper and fatter the more it
+ * took: a sub drop whose pitch falls with the count, a wet low crunch, a
+ * bright glassy shatter riding on top (the reward), and — past a dozen —
+ * a second, lower thump. Four voices at most, one gate.
+ */
+export function multiKill(n: number): void {
+  if (!gate('multi', 0.12)) return;
+  const k = Math.log2(1 + n);
+  const g = Math.min(0.32, 0.12 + k * 0.035);
+  subSwell(Math.max(55, 170 - k * 22), 30, 0.32 + k * 0.05, g, 0, 0.004);
+  popNoise(g * 1.3, 520, 0.45);
+  tone({ freq: 2400 + Math.random() * 600, to: 900, type: 'triangle', dur: 0.12, gain: 0.03 + k * 0.006 });
+  if (n >= 12) popNoise(g, 260, 0.35, 0.03);
+}
+
+/** A HULK goes down: a heavy plate dropped on concrete, and the floor
+ *  answers. */
+export function hulkDown(): void {
+  if (!gate('hulk', 0.15)) return;
+  subSwell(70, 20, 0.9, 0.34, 0, 0.004);
+  clank(85, 0.2, 0.55);
+  popNoise(0.24, 420, 0.4, 0.01);
 }
