@@ -7,6 +7,7 @@
  *   node tools/late-look.mjs                       (60 towers, wave 9)
  *   TOWERS=80 WAVE=9 node tools/late-look.mjs
  *   TRACE=updateMatrixWorld,burst node tools/late-look.mjs
+ *   FXQ=1 node tools/late-look.mjs                 (THE LOAD pinned)
  *
  * Stands TOWERS towers (every kind, level 3) on the cells nearest the
  * core, starts wave WAVE+1, lets it build for 12 s, then samples 6 s:
@@ -14,7 +15,9 @@
  * and a CPU profile of the main thread — the hottest functions, and who
  * calls the TRACE'd ones. (Headless Chromium draws in software, and the
  * desktop XR emulator adds its own getParameter calls: compare runs with
- * each other, not with a headset.)
+ * each other, not with a headset. Software frames are slow, so THE LOAD
+ * — game/load.ts — sheds effects here as it would on a struggling
+ * headset; FXQ pins it, for a like-for-like run.)
  */
 import { chromium } from 'playwright';
 const BASE = process.env.PREVIEW_BASE ?? 'http://localhost:5173';
@@ -53,6 +56,7 @@ const n = await page.evaluate((N) => {
 }, TOWERS);
 const idle = await page.evaluate(() => ({ objs: (() => { let c = 0; window.__tubes.scene().traverse(() => c++); return c; })() }));
 console.log(`${n} towers stood; ${idle.objs} objects in the scene`);
+if (process.env.FXQ) await page.evaluate((q) => window.__tubes.siege.fxQuality?.(q), Number(process.env.FXQ));
 await page.evaluate((w) => { const t = window.__tubes; t.siege.jump(w); t.siege.start(); }, WAVE);
 await page.waitForTimeout(12000);
 const cdp = await page.context().newCDPSession(page);
@@ -66,6 +70,8 @@ const r = await page.evaluate(() => new Promise((done) => {
 }));
 const { profile } = await cdp.send('Profiler.stop');
 console.log(JSON.stringify(r));
+const load = await page.evaluate(() => window.__tubes.siege.fxQuality?.());
+if (load) console.log(`THE LOAD: q ${load.q.toFixed(2)} (frame EMA ${load.ema.toFixed(0)} ms)`);
 const counts = new Map(); for (let k = 0; k < profile.samples.length; k++) counts.set(profile.samples[k], (counts.get(profile.samples[k]) ?? 0) + (profile.timeDeltas[k] ?? 0));
 const self = new Map(); for (const nd of profile.nodes) { const key = `${nd.callFrame.functionName || '(anon)'} ${nd.callFrame.url.split('/').pop().split('?')[0]}:${nd.callFrame.lineNumber}`; self.set(key, (self.get(key) ?? 0) + (counts.get(nd.id) ?? 0)); }
 const busy = [...self.entries()].filter(([k]) => !k.startsWith('(program)') && !k.startsWith('(idle)'));

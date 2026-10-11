@@ -1061,6 +1061,7 @@ function arc(u: Unit, ti: number, x: number, y: number, z: number): void {
   let cur = ti;
   let dmg = damageOf(u);
   const reach = spec.chainReach ?? 0.5;
+  const k0 = plant.siege.kills;
   for (let hop = 0; cur >= 0 && hop <= (spec.chain ?? 0); hop++) {
     hit.push(cur);
     const cx = h.x[cur];
@@ -1079,7 +1080,7 @@ function arc(u: Unit, ti: number, x: number, y: number, z: number): void {
     });
     cur = next;
   }
-  fx({ kind: 'arc', x, y, z, weapon: 'tesla', path });
+  fx({ kind: 'arc', x, y, z, weapon: 'tesla', path, kills: plant.siege.kills - k0 });
 }
 
 /** Throw crawler i `dist` away from (x, z) over `kt` seconds, reeling. */
@@ -1127,11 +1128,12 @@ function smash(u: Unit): void {
   const h = plant.siege.horde;
   const r = spec.splash ?? 0.2;
   const dmg = damageOf(u);
+  const k0 = plant.siege.kills;
   h.near(st.x, st.z, r + MAX_R, (i, d) => {
     hurt(i, dmg * (d < r * 0.6 ? 1 : 0.6), W.hammer);
     if (!h.dead[i]) h.stunT[i] = Math.max(h.stunT[i], spec.stunS ?? 0.4);
   });
-  fx({ kind: 'punch', x: st.x, y: 0.02, z: st.z, weapon: 'hammer', unit: u.id, yaw: u.yaw ?? 0, radius: r });
+  fx({ kind: 'punch', x: st.x, y: 0.02, z: st.z, weapon: 'hammer', unit: u.id, yaw: u.yaw ?? 0, radius: r, kills: plant.siege.kills - k0 });
 }
 
 /** FLAMER: one tick of the cone — everything inside it scorches and
@@ -1216,12 +1218,13 @@ function tickShots(dt: number): void {
     const dmg = s.damage ?? spec.damage;
     if (spec.splash) {
       const r = spec.splash;
+      const k0 = sg.kills;
       h.near(s.x1, s.z1, r + MAX_R, (i, d) => {
         hurt(i, dmg * (d < r * 0.5 ? 1 : 0.6), cause);
         // The blast throws the survivors out of it.
         if (!h.dead[i]) knock(i, s.x1, s.z1, 0.3 * SPECS[h.kind[i]].give * (1 - d / (r + MAX_R)), 0.18);
       });
-      fx({ kind: 'shell', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon, radius: r });
+      fx({ kind: 'shell', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon, radius: r, kills: sg.kills - k0 });
     } else {
       // The target died in the air: the round finds whoever is standing
       // where it was — in a tide, there always is someone.
@@ -1303,6 +1306,22 @@ export function debugFreeze(on: boolean): void {
 }
 export function siegeFrozen(): boolean {
   return frozen;
+}
+
+/** TOOLS ONLY: everything within r of (x, z) goes down at once, as if
+ *  weapon `w` had done it — a multi-kill on demand, for a portrait of the
+ *  pop. Returns how many. */
+export function debugSmite(x: number, z: number, r: number, w: WeaponId): number {
+  const sg = plant.siege;
+  const h = sg.horde;
+  h.rebucket();
+  const k0 = sg.kills;
+  h.near(x, z, r + MAX_R, (i) => hurt(i, 1e9, W[w]));
+  const kills = sg.kills - k0;
+  // The splash weapons say so; the rest just leave the dead.
+  if (w === 'hammer') fx({ kind: 'punch', x, y: 0.02, z, weapon: w, radius: r, kills });
+  else if (w === 'mortar') fx({ kind: 'shell', x, y: SHOT_Y, z, weapon: w, radius: r, kills });
+  return kills;
 }
 
 /** TOOLS ONLY: stand a crawler anywhere (it stands still and can be

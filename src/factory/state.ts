@@ -311,6 +311,9 @@ export interface SiegeFx {
   /** ARC: every hop, as [x, y, z] triples. BEAM: start and end. */
   path?: number[];
   radius?: number;
+  /** SHELL, PUNCH, ARC: how many it killed outright (the renderer sizes
+   *  the pop by it). */
+  kills?: number;
 }
 
 /** core: the floor is waiting for its CORE — nothing else can stand and

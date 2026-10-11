@@ -842,9 +842,11 @@ export function plantGnaw(): void {
   whooshNoise(0.08, 0.05, 900, 300);
 }
 
-/** A bite lands on the CORE — this one has to cut through everything. */
+/** A bite lands on the CORE — this one has to cut through everything:
+ *  a thump you feel under the two-tone alarm. */
 export function coreAlarm(): void {
   if (!gate('core', 0.35)) return;
+  subSwell(150, 55, 0.22, 0.16, 0, 0.004);
   tone({ freq: 880, type: 'square', dur: 0.12, gain: 0.05 });
   tone({ freq: 660, type: 'square', dur: 0.14, gain: 0.05, delay: 0.13 });
 }
@@ -869,8 +871,10 @@ export function waveStart(): void {
   }
 }
 
-/** The last of a wave goes down: a short rising all-clear. */
+/** The last of a wave goes down: a short rising all-clear, over a wash
+ *  of air sweeping out with the ring of light. */
 export function allClear(): void {
+  whooshNoise(1.1, 0.07, 400, 3200);
   tone({ freq: 523, type: 'triangle', dur: 0.22, gain: 0.07 });
   tone({ freq: 659, type: 'triangle', dur: 0.22, gain: 0.07, delay: 0.12 });
   tone({ freq: 784, type: 'triangle', dur: 0.4, gain: 0.08, delay: 0.24 });
@@ -963,4 +967,29 @@ export function swarmCrunch(n: number): void {
   popNoise(g * 1.2, 700, 0.5);
   popNoise(g, 2600, 0.9, 0.02);
   clank(240 + Math.random() * 60, g * 0.5, 0.18, 0.01);
+}
+
+/**
+ * A MULTI-KILL — one shot took a crowd. Deeper and fatter the more it
+ * took: a sub drop whose pitch falls with the count, a wet low crunch, a
+ * bright glassy shatter riding on top (the reward), and — past a dozen —
+ * a second, lower thump. Four voices at most, one gate.
+ */
+export function multiKill(n: number): void {
+  if (!gate('multi', 0.12)) return;
+  const k = Math.log2(1 + n);
+  const g = Math.min(0.32, 0.12 + k * 0.035);
+  subSwell(Math.max(55, 170 - k * 22), 30, 0.32 + k * 0.05, g, 0, 0.004);
+  popNoise(g * 1.3, 520, 0.45);
+  tone({ freq: 2400 + Math.random() * 600, to: 900, type: 'triangle', dur: 0.12, gain: 0.03 + k * 0.006 });
+  if (n >= 12) popNoise(g, 260, 0.35, 0.03);
+}
+
+/** A HULK goes down: a heavy plate dropped on concrete, and the floor
+ *  answers. */
+export function hulkDown(): void {
+  if (!gate('hulk', 0.15)) return;
+  subSwell(70, 20, 0.9, 0.34, 0, 0.004);
+  clank(85, 0.2, 0.55);
+  popNoise(0.24, 420, 0.4, 0.01);
 }
