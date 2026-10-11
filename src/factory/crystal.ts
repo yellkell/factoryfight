@@ -12,7 +12,7 @@
  *
  * FIVE SILHOUETTES. A tower is told at a glance by its SHAPE, not its
  * colour: the TURRET is a squat armoured cupola with two long lances
- * out the front; the HAMMER a tall A-frame gantry with a great hex head
+ * out the front; the HAMMER a crystal pylon with a great hex head
  * slung off its arm; the FLAMER a fat banded fuel drum with a flared
  * bell for a nozzle; the TESLA COIL the tallest and slimmest, a spire
  * through a stack of plates with a crackling orb on its point; the
@@ -611,13 +611,11 @@ export function buildFlamer(group: Group): GunRefs {
 }
 
 /**
- * THE HAMMER — the tall one with the reach: an A-frame GANTRY on a
- * turntable, two uprights under a lintel, and from the axle between them
- * a long piston arm slung out front with a MASSIVE HEX HEAD on its end.
- * It turns to what is coming, heaves the head up, and brings it down on
- * them. SiegeSystem swings `swing` about X (0 = the arm level, + = down).
- * Level 2 bands the head with a steel collar; level 3 braces the gantry
- * and crowns the head with studs.
+ * THE HAMMER — a crystal pylon on its pad with a long arm hinged at its
+ * top, and on the end of the arm a great hex-prism head. It turns to
+ * what is coming, heaves the head up, and brings it down on them.
+ * SiegeSystem swings `swing` about X (0 = the arm level, + = down).
+ * Level 2 bands the head with a collar; level 3 crowns it with studs.
  */
 export function buildHammer(group: Group): GunRefs {
   const hex = NEON.hammer;
@@ -625,39 +623,25 @@ export function buildHammer(group: Group): GunRefs {
   const k = kit('hammer', () => {
     const base = new Piece();
     hexPad(base, 0.16);
+    // THE PYLON: one tapering crystal, turning with what it watches.
     const head = new Piece();
-    head.solid(prismGeo(0.12, 0.11, 0.026), at(0, 0.043, 0, 0, Math.PI / 6), 0.0045);
-    // THE GANTRY: two uprights, back-raked A-frame legs, a lintel.
-    for (const sx of [-1, 1]) {
-      head.solid(blockGeo(0.02, 0.014, 0.5), at(sx * 0.07, 0.3, -0.03), 0.004);
-      const leg = Math.atan2(0.11, 0.29);
-      head.solid(blockGeo(0.016, 0.012, 0.31), at(sx * 0.07, 0.205, -0.085, leg), 0.0035);
-    }
-    head.solid(blockGeo(0.024, 0.024, 0.19), at(0, 0.56, -0.03, 0, 0, Math.PI / 2), 0.004);
-    head.solid(prismGeo(0.012, 0.012, 0.16, 6), at(0, PIV, -0.03, 0, 0, Math.PI / 2), 0.0035);
-    head.from = 3;
-    // An X of bracing between the uprights.
-    for (const sx of [-1, 1]) {
-      head.solid(blockGeo(0.01, 0.01, 0.26), at(0, 0.19, -0.03, 0, 0, sx * Math.atan2(0.14, 0.22)), 0.003);
-    }
+    head.solid(prismGeo(0.07, 0.05, 0.3), at(0, 0.18, -0.03));
     const swing = new Piece();
-    // The hub on the axle, and a counterweight behind it.
-    swing.solid(new OctahedronGeometry(0.04, 0), at(0, 0, 0, 0, 0, 0, 1.4, 0.9, 0.9));
-    swing.solid(prismGeo(0.04, 0.04, 0.06), at(0, 0.005, -0.075, 0, 0, Math.PI / 2), 0.004);
-    // THE PISTON ARM: a fat sleeve off the hub, a rod run out of it.
-    swing.solid(prismGeo(0.026, 0.024, 0.2, 6), at(0, 0, 0.12, Math.PI / 2), 0.004);
-    swing.solid(prismGeo(0.014, 0.014, 0.24, 6), at(0, 0, 0.32, Math.PI / 2), 0.0035);
-    // THE HEAD: a great hex prism standing across the end of the arm,
-    // its striking face down (−Y in the arm's frame).
-    swing.solid(prismGeo(0.09, 0.09, 0.2), at(0, -0.02, 0.48, 0, Math.PI / 6));
-    swing.neon(new Trim().ring(-0.12, 0.07, 0.006).ring(-0.12, 0.04, 0.004), at(0, 0, 0.48));
-    swing.lit(new CircleGeometry(0.075, 6), at(0, -0.1215, 0.48, Math.PI / 2, 0, Math.PI / 6));
+    // The hinge: a gem through the top of the pylon.
+    swing.solid(new OctahedronGeometry(0.045, 0), at(0, 0, 0, 0, 0, 0, 1.6, 0.8, 0.8));
+    // THE ARM: long and thin, out to the head.
+    swing.solid(prismGeo(0.016, 0.016, 0.48, 4), at(0, 0, 0.24, Math.PI / 2), 0.004);
+    // THE HEAD: a fat hex prism across the end of the arm, its striking
+    // face down (−Y in the arm's frame), ringed and lit.
+    swing.solid(prismGeo(0.07, 0.07, 0.16), at(0, -0.02, 0.5));
+    swing.neon(new Trim().ring(-0.1, 0.055, 0.006).ring(-0.1, 0.03, 0.004), at(0, 0, 0.5));
+    swing.lit(new CircleGeometry(0.06, 6), at(0, -0.101, 0.5, Math.PI / 2));
     swing.from = 2;
-    swing.solid(prismGeo(0.1, 0.1, 0.05), at(0, -0.02, 0.48), 0.005);
+    swing.solid(prismGeo(0.078, 0.078, 0.04), at(0, -0.02, 0.5), 0.004);
     swing.from = 3;
     for (let s = 0; s < 6; s++) {
       const a = (s / 6) * Math.PI * 2;
-      swing.solid(shardGeo(0.014, 0.045, 0.005, 4), at(Math.sin(a) * 0.06, 0.08, 0.48 + Math.cos(a) * 0.06), 0.003);
+      swing.solid(shardGeo(0.012, 0.04, 0.005, 4), at(Math.sin(a) * 0.045, 0.06, 0.5 + Math.cos(a) * 0.045), 0.003);
     }
     return { base, head, swing };
   });
