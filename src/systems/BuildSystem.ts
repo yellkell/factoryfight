@@ -618,6 +618,7 @@ export class BuildSystem extends createSystem({}) {
 
   update(delta: number): void {
     this.clock += delta;
+    site.hover.ray = -1;
 
     const active = site.screen === 'factory' && !site.paused;
     if (site.screen !== 'factory') this.armed = null;
@@ -707,6 +708,10 @@ export class BuildSystem extends createSystem({}) {
       this.ghost.visible = false;
       this.reachG.visible = false;
     }
+
+    // Pointing at standing plant, empty-handed: you are asking about it
+    // (a tower shows its health — SiegeSystem).
+    if (!this.armed && cell && occupied) site.hover.ray = occupied.id;
 
     // The focus frame: amber over standing plant, RED under the bar.
     if (cell && occupied !== undefined) {
