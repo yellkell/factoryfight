@@ -1359,8 +1359,8 @@ export class MenuSystem extends createSystem({}) {
         // THE ONE CONTROL NOBODY CAN GUESS: every verb in the siege lives
         // on the menu, so the first thing to know is where the menu is.
         id: 'shop-note',
-        label: 'LEFT PALM \u00b7 MENU',
-        sub: 'turn it toward you',
+        label: 'PALM UP \u00b7 MENU',
+        sub: 'palm up opens your menu',
         display: true,
         small: true,
         x: CONTENT_X + CW - NOTE_W,
@@ -1505,8 +1505,8 @@ export class MenuSystem extends createSystem({}) {
     const rows: Array<{ shape: Gesture; name: string; does: string }> = [
       {
         shape: 'palm',
-        name: 'OPEN YOUR LEFT PALM',
-        does: 'Turn it toward you and the menu rises over it: the wave, the clock, your coins, START and PAUSE, and every tower you can build.',
+        name: 'PALM UP',
+        does: 'Palm up opens your menu: the wave, the clock, your coins, START and PAUSE, and every tower you can build.',
       },
       {
         shape: 'poke',
