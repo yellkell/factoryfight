@@ -110,13 +110,15 @@ load, a small studio (`src/ui/pictures.ts`) photographs every tower with the
 same builders the floor uses, and every menu shows a tower the same way
 (`src/ui/tiles.ts`).
 
-## Bare hands — your left palm is the menu
+## Bare hands — your palm is the menu
 
 The game reads controllers or tracked hands through one layer
 (`src/input/intents.ts`), so nothing downstream knows which you are using. On
-hands, everything is **poked with your right index finger**.
+hands, everything is **poked with an index finger**: the palm menu with the
+other hand's, anything else with either.
 
-- **Turn your left palm toward you.** One panel rises over it, facing you:
+- **Turn either palm toward you.** One panel rises over it, facing you (the
+  palm that has it keeps it until it turns away):
   - **The header** across the top: three readouts (the WAVE, the clock
     to the NEXT WAVE or how many ENEMIES are LEFT, and your COINS) over a
     slim bar for the core, and the buttons a hand doesn't have, each an

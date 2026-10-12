@@ -1,11 +1,11 @@
 /**
- * HandSystem — bare hands are the controller, and the LEFT HAND IS THE MENU.
+ * HandSystem — bare hands are the controller, and YOUR PALM IS THE MENU.
  *
  * Runs FIRST every frame and fills in input/intents.ts from whatever the
  * headset is giving it: a controller's trigger, squeeze and face buttons,
  * or a tracked hand's pinch and fist. Nothing downstream ever asks which.
  *
- * On hands, there is no card to open to build. Turn your left hand open
+ * On hands, there is no card to open to build. Turn either hand open
  * toward you and ONE panel comes up off it, floating over the palm and
  * turned to your eyes — one plane, so nothing on it can hide anything
  * else on it (the watch used to sit on the wrist, and the palm's tiles
@@ -13,7 +13,7 @@
  *
  *   THE TOWERS — every tower you can build right now, each tile wearing
  *     its drawing and its price in coins, dimmed when the purse can't pay.
- *     Poke one with your right index finger and it is in your hand (aim,
+ *     Poke one with your other index finger and it is in your hand (aim,
  *     pinch to place); poke it again to put it down. On a fresh floor it
  *     holds exactly one tile — the CORE — because nothing else can stand
  *     until the core does.
@@ -28,7 +28,8 @@
  *       DONE   while you are marking out the floor
  *
  * It only takes pokes while you are looking at it, and goes away while
- * the left hand is closed.
+ * the hand is closed. The palm that has it keeps it until it turns away;
+ * then the other palm can take it.
  *
  * And a TOWER is touched to be upgraded: reach out and poke one (either
  * hand), and its panel opens — UPGRADE, SELL.
@@ -86,11 +87,13 @@ export const handsView: {
   press?: (verb: 'menu' | 'turn' | 'stow' | 'done') => void;
   /** Hold a gesture on a side regardless of what the hand is doing. */
   force?: (hand: HandSide, what: 'point' | 'grab', on: boolean | null) => void;
-  /** The left hand's menu as it stands: shown, and every pokeable thing
+  /** The palm's menu as it stands: shown, and every pokeable thing
    *  on it (watch studs AND toolbelt tiles), with where (world). */
   cuff?: () => {
     shown: boolean;
     facing: number;
+    /** Which palm it is on. */
+    side: HandSide;
     studs: Array<{ id: string; x: number; y: number; z: number; nx: number; ny: number; nz: number }>;
   };
   /** A hand's index tip, world (room) metres — what pokes things. */
@@ -187,8 +190,9 @@ const _cam = new Vector3();
 const _tip = new Vector3();
 const _p = new Vector3();
 const _c = new Vector3();
-const _pc = new Vector3();
-const _pn = new Vector3();
+/** Each hand's palm centre and normal, read every frame. */
+const _pcs: Record<HandSide, Vector3> = { left: new Vector3(), right: new Vector3() };
+const _pns: Record<HandSide, Vector3> = { left: new Vector3(), right: new Vector3() };
 const _q = new Quaternion();
 const _cc = { x: 0, z: 0 };
 
@@ -205,6 +209,8 @@ export class HandSystem extends createSystem({}) {
   private tiles = new Map<string, Poke>();
   private shown = 0;
   private facing = 0;
+  /** Which palm the panel is on (the other hand pokes it). */
+  private side: HandSide = 'left';
   private fist: Record<HandSide, boolean> = { left: false, right: false };
   private pinch: Record<HandSide, boolean> = { left: false, right: false };
   private curl: Record<HandSide, number> = { left: 0, right: 0 };
@@ -274,7 +280,7 @@ export class HandSystem extends createSystem({}) {
         if (s.group.visible && act) add(act, s);
       });
       for (const [tool, t] of this.tiles) if (t.group.visible) add(`tool:${tool}`, t);
-      return { shown: this.cuff.visible && this.shown > 0.5, facing: this.facing, studs: out };
+      return { shown: this.cuff.visible && this.shown > 0.5, facing: this.facing, side: this.side, studs: out };
     };
     handsView.curl = () => ({ ...this.curl });
     handsView.snap = () => {
@@ -359,24 +365,22 @@ export class HandSystem extends createSystem({}) {
     for (const verb of this.queued) intents[verb] = true;
     this.queued.clear();
 
-    this.tickLeftHand(delta);
+    this.tickPalm(delta);
     this.tickTowerTouch();
   }
 
-  /* ── THE LEFT HAND: watch + toolbelt ──────────────────────────────────── */
+  /* ── THE PALM: header + toolbelt, on whichever hand is up ─────────────── */
 
-  private tickLeftHand(delta: number): void {
+  /**
+   * Where one hand's palm is and which way it faces, into `centre` and
+   * `normal`; returns how square it is to the eyes (1 = dead on), or null
+   * when that hand isn't tracked.
+   */
+  private palmPose(side: HandSide, centre: Vector3, normal: Vector3): number | null {
     const xr = this.input.xr;
-    const joints = xr.visualAdapters.hand.left.jointTransforms;
-    const grip = this.world.playerSpaceEntities?.gripSpaces?.left?.object3D as Object3D | undefined;
-    // An open hand only: a fist on a collar, or a pinch, is busy.
-    const open = !intents.left.grab.pressed && !intents.left.point.pressed;
-    if (!xr.isPrimary('hand', 'left') || !joints || !grip) {
-      this.cuff.visible = false;
-      this.belt.visible = false;
-      this.shown = 0;
-      return;
-    }
+    const joints = xr.visualAdapters.hand[side].jointTransforms;
+    const grip = this.world.playerSpaceEntities?.gripSpaces?.[side]?.object3D as Object3D | undefined;
+    if (!xr.isPrimary('hand', side) || !joints || !grip) return null;
     grip.updateWorldMatrix(true, false);
     const at = (j: number, out: Vector3): Vector3 =>
       out.set(joints[j * 16 + 12], joints[j * 16 + 13], joints[j * 16 + 14]).applyMatrix4(grip.matrixWorld);
@@ -384,20 +388,60 @@ export class HandSystem extends createSystem({}) {
     at(J.indexMeta, _a).sub(_w);
     at(J.pinkyMeta, _b).sub(_w);
     at(J.middleMeta, _f);
-    _pc.copy(_f).add(_w).multiplyScalar(0.5); // the palm's middle
-    _f.sub(_w).normalize();
-    // The INSIDE of the left hand: the palm's normal. (Index-then-pinky
-    // across the back of a left hand points out of the knuckles, so the
-    // palm is the other way.)
-    _n.crossVectors(_a, _b).normalize().negate();
-    _pn.copy(_n);
+    centre.copy(_f).add(_w).multiplyScalar(0.5); // the palm's middle
+    // The INSIDE of the hand: the palm's normal. Index-then-pinky across
+    // the back of a LEFT hand points out of the knuckles, so the palm is
+    // the other way; a right hand is the mirror, and its cross is the palm.
+    normal.crossVectors(_a, _b).normalize();
+    if (side === 'left') normal.negate();
+    _p.copy(_cam).sub(centre).normalize();
+    return normal.dot(_p);
+  }
+
+  private tickPalm(delta: number): void {
+    const xr = this.input.xr;
     this.camera.getWorldPosition(_cam);
     _up.set(0, 1, 0).applyQuaternion(this.camera.getWorldQuaternion(_q));
+
+    // EITHER PALM. Each open hand turned to the eyes is a candidate; the
+    // one already carrying the panel keeps it (on the looser threshold)
+    // until it turns away, and only then can the other hand take it.
+    const facing: Record<HandSide, number | null> = {
+      left: this.palmPose('left', _pcs.left, _pns.left),
+      right: this.palmPose('right', _pcs.right, _pns.right),
+    };
+    // An open hand only: a fist on a collar, or a pinch, is busy.
+    const open = (side: HandSide): boolean => !intents[side].grab.pressed && !intents[side].point.pressed;
+    const showing = this.shown > 0.5;
+    const wants = (side: HandSide, keep: boolean): boolean => {
+      const f = facing[side];
+      return f !== null && open(side) && f > (keep ? CUFF.hideDot : CUFF.showDot);
+    };
+    const other: HandSide = this.side === 'left' ? 'right' : 'left';
+    let look = wants(this.side, showing);
+    if (!look && wants(other, false)) {
+      this.side = other;
+      look = true;
+      // A new hand under a fingertip is a new set of buttons: nothing on
+      // it fires until the finger has come away once.
+      for (const s of this.studs) s.armed = false;
+      for (const [, t] of this.tiles) t.armed = false;
+    }
+    const f = facing[this.side];
+    if (f === null) {
+      this.cuff.visible = false;
+      this.belt.visible = false;
+      this.shown = 0;
+      return;
+    }
+    this.facing = f;
+    const pc = _pcs[this.side];
+    const pn = _pns[this.side];
 
     // THE PANEL floats over the palm and turns to face you, upright as
     // you read it (its up is the HEAD's up, projected onto the face). The
     // header rides along the top of it, in the same plane.
-    _c.copy(_pc).addScaledVector(_pn, BELT.lift);
+    _c.copy(pc).addScaledVector(pn, BELT.lift);
     _x.copy(_cam).sub(_c).normalize();
     faceBasis(_x, _up, _m, _c);
     this.belt.matrix.copy(_m);
@@ -406,10 +450,6 @@ export class HandSystem extends createSystem({}) {
     this.cuff.matrix.copy(_m).setPosition(_c);
     this.cuff.matrixWorldNeedsUpdate = true;
 
-    _p.copy(_cam).sub(_pc).normalize();
-    this.facing = _pn.dot(_p);
-    const showing = this.shown > 0.5;
-    const look = open && (showing ? this.facing > CUFF.hideDot : this.facing > CUFF.showDot);
     this.shown = Math.max(0, Math.min(1, this.shown + (look ? delta : -delta) * 8));
     const vis = this.shown > 0.01;
     this.cuff.visible = vis;
@@ -423,10 +463,11 @@ export class HandSystem extends createSystem({}) {
     this.layoutBelt(delta);
     this.paintFace();
 
-    // THE POKE: the right index tip, pressed into a face.
+    // THE POKE: the OTHER hand's index tip, pressed into a face.
     if (this.shown < 0.9) return;
-    const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.right?.object3D as Object3D | undefined;
-    if (!tipObj || !xr.isPrimary('hand', 'right')) return;
+    const poker: HandSide = this.side === 'left' ? 'right' : 'left';
+    const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.[poker]?.object3D as Object3D | undefined;
+    if (!tipObj || !xr.isPrimary('hand', poker)) return;
     tipObj.getWorldPosition(_tip);
     this.cuff.updateMatrixWorld(true);
     this.belt.updateMatrixWorld(true);

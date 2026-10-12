@@ -1506,12 +1506,12 @@ export class MenuSystem extends createSystem({}) {
       {
         shape: 'palm',
         name: 'PALM UP',
-        does: 'Palm up opens your menu: the wave, the clock, your coins, START and PAUSE, and every tower you can build.',
+        does: 'Either palm up opens your menu: the wave, the clock, your coins, START and PAUSE, and every tower you can build.',
       },
       {
         shape: 'poke',
         name: 'POKE',
-        does: 'Poke a tower on your palm with your right index finger to pick it up; poke it again to put it back. Remember to close the panel to interact with something else.',
+        does: 'Poke a tower on your palm with your other index finger to pick it up; poke it again to put it back. Remember to close the panel to interact with something else.',
       },
       {
         shape: 'pinch',

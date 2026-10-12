@@ -17,6 +17,8 @@
  *   THE PALM          turn the hand and the panel rises: header + towers,
  *                     in one plane, nothing covering anything
  *   THE POKE          the right index tip presses PAUSE, BACK, DOWN, tiles
+ *   THE OTHER PALM    the right palm turned up carries the menu too, and
+ *                     the left index pokes it
  *   TOUCH A TOWER     its panel opens: UPGRADE it, then SELL it
  */
 
@@ -341,6 +343,43 @@ check(!tw && coinsSold > coinsNow, `POKE SELL: the tower is gone and coins come 
 check(!(await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('box'), 'and its panel goes with it');
 await pose('right', RIGHT_REST);
 await frames(4);
+
+/* ── THE OTHER PALM ──────────────────────────────────────────────────── */
+
+console.log('THE OTHER PALM');
+await pose('left', LEFT_REST);
+await pose('right', [0.04, 1.42, -0.28], WRIST_UP);
+await frames(10);
+c = await cuff();
+check(c.shown && c.side === 'right', `turn the RIGHT palm up and the menu rises over it (${c.side}, facing ${c.facing.toFixed(2)})`);
+/** The same honest poke, with the LEFT index tip. */
+async function leftTipTo(t, off = 0) {
+  const want = [t.x + t.nx * off, t.y + t.ny * off, t.z + t.nz * off];
+  for (let pass = 0; pass < 2; pass++) {
+    const tip = await page.evaluate(() => window.__tubes.hands.tip('left'));
+    const hp = await page.evaluate(() => {
+      const p = window.IWER_DEVICE.hands.left.position;
+      return [p.x, p.y, p.z];
+    });
+    await pose('left', [hp[0] + want[0] - tip[0], hp[1] + want[1] - tip[1], hp[2] + want[2] - tip[2]]);
+    await frames(4);
+  }
+}
+{
+  const t = (await cuff()).studs.find((x) => x.id === 'tool:turret');
+  await leftTipTo(t, 0.05);
+  await frames(4);
+  await leftTipTo(t, 0);
+  await frames(6);
+  await leftTipTo(t, 0.06);
+  await frames(4);
+  check((await armed()) === 'turret', 'POKE the TURRET tile with the LEFT index: a gun in your hand');
+  await page.evaluate(() => window.__tubes.build.stow());
+}
+await pose('right', RIGHT_REST);
+await pose('left', LEFT_REST);
+await frames(10);
+check(!(await cuff()).shown, 'and both hands down: the menu goes');
 
 await browser.close();
 if (fails.length) {
