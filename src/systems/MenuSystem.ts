@@ -99,7 +99,7 @@ import {
 } from '../factory/state.js';
 import { isWeapon, refundUnit, removeUnit } from '../factory/sim.js';
 
-import { coreHealth, levelOf, sellValue, siegeLeft, startWave, upgradeCost, upgradeTower, waveSpec } from '../factory/siege.js';
+import { coreHealth, levelOf, sellValue, siegeLeft, startWave, upgradeCost, upgradeTower } from '../factory/siege.js';
 import { buildView, type BuildTool } from './BuildSystem.js';
 import { goopView } from './GoopSystem.js';
 import { font } from '../ui/fonts.js';
@@ -1839,7 +1839,6 @@ export class MenuSystem extends createSystem({}) {
       w: cw - 2 * CARD_PAD,
       h: 104,
     });
-    const wave = waveSpec(sg.wave);
     this.card.paint(
       'PAUSED',
       (g) => {
@@ -1850,7 +1849,9 @@ export class MenuSystem extends createSystem({}) {
             ? 'A NEW SIEGE \u00b7 THE FLOOR IS YOURS'
             : sg.phase === 'fallen'
               ? 'THE CORE HAS FALLEN'
-              : `WAVE ${sg.wave + 1} \u00b7 ${wave.name}`;
+              : sg.wave < WAVES.length
+                ? `WAVE ${sg.wave + 1} OF ${WAVES.length}`
+                : `OVERTIME \u00b7 WAVE ${sg.wave + 1}`;
         caps(g, status, cw / 2, 226, { px: 19, color: SKIN.gold, align: 'center', track: 4, max: cw - 80 });
       },
       buttons,
