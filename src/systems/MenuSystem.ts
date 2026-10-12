@@ -64,6 +64,7 @@ import {
   type WeaponId,
   ENEMIES,
   type WaveSpec,
+  type EnemyId,
   type ItemId,
   type UnitType,
   type UpgradeId,
@@ -118,21 +119,29 @@ import {
 
   itemGlyph,
   unitGlyph,
-  type GlyphId,
 } from '../ui/icons.js';
 import { Panel, UI, type PanelButton } from '../ui/panel.js';
+import { towerCard } from '../ui/tiles.js';
+import {
+  SKIN,
+  titleBar,
+  caps,
+  chamfer,
+  coreGauge,
+  dot,
+  hexPad,
+  neonOf,
+  pips,
+  price,
+  rgba,
+  rule,
+  well,
+} from '../ui/skin.js';
 import { callout, drawController, faceGlyph, type Control, type Hand } from '../ui/controller.js';
 import { controllerModelView, onControllerImage } from '../ui/controllerModel.js';
 import { PointerRay } from '../ui/pointer.js';
 import { walls } from './WallSystem.js';
 import { stage } from '../room/stage.js';
-
-/** A button's picture: the machine's own shop drawing, greyed with the
- *  plate when the catalogue is refusing it. */
-const toolGlyph =
-  (id: GlyphId): NonNullable<PanelButton['glyph']> =>
-  (g, x, y, size, dead) =>
-    unitGlyph(g, id, x, y, size, dead ? GLYPH_DEAD : GLYPH_LIVE);
 
 /** What a piece of plant is CALLED on a card. The catalogue's words and
  *  the box panel's title come from one table, so they can never drift. */
@@ -168,6 +177,24 @@ const UNIT_DOCKET: Record<UnitType, string> = {
   flamer: 'A cone of fire: a whole crowd burns. Short reach, so put it close to the core.',
   hammer: 'Heaves up and smashes the crowd beside it. Flattens a whole clump at once.',
   wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
+};
+
+/** A tower's name where a tile is narrow (FLAMETHROWER won't fit one). */
+const TOWER_SHORT: Record<WeaponId, string> = {
+  turret: 'TURRET',
+  hammer: 'HAMMER',
+  flamer: 'FLAMER',
+  tesla: 'TESLA',
+  mortar: 'MORTAR',
+};
+
+/** What each tower is FOR, in two words. */
+const TOWER_ROLE: Record<WeaponId, string> = {
+  turret: 'ONE AT A TIME',
+  hammer: 'SMASHES A CLUMP',
+  flamer: 'SETS THEM ALIGHT',
+  tesla: 'CHAINS THROUGH TEN',
+  mortar: 'LONG-RANGE SHELLS',
 };
 
 /** The same instruction, said for the hands you are actually using: a
@@ -217,7 +244,7 @@ function handGlyph(
     g.moveTo(72, 96);
     g.quadraticCurveTo(84, 60, 58, 32);
     g.stroke();
-    g.fillStyle = '#ffa22e';
+    g.fillStyle = '#ffcf3a';
     g.beginPath();
     g.arc(55, 30, 7, 0, Math.PI * 2);
     g.fill();
@@ -226,7 +253,7 @@ function handGlyph(
   } else if (shape === 'fists') {
     fist(26);
     fist(74);
-    g.strokeStyle = '#ffa22e';
+    g.strokeStyle = '#ffcf3a';
     g.beginPath();
     g.moveTo(4, 24);
     g.lineTo(96, 24);
@@ -238,13 +265,13 @@ function handGlyph(
     g.moveTo(30, 98);
     g.lineTo(76, 52);
     g.stroke();
-    g.fillStyle = 'rgba(255,162,46,0.85)';
+    g.fillStyle = 'rgba(255,207,58,0.85)';
     g.save();
     g.translate(42, 70);
     g.rotate(-Math.PI / 4);
     g.fillRect(-16, -9, 32, 18);
     g.restore();
-    g.strokeStyle = '#ffa22e';
+    g.strokeStyle = '#ffcf3a';
     g.beginPath();
     g.moveTo(90, 8);
     g.lineTo(58, 52);
@@ -278,7 +305,7 @@ const ROW_PITCH = 134;
 const SHEET_X = 822;
 const SHEET_W = W - SHEET_X - 34;
 /** SYSTEM rows. */
-const SYS_Y0 = 188;
+const SYS_Y0 = 166;
 /** Five rows now that MUSIC has its own fader — 140 put RESET PROGRESS
  *  straight through the room-status footer. */
 const SYS_PITCH = 124;
@@ -1068,6 +1095,8 @@ export class MenuSystem extends createSystem({}) {
     return [
       unit.id,
       unit.rot,
+      Math.round((unit.hp / Math.max(1, unit.maxHp)) * 20),
+      levelOf(unit),
       held,
       unit.ports.join('/'),
       unit.craftT >= 0,
@@ -1111,30 +1140,33 @@ export class MenuSystem extends createSystem({}) {
     this.board.paint('', (g) => this.paintBoardBody(g), buttons, this.hover);
   }
 
-  /** Header chrome: the wordmark, the room status, the rail's guide line. */
+  /** Header chrome: the emblem and wordmark, the room status, the rail's
+   *  marker. */
   private paintChrome(g: CanvasRenderingContext2D): void {
-    // Wordmark — the title stencilled on, with its service stripe.
+    // THE EMBLEM: the core on its hex pad — the thing the whole game is
+    // about, standing where a logo would.
+    const ex = RAIL_X + 50;
+    const ey = 76;
+    hexPad(g, ex, ey, 48, SKIN.gold);
+    unitGlyph(g, 'dock', ex - 34, ey - 36, 68);
+
+    // The wordmark, lit, and the line under it.
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
-    g.font = font(700, 64);
-    g.letterSpacing = '6px';
+    g.font = font(700, 60);
+    g.letterSpacing = '7px';
     g.fillStyle = UI.textHi;
-    g.fillText(GAME_TITLE, RAIL_X + 4, 96);
-    // Measured WITH the spacing it was drawn with — the tagline sits
-    // after the whole word, however long the title is.
-    const wmW = g.measureText(GAME_TITLE).width + 10;
+    g.shadowColor = rgba(SKIN.gold, 0.6);
+    g.shadowBlur = 18;
+    g.fillText(GAME_TITLE, RAIL_X + 118, 82);
+    g.shadowBlur = 0;
     g.letterSpacing = '0px';
-    g.fillStyle = UI.accent;
-    g.beginPath();
-    g.roundRect(RAIL_X + 6, 110, Math.min(wmW, 190), 5, 2.5);
-    g.fill();
-    g.font = font(500, 22);
-    g.fillStyle = UI.faint;
-    g.fillText('BUILD THE TOWERS. HOLD THE CORE.', RAIL_X + Math.max(226, wmW + 26), 100);
+    g.textBaseline = 'middle';
+    caps(g, 'BUILD THE TOWERS \u00b7 HOLD THE CORE', RAIL_X + 122, 112, { px: 19, color: SKIN.gold, track: 5 });
 
-    // Room status, top right: what the scan gave us. Walls only — the
-    // floor and ceiling are registry citizens too, but "6 WALLS" over a
-    // four-walled room reads as a bug, not a feature.
+    // Room status, top right, in its own chip: what the scan gave us.
+    // Walls only — the floor and ceiling are registry citizens too, but
+    // "6 WALLS" over a four-walled room reads as a bug, not a feature.
     const real = walls.filter((w) => w.real && w.kind === 'wall').length;
     const label = !site.wallsReady
       ? 'WAITING FOR WALLS'
@@ -1142,30 +1174,44 @@ export class MenuSystem extends createSystem({}) {
         ? 'ROOM-SCALE BOX'
         : site.fallbackRoom
           ? 'STAND-IN ROOM'
-          : `ROOM SCANNED · ${real} WALL${real === 1 ? '' : 'S'}`;
-    g.textAlign = 'right';
-    g.font = font(600, 24);
-    g.fillStyle = site.fallbackRoom || !site.wallsReady ? UI.warn : UI.positive;
-    const dotX = W - 34 - g.measureText(label).width - 24;
-    g.fillText(label, W - 34, 96);
-    g.beginPath();
-    g.arc(dotX, 88, 7, 0, Math.PI * 2);
-    g.fill();
+          : `ROOM SCANNED \u00b7 ${real} WALL${real === 1 ? '' : 'S'}`;
+    const tone = site.fallbackRoom || !site.wallsReady ? UI.warn : UI.positive;
+    g.font = font(600, 21);
+    g.letterSpacing = '2px';
+    const tw = g.measureText(label).width;
+    g.letterSpacing = '0px';
+    const chipW = tw + 70;
+    const chipX = W - 40 - chipW;
+    well(g, chipX, 52, chipW, 50, 12, rgba(tone, 0.35));
+    dot(g, chipX + 26, 77, 7, tone);
+    caps(g, label, chipX + 46, 78, { px: 21, color: tone, track: 2 });
 
-    // Hairline under the header, and the rail's guide.
-    g.strokeStyle = UI.lineFaint;
+    // The divider: gold off the emblem side, fading across.
+    const div = g.createLinearGradient(RAIL_X, 0, W - 32, 0);
+    div.addColorStop(0, rgba(SKIN.gold, 0.7));
+    div.addColorStop(0.35, rgba(SKIN.gold, 0.18));
+    div.addColorStop(1, 'rgba(160,185,255,0.08)');
+    g.strokeStyle = div;
     g.lineWidth = 2;
     g.beginPath();
-    g.moveTo(RAIL_X, 138);
-    g.lineTo(W - 32, 138);
+    g.moveTo(RAIL_X, 142);
+    g.lineTo(W - 32, 142);
     g.stroke();
 
-    // The rail marker: the accent sliding to the active tab.
+    // The rail marker: a gold blade sliding to the active tab.
     if (Number.isFinite(this.railY)) {
-      g.fillStyle = UI.accent;
+      g.save();
+      g.shadowColor = SKIN.gold;
+      g.shadowBlur = 12;
+      g.fillStyle = SKIN.gold;
       g.beginPath();
-      g.roundRect(RAIL_X - 10, this.railY + 18, 5, 54, 2.5);
+      g.moveTo(RAIL_X - 14, this.railY + 16);
+      g.lineTo(RAIL_X - 8, this.railY + 22);
+      g.lineTo(RAIL_X - 8, this.railY + 68);
+      g.lineTo(RAIL_X - 14, this.railY + 74);
+      g.closePath();
       g.fill();
+      g.restore();
     }
   }
 
@@ -1326,115 +1372,158 @@ export class MenuSystem extends createSystem({}) {
    */
   private paintFactoryTab(buttons: PanelButton[]): void {
     const held = bestWave();
+    const CW = W - 34 - CONTENT_X;
+    const CTA_Y = 744;
+    const CTA_H = 122;
+    const NOTE_W = 340;
     buttons.push(
       {
         id: 'start-order',
         label: 'MAN THE WALLS',
-        sub:
-          held > 0
-            ? `best: ${held} wave${held === 1 ? '' : 's'} held \u00b7 ${bestKills()} down`
-            : 'something is in the walls',
+        sub: held > 0 ? 'the core is waiting' : 'something is in the walls',
         primary: true,
+        px: 46,
         disabled: !site.wallsReady,
-        x: SHEET_X + 10,
-        y: H - 182,
-        w: SHEET_W - 20,
-        h: 96,
+        x: CONTENT_X,
+        y: CTA_Y,
+        w: CW - NOTE_W - 18,
+        h: CTA_H,
       },
       {
         // THE ONE CONTROL NOBODY CAN GUESS: every verb in the siege lives
-        // on the Ⓐ card, so the first thing to know is that Ⓐ exists.
+        // on the menu, so the first thing to know is where the menu is.
         id: 'shop-note',
-        label: say('\u24b6 MENU', 'TURN YOUR LEFT PALM \u00b7 MENU'),
+        label: say('\u24b6  MENU', 'LEFT PALM \u00b7 MENU'),
+        sub: say('build, waves, controls', 'turn it toward you'),
         display: true,
         small: true,
-        x: SHEET_X + 10,
-        y: H - 76,
-        w: SHEET_W - 20,
-        h: 62,
+        x: CONTENT_X + CW - NOTE_W,
+        y: CTA_Y,
+        w: NOTE_W,
+        h: CTA_H,
       },
     );
 
-    const ROW = 66;
-    const RH = 58;
     this.boardOrdersBody = (g: CanvasRenderingContext2D): void => {
+      // THE HERO: the core, big, on its pad — and what you are doing here.
+      const HY = 166;
+      const HH = 300;
+      well(g, CONTENT_X, HY, CW, HH, 18);
+      const cx = CONTENT_X + 156;
+      const cy = HY + HH / 2;
+      g.save();
+      const halo = g.createRadialGradient(cx, cy, 0, cx, cy, 170);
+      halo.addColorStop(0, rgba(SKIN.gold, 0.18));
+      halo.addColorStop(1, rgba(SKIN.gold, 0));
+      g.fillStyle = halo;
+      g.fillRect(CONTENT_X, HY, 320, HH);
+      g.restore();
+      hexPad(g, cx, cy + 10, 118, SKIN.gold);
+      unitGlyph(g, 'dock', cx - 92, cy - 96, 184);
+
+      const tx = CONTENT_X + 316;
+      const tw = CW - 316 - 30;
       g.textAlign = 'left';
       g.textBaseline = 'middle';
-      g.font = font(600, 24);
-      g.fillStyle = UI.faint;
-      g.letterSpacing = '2px';
-      g.fillText('THE SIEGE', ROW_X + 2, ROW_Y0 - 22);
+      g.font = font(700, 46);
+      g.letterSpacing = '4px';
+      g.fillStyle = UI.textHi;
+      g.fillText('HOLD THE CORE', tx, HY + 52);
       g.letterSpacing = '0px';
+      wrapText(
+        g,
+        'Something lives behind your walls. Place your CORE and ring it with towers. They climb out of EVERY wall in their thousands, split the floor open, and chew through whatever stands in the way.',
+        tx,
+        HY + 100,
+        tw,
+        30,
+        font(500, 23),
+        UI.dim,
+      );
 
-      WAVES.forEach((w, i) => {
-        const y = ROW_Y0 + i * ROW;
-        const cleared = i < held;
-        const next = i === held;
-        g.fillStyle = next ? UI.accentFaint : 'rgba(255,255,255,0.028)';
-        g.beginPath();
-        g.roundRect(ROW_X, y, ROW_W, RH, 12);
+      // THE RECORD: three figures, each a label over a number.
+      const stats: Array<[string, string, string]> = [
+        ['WAVES', `${WAVES.length}`, UI.text],
+        ['BEST HELD', held > 0 ? `${held}` : '\u2014', held > 0 ? SKIN.gold : UI.faint],
+        ['PUT DOWN', held > 0 ? bestKills().toLocaleString('en-US') : '\u2014', held > 0 ? SKIN.magentaSoft : UI.faint],
+      ];
+      const SW = (tw - 2 * 14) / 3;
+      stats.forEach(([label, value, tone], k) => {
+        const sx = tx + k * (SW + 14);
+        const sy = HY + HH - 86;
+        chamfer(g, sx, sy, SW, 66, 10);
+        g.fillStyle = 'rgba(150,175,255,0.05)';
         g.fill();
-        g.lineWidth = 2;
-        g.strokeStyle = next ? 'rgba(255,162,46,0.85)' : 'rgba(255,255,255,0.07)';
+        g.strokeStyle = SKIN.lineFaint;
+        g.lineWidth = 1.5;
         g.stroke();
-        g.textAlign = 'center';
-        g.font = font(700, 24);
-        g.fillStyle = cleared ? UI.positive : next ? UI.accent : UI.disabled;
-        g.fillText(cleared ? '\u2713' : next ? '\u25b8' : '\u00b7', ROW_X + 28, y + RH / 2);
+        caps(g, label, sx + 18, sy + 20, { px: 15, track: 3 });
         g.textAlign = 'left';
-        g.font = font(600, 25);
-        g.fillStyle = cleared ? UI.dim : next ? UI.textHi : UI.faint;
-        g.fillText(`${i + 1}. ${w.name}`, ROW_X + 52, y + RH / 2 - 10, ROW_W - 70);
-        g.font = font(500, 18);
-        g.fillStyle = UI.faint;
-        g.fillText(waveSummary(w), ROW_X + 52, y + RH / 2 + 14, ROW_W - 70);
+        g.font = font(700, 32);
+        g.fillStyle = tone;
+        g.fillText(value, sx + 18, sy + 46, SW - 30);
       });
 
-      // THE BRIEF.
-      const sheetH = H - ROW_Y0 - 190;
-      g.fillStyle = UI.well;
-      g.beginPath();
-      g.roundRect(SHEET_X, ROW_Y0, SHEET_W, sheetH, 18);
-      g.fill();
-      g.textAlign = 'left';
-      g.font = font(700, 40);
-      g.letterSpacing = '2px';
-      g.fillStyle = UI.textHi;
-      g.fillText('HOLD THE CORE', SHEET_X + 26, ROW_Y0 + 50);
-      g.letterSpacing = '0px';
-      let y = ROW_Y0 + 96;
-      y +=
-        28 *
-          wrapText(
-            g,
-            'Something lives behind your walls. Place your CORE and build towers round it, as close as you like. When a wave starts they climb out of EVERY wall in their thousands, and packs split the floor open where you least expect. Whatever stands in their way, they chew through. Every kill pays coins; every wave you hold pays more. Touch a tower to upgrade it.',
-            SHEET_X + 26,
-            y,
-            SHEET_W - 52,
-            28,
-            font(500, 22),
-            UI.dim,
-          ) +
-        16;
-      // THE ARSENAL — every weapon the siege will hand you, at a glance.
-      g.font = font(500, 21);
-      g.fillStyle = UI.faint;
-      g.fillText('THE ARSENAL', SHEET_X + 26, y);
-      y += 30;
-      (['turret', 'flamer', 'hammer', 'tesla', 'mortar'] as WeaponId[]).forEach((w, k) => {
-        const cx = SHEET_X + 26 + (k % 2) * ((SHEET_W - 52) / 2);
-        const cy = y + Math.floor(k / 2) * 44;
-        unitGlyph(g, w, cx, cy - 18, 36);
-        g.font = font(600, 21);
+      // IN THE WALLS — the three kinds, down the rail under the tabs, each
+      // in the neon its legs glow on the floor.
+      rule(g, 'IN THE WALLS', RAIL_X, RAIL_X + RAIL_W, 502);
+      (['mite', 'beetle', 'hulk'] as const).forEach((id, k) => {
+        const e = ENEMIES[id];
+        const hue = `#${e.neon.toString(16).padStart(6, '0')}`;
+        const ey = 524 + k * 116;
+        chamfer(g, RAIL_X, ey, RAIL_W, 104, 12);
+        g.fillStyle = rgba(hue, 0.05);
+        g.fill();
+        g.strokeStyle = rgba(hue, 0.28);
+        g.lineWidth = 1.5;
+        g.stroke();
+        dot(g, RAIL_X + 22, ey + 26, 7, hue);
+        g.textAlign = 'left';
+        g.font = font(700, 23);
+        g.letterSpacing = '2px';
+        g.fillStyle = hue;
+        g.fillText(e.name, RAIL_X + 40, ey + 27);
+        g.letterSpacing = '0px';
+        wrapText(g, e.docket, RAIL_X + 16, ey + 56, RAIL_W - 30, 21, font(500, 17), UI.faint);
+      });
+
+      // THE ARSENAL — every tower the siege will hand you, in its own neon.
+      rule(g, 'THE ARSENAL', CONTENT_X, W - 34, 502);
+      const kit: WeaponId[] = ['turret', 'hammer', 'flamer', 'tesla', 'mortar'];
+      const GAP = 14;
+      const AW = (CW - GAP * (kit.length - 1)) / kit.length;
+      const AY = 524;
+      const AH = 196;
+      kit.forEach((w, k) => {
+        const ax = CONTENT_X + k * (AW + GAP);
+        const hue = neonOf(w);
+        chamfer(g, ax, AY, AW, AH, 14);
+        const plate = g.createLinearGradient(0, AY, 0, AY + AH);
+        plate.addColorStop(0, rgba(hue, 0.1));
+        plate.addColorStop(1, 'rgba(150,175,255,0.02)');
+        g.fillStyle = plate;
+        g.fill();
+        g.strokeStyle = rgba(hue, 0.38);
+        g.lineWidth = 2;
+        g.stroke();
+        hexPad(g, ax + AW / 2, AY + 74, 56, hue);
+        unitGlyph(g, w, ax + AW / 2 - 46, AY + 22, 92);
+        g.textAlign = 'center';
+        g.font = font(700, 23);
+        g.letterSpacing = '2px';
         g.fillStyle = UI.text;
-        g.fillText(WEAPONS[w].name, cx + 44, cy);
+        g.fillText(TOWER_SHORT[w], ax + AW / 2, AY + 148, AW - 16);
+        g.letterSpacing = '0px';
+        caps(g, TOWER_ROLE[w], ax + AW / 2, AY + 174, { px: 14, color: hue, align: 'center', track: 2, max: AW - 70 });
+        price(g, WEAPONS[w].cost, ax + AW - 14, AY + 22, { px: 18, align: 'right' });
       });
 
       if (!site.wallsReady) {
-        g.textAlign = 'left';
-        g.font = font(500, 23);
-        g.fillStyle = UI.warn;
-        g.fillText('Look around to find walls', SHEET_X + 26, ROW_Y0 + sheetH - 26);
+        caps(g, 'LOOK AROUND TO FIND YOUR WALLS', CONTENT_X + (CW - NOTE_W - 18) / 2, CTA_Y - 14, {
+          px: 17,
+          color: UI.warn,
+          align: 'center',
+        });
       }
     };
   }
@@ -1456,7 +1545,7 @@ export class MenuSystem extends createSystem({}) {
   private paintControls(): void {
     if (intents.handMode) {
       this.boardControlsBody = (g: CanvasRenderingContext2D): void =>
-        this.paintHandControls(g, CONTENT_X, 190, W - CONTENT_X - 60, 150);
+        this.paintHandControls(g, CONTENT_X, 172, W - CONTENT_X - 34, 128);
       return;
     }
     const S = 230;
@@ -1467,67 +1556,50 @@ export class MenuSystem extends createSystem({}) {
     const litRight = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
     const litLeft = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
 
-    // THE TABLE. Rows are the controls, columns are the three kinds of
-    // shift; each cell is at most three short lines, and a dash is an
+    // THE TABLE. Rows are the controls, columns are the two places you
+    // can be; each cell is at most two short lines, and a dash is an
     // honest cell: that button does nothing there.
-    const T0 = 460;
-    const LBL_W = 118;
-    const COL_X0 = ROW_X + LBL_W + 14;
-    const COL_GAP = 10;
-    const COL_W = (W - 34 - COL_X0 - 2 * COL_GAP) / 3;
-    const PITCH = 66;
-    const rows: Array<{ name: string; hand: string; cells: [string, string, string] }> = [
+    const T0 = 462;
+    const LBL_W = 150;
+    const COL_X0 = ROW_X + LBL_W + 18;
+    const COL_GAP = 24;
+    const COL_W = (W - 40 - COL_X0 - COL_GAP) / 2;
+    const PITCH = 70;
+    const rows: Array<{ name: string; hand: string; cells: [string, string] }> = [
       {
         name: 'TRIGGER',
         hand: 'right hand',
         cells: [
-          'Aim at a wall and pull: the flange mounts there.',
-          'Place the tower in hand. Empty-handed on a tower: open its panel (UPGRADE, SELL).',
-          'Squeeze near a tape side to take it, drag, let go to save. It snaps to your walls.',
+          'Place the tower in hand. Empty-handed, aim at a tower: its panel (UPGRADE, SELL).',
+          'Take a side of the tape, drag it, let go. It snaps to your walls.',
         ],
       },
       {
         name: 'GRIP',
-        hand: 'both hands',
-        cells: [
-          'Both hands on the collar: haul the tube. One hand only rattles it. Let go and it parks.',
-          '—',
-          '—',
-        ],
+        hand: 'either hand',
+        cells: ['Squeeze on a mite or a beetle and it is yours. Let go to throw it.', '\u2014'],
       },
       {
         name: faceGlyph('right', 'lower'),
         hand: 'right hand',
-        cells: [
-          'The job card: the lines, the clock, RESUME or QUIT.',
-          'The siege card: BUILD · WAVES · CONTROLS. Also puts a tower panel away.',
-          'Done. The floor saves and the board comes back.',
-        ],
+        cells: ['The siege menu: BUILD \u00b7 WAVES \u00b7 CONTROLS. Also puts a tower panel away.', 'Done: the floor saves.'],
       },
       {
         name: faceGlyph('right', 'upper'),
         hand: 'right hand',
-        cells: [
-          '—',
-          'Holding a tower: turn it a quarter.',
-          '—',
-        ],
+        cells: ['Holding a tower: turn it a quarter.', '\u2014'],
       },
       {
         name: `${faceGlyph('left', 'lower')} ${faceGlyph('left', 'upper')}`,
         hand: 'left hand',
-        cells: ['—', 'Put the tool away.', `${faceGlyph('left', 'lower')}: done, the same as Ⓐ.`],
+        cells: ['Put the tower in hand away.', `${faceGlyph('left', 'lower')}: done, the same as \u24b6.`],
       },
     ];
 
     this.boardControlsBody = (g: CanvasRenderingContext2D): void => {
       g.textAlign = 'left';
       g.textBaseline = 'middle';
-      g.font = font(600, 24);
-      g.fillStyle = UI.faint;
-      g.letterSpacing = '2px';
-      g.fillText('THE CONTROLLERS', ROW_X + 2, ROW_Y0 - 22);
-      g.letterSpacing = '0px';
+      rule(g, 'THE CONTROLLERS', ROW_X, W - 34, ROW_Y0 - 6);
 
       // THE PAIR — the real models when they are in, and the anchors
       // every callout below points at come back from the drawing.
@@ -1536,13 +1608,8 @@ export class MenuSystem extends createSystem({}) {
         right: drawController(g, 'right', RX, TOP, S, litRight),
       };
       const at = (hand: Hand, c: Control): { x: number; y: number } => anchors[hand][c];
-      g.textAlign = 'center';
-      g.font = font(500, 19);
-      g.letterSpacing = '2px';
-      g.fillStyle = UI.faint;
-      g.fillText('LEFT HAND', LX + S / 2, TOP + S + 18);
-      g.fillText('RIGHT HAND', RX + S / 2, TOP + S + 18);
-      g.letterSpacing = '0px';
+      caps(g, 'LEFT HAND', LX + S / 2, TOP + S + 18, { px: 17, align: 'center' });
+      caps(g, 'RIGHT HAND', RX + S / 2, TOP + S + 18, { px: 17, align: 'center' });
 
       // Outer callouts: the face buttons and the trigger, out to each
       // margin. Inner callouts: the stick and the grip, which the two
@@ -1562,7 +1629,7 @@ export class MenuSystem extends createSystem({}) {
         const l = at('left', c);
         const r = at('right', c);
         g.save();
-        g.strokeStyle = live ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.18)';
+        g.strokeStyle = live ? rgba(SKIN.gold, 0.5) : 'rgba(160,185,255,0.2)';
         g.lineWidth = 1.5;
         g.beginPath();
         g.moveTo(l.x, l.y);
@@ -1570,12 +1637,7 @@ export class MenuSystem extends createSystem({}) {
         g.moveTo(r.x, r.y);
         g.lineTo(MID + 52, y);
         g.stroke();
-        g.fillStyle = live ? UI.accent : UI.disabled;
-        for (const p of [l, r]) {
-          g.beginPath();
-          g.arc(p.x, p.y, 4, 0, Math.PI * 2);
-          g.fill();
-        }
+        for (const p of [l, r]) dot(g, p.x, p.y, 4.5, live ? SKIN.gold : UI.disabled);
         g.textAlign = 'center';
         g.font = font(600, 22);
         g.letterSpacing = '1.5px';
@@ -1587,134 +1649,111 @@ export class MenuSystem extends createSystem({}) {
       between('grip', 'GRIP', true, TOP + 176);
 
       // THE TABLE.
-      g.textAlign = 'left';
-      g.font = font(600, 19);
-      g.letterSpacing = '2px';
-      g.fillStyle = UI.faint;
-      ['PIPE JOBS', 'THE FACTORY', 'THE FLOOR'].forEach((h, c) => {
-        g.fillText(h, COL_X0 + c * (COL_W + COL_GAP), T0 + 8);
+      ['IN THE SIEGE', 'MARKING THE FLOOR'].forEach((h, c) => {
+        caps(g, h, COL_X0 + c * (COL_W + COL_GAP), T0 + 6, { px: 17, color: SKIN.gold, track: 3 });
       });
-      g.letterSpacing = '0px';
-      g.strokeStyle = UI.lineFaint;
-      g.lineWidth = 2;
-      g.beginPath();
-      g.moveTo(ROW_X, T0 + 26);
-      g.lineTo(W - 34, T0 + 26);
-      g.stroke();
 
       rows.forEach((row, i) => {
-        const y = T0 + 36 + i * PITCH;
-        if (i > 0) {
-          g.strokeStyle = 'rgba(255,255,255,0.06)';
-          g.lineWidth = 1;
-          g.beginPath();
-          g.moveTo(ROW_X, y - 5);
-          g.lineTo(W - 34, y - 5);
-          g.stroke();
-        }
-        g.textAlign = 'left';
-        g.font = font(600, 25);
+        const y = T0 + 30 + i * PITCH;
+        chamfer(g, ROW_X, y, W - 34 - ROW_X, PITCH - 8, 10);
+        g.fillStyle = i % 2 === 0 ? 'rgba(150,175,255,0.05)' : 'rgba(150,175,255,0.025)';
+        g.fill();
+        // The control's name, on a key cap.
+        const kx = ROW_X + 12;
+        const ky = y + 9;
+        chamfer(g, kx, ky, LBL_W - 12, 30, 7);
+        g.fillStyle = rgba(SKIN.gold, 0.1);
+        g.fill();
+        g.strokeStyle = rgba(SKIN.gold, 0.45);
+        g.lineWidth = 1.5;
+        g.stroke();
+        g.textAlign = 'center';
+        g.font = font(700, 21);
         g.letterSpacing = '1px';
         g.fillStyle = UI.text;
-        g.fillText(row.name, ROW_X, y + 16);
+        g.fillText(row.name, kx + (LBL_W - 12) / 2, ky + 16);
         g.letterSpacing = '0px';
-        g.font = font(500, 15);
-        g.fillStyle = UI.faint;
-        g.fillText(row.hand, ROW_X, y + 42, LBL_W + 8);
+        caps(g, row.hand.toUpperCase(), kx + (LBL_W - 12) / 2, y + 52, { px: 12, align: 'center', track: 2 });
         row.cells.forEach((cell, c) => {
           const x = COL_X0 + c * (COL_W + COL_GAP);
-          if (cell === '—') {
-            g.font = font(500, 18);
-            g.fillStyle = UI.disabled;
+          if (cell === '\u2014') {
             g.textAlign = 'left';
-            g.fillText(cell, x, y + 12);
+            g.font = font(500, 20);
+            g.fillStyle = UI.disabled;
+            g.fillText(cell, x, y + (PITCH - 8) / 2);
             return;
           }
-          wrapText(g, cell, x, y + 10, COL_W - 8, 20, font(500, 18), UI.dim);
+          wrapText(g, cell, x, y + 20, COL_W - 8, 23, font(500, 20), UI.dim);
         });
       });
 
-      g.textAlign = 'left';
-      g.font = font(500, 19);
-      g.fillStyle = UI.faint;
-      g.fillText(
-        'The sticks and the menu buttons do nothing. Walk — it is your room.',
-        ROW_X,
-        H - 40,
-      );
+      caps(g, 'THE STICKS AND THE MENU BUTTONS DO NOTHING. WALK \u2014 IT IS YOUR ROOM.', ROW_X, H - 34, {
+        px: 15,
+        track: 2,
+      });
     };
   }
 
   /* ── SYSTEM tab ───────────────────────────────────────────────────────── */
 
   private paintSystem(buttons: PanelButton[]): void {
-    const rowW = 150;
-    const valueW = 260;
+    const BX = CONTENT_X + 360;
+    const stepW = 120;
+    const valueW = 300;
+    const BH = 84;
     const y0 = SYS_Y0;
+    const rowY = (k: number): number => y0 + k * SYS_PITCH + 10;
+    const fullW = stepW * 2 + valueW + 32;
     buttons.push(
-      { id: 'sfx:down', label: '−', x: CONTENT_X + 330, y: y0, w: rowW, h: 96, px: 48 },
+      { id: 'sfx:down', label: '\u2212', x: BX, y: rowY(0), w: stepW, h: BH, px: 48 },
       {
         id: 'sfx:vol',
         label: `${Math.round(sfxVolume() * 100)}%`,
         display: true,
-        x: CONTENT_X + 330 + rowW + 16,
-        y: y0,
+        ghost: true,
+        x: BX + stepW + 16,
+        y: rowY(0),
         w: valueW,
-        h: 96,
+        h: BH,
       },
-      {
-        id: 'sfx:up',
-        label: '+',
-        x: CONTENT_X + 330 + rowW + valueW + 32,
-        y: y0,
-        w: rowW,
-        h: 96,
-        px: 48,
-      },
-      { id: 'mus:down', label: '−', x: CONTENT_X + 330, y: y0 + SYS_PITCH, w: rowW, h: 96, px: 48 },
+      { id: 'sfx:up', label: '+', x: BX + stepW + valueW + 32, y: rowY(0), w: stepW, h: BH, px: 48 },
+      { id: 'mus:down', label: '\u2212', x: BX, y: rowY(1), w: stepW, h: BH, px: 48 },
       {
         id: 'mus:vol',
         label: `${Math.round(musicVolume() * 100)}%`,
         display: true,
-        x: CONTENT_X + 330 + rowW + 16,
-        y: y0 + SYS_PITCH,
+        ghost: true,
+        x: BX + stepW + 16,
+        y: rowY(1),
         w: valueW,
-        h: 96,
+        h: BH,
       },
-      {
-        id: 'mus:up',
-        label: '+',
-        x: CONTENT_X + 330 + rowW + valueW + 32,
-        y: y0 + SYS_PITCH,
-        w: rowW,
-        h: 96,
-        px: 48,
-      },
+      { id: 'mus:up', label: '+', x: BX + stepW + valueW + 32, y: rowY(1), w: stepW, h: BH, px: 48 },
       {
         id: 'walls:toggle',
         label: site.showWalls ? 'SHOWN' : 'HIDDEN',
         selected: site.showWalls,
-        x: CONTENT_X + 330,
-        y: y0 + SYS_PITCH * 2,
-        w: rowW + valueW + 16,
-        h: 96,
+        x: BX,
+        y: rowY(2),
+        w: fullW,
+        h: BH,
       },
       {
         id: 'floor:set',
         label: 'SET THE FLOOR',
-        x: CONTENT_X + 330,
-        y: y0 + SYS_PITCH * 3,
-        w: rowW + valueW + 16,
-        h: 96,
+        x: BX,
+        y: rowY(3),
+        w: fullW,
+        h: BH,
       },
       {
         id: 'reset',
         label: this.resetArm > 0 ? 'SURE? PRESS AGAIN' : 'RESET PROGRESS',
         tone: UI.danger,
-        x: CONTENT_X + 330,
-        y: y0 + SYS_PITCH * 4,
-        w: rowW + valueW + 16 + rowW + 16,
-        h: 96,
+        x: BX,
+        y: rowY(4),
+        w: fullW,
+        h: BH,
         small: true,
       },
     );
@@ -1723,38 +1762,90 @@ export class MenuSystem extends createSystem({}) {
       g.textAlign = 'left';
       g.textBaseline = 'middle';
       // THE LABEL COLUMN HAS A WIDTH, and the sub-line has to respect
-      // it: the controls start at CONTENT_X + 330, and a sub that ran
-      // long used to print straight through SET THE FLOOR. Clamped, not
-      // trusted.
-      const labelW = 306;
-      const label = (text: string, sub: string, y: number): void => {
-        g.font = font(600, 30);
+      // it: the controls start at BX, and a sub that ran long used to
+      // print straight through SET THE FLOOR. Clamped, not trusted.
+      const labelW = BX - CONTENT_X - 50;
+      const row = (k: number, text: string, sub: string, hue: string): void => {
+        const y = y0 + k * SYS_PITCH;
+        chamfer(g, CONTENT_X, y, W - 34 - CONTENT_X, SYS_PITCH - 14, 14);
+        g.fillStyle = 'rgba(150,175,255,0.04)';
+        g.fill();
+        g.strokeStyle = SKIN.lineFaint;
+        g.lineWidth = 1.5;
+        g.stroke();
+        // A lit tick at the row's head, in the row's own colour.
+        g.fillStyle = hue;
+        g.shadowColor = hue;
+        g.shadowBlur = 8;
+        g.fillRect(CONTENT_X + 14, y + 26, 4, SYS_PITCH - 66);
+        g.shadowBlur = 0;
+        g.textAlign = 'left';
+        g.font = font(700, 30);
+        g.letterSpacing = '2px';
         g.fillStyle = UI.text;
-        g.fillText(text, CONTENT_X + 10, y + 34, labelW);
-        g.font = font(500, 22);
+        g.fillText(text, CONTENT_X + 34, y + 38, labelW);
+        g.letterSpacing = '0px';
+        g.font = font(500, 21);
         g.fillStyle = UI.faint;
-        g.fillText(sub, CONTENT_X + 10, y + 68, labelW);
+        g.fillText(sub, CONTENT_X + 34, y + 72, labelW);
       };
-      label('SOUND', 'Effects volume', SYS_Y0);
+      row(0, 'SOUND', 'Effects volume', SKIN.gold);
       // The now-playing line rides the MUSIC row's sub, because a record
       // you cannot name is a record you cannot ask for again.
       const on = nowPlaying();
-      label('MUSIC', on ? `now playing · ${on}` : 'the records', SYS_Y0 + SYS_PITCH);
-      label('WALL FRAMES', 'Show detected walls', SYS_Y0 + SYS_PITCH * 2);
-      label('THE FLOOR', 'Drag the tape to resize', SYS_Y0 + SYS_PITCH * 3);
-      label('PROGRESS', 'Clear unlocks and best times', SYS_Y0 + SYS_PITCH * 4);
+      row(1, 'MUSIC', on ? `now playing \u00b7 ${on}` : 'the records', SKIN.gold);
+      row(2, 'WALL FRAMES', 'Show the walls the headset found', SKIN.info);
+      row(3, 'THE FLOOR', 'Drag the tape to resize', SKIN.info);
+      row(4, 'PROGRESS', 'Clear your best waves', SKIN.magenta);
+
+      // The two faders: the figure over a ten-step bar.
+      const fader = (k: number, v: number): void => {
+        const x = BX + stepW + 16;
+        const y = rowY(k);
+        well(g, x, y, valueW, BH, 10);
+        g.textAlign = 'center';
+        g.font = font(700, 32);
+        g.fillStyle = UI.text;
+        g.fillText(`${Math.round(v * 100)}%`, x + valueW / 2, y + 32);
+        const n = 10;
+        const gap = 5;
+        const segW = (valueW - 48 - gap * (n - 1)) / n;
+        const lit = Math.round(v * n);
+        for (let i = 0; i < n; i++) {
+          const sx = x + 24 + i * (segW + gap);
+          g.beginPath();
+          g.moveTo(sx + 4, y + 58);
+          g.lineTo(sx + segW + 4, y + 58);
+          g.lineTo(sx + segW, y + 68);
+          g.lineTo(sx, y + 68);
+          g.closePath();
+          if (i < lit) {
+            g.fillStyle = SKIN.gold;
+            g.shadowColor = SKIN.gold;
+            g.shadowBlur = 6;
+          } else {
+            g.fillStyle = 'rgba(160,185,255,0.14)';
+          }
+          g.fill();
+          g.shadowBlur = 0;
+        }
+      };
+      fader(0, sfxVolume());
+      fader(1, musicVolume());
 
       const real = walls.filter((w) => w.real && w.kind === 'wall').length;
       const flats = walls.filter((w) => w.kind !== 'wall').length;
       const fake = walls.filter((w) => !w.real && w.kind === 'wall').length;
-      g.font = font(500, 22);
+      g.textAlign = 'left';
+      g.font = font(500, 19);
       g.fillStyle = UI.faint;
       g.fillText(
         site.stageRoom
-          ? `room: the headset's room-scale box (${stage.why})${flats ? ` · floor/ceiling ports live` : ''}`
-          : `room: ${real} scanned wall${real === 1 ? '' : 's'}${fake ? ` · ${fake} stand-in` : ''}${flats ? ` · floor/ceiling ports live` : ''} · stage: ${stage.why}`,
-        CONTENT_X + 10,
-        H - 44,
+          ? `room: the headset's room-scale box (${stage.why})${flats ? ` \u00b7 floor/ceiling ports live` : ''}`
+          : `room: ${real} scanned wall${real === 1 ? '' : 's'}${fake ? ` \u00b7 ${fake} stand-in` : ''}${flats ? ` \u00b7 floor/ceiling ports live` : ''} \u00b7 stage: ${stage.why}`,
+        CONTENT_X + 4,
+        H - 40,
+        W - 34 - CONTENT_X,
       );
     };
   }
@@ -1857,17 +1948,17 @@ export class MenuSystem extends createSystem({}) {
     const [cw, ch] = BOARD.cardPx;
     const sg = plant.siege;
     const buttons: PanelButton[] = [
-      { id: 'resume', label: 'RESUME', primary: true, x: 40, y: 236, w: cw - 80, h: 160 },
+      { id: 'resume', label: 'RESUME', primary: true, px: 48, x: CARD_PAD, y: 262, w: cw - 2 * CARD_PAD, h: 150 },
     ];
     if (sg.phase === 'build') {
       buttons.push({
         id: 'card:start',
         label: 'START THE NEXT WAVE',
-        tone: UI.accent,
-        x: 40,
-        y: 420,
-        w: cw - 80,
-        h: 120,
+        tone: SKIN.gold,
+        x: CARD_PAD,
+        y: 428,
+        w: cw - 2 * CARD_PAD,
+        h: 110,
       });
     }
     buttons.push({
@@ -1875,31 +1966,24 @@ export class MenuSystem extends createSystem({}) {
       label: this.quitArm > 0 ? 'SURE? POKE AGAIN' : 'QUIT',
       tone: UI.danger,
       small: true,
-      x: 40,
-      y: ch - 150,
-      w: cw - 80,
-      h: 110,
+      x: CARD_PAD,
+      y: ch - 140,
+      w: cw - 2 * CARD_PAD,
+      h: 104,
     });
     const wave = waveSpec(sg.wave);
     this.card.paint(
       'PAUSED',
       (g) => {
-        g.textAlign = 'center';
+        this.paintHud(g, CARD_PAD, CARD_HUD, cw - 2 * CARD_PAD, 84);
         g.textBaseline = 'middle';
-        g.font = font(600, 30);
-        g.fillStyle = UI.dim;
         const status =
           sg.phase === 'core'
-            ? 'PLACE THE CORE'
-            : sg.phase === 'build'
-              ? `WAVE ${sg.wave + 1} \u00b7 ${wave.name} \u00b7 ${Math.ceil(sg.buildT)}s`
-              : sg.phase === 'wave'
-                ? `WAVE ${sg.wave + 1} \u00b7 ${siegeLeft()} INCOMING`
-                : 'THE CORE HAS FALLEN';
-        g.fillText(status, cw / 2, 150, cw - 80);
-        g.font = font(500, 22);
-        g.fillStyle = UI.faint;
-        g.fillText('The works keeps running while you are here.', cw / 2, 196, cw - 80);
+            ? 'A NEW SIEGE \u00b7 THE FLOOR IS YOURS'
+            : sg.phase === 'fallen'
+              ? 'THE CORE HAS FALLEN'
+              : `WAVE ${sg.wave + 1} \u00b7 ${wave.name}`;
+        caps(g, status, cw / 2, 226, { px: 19, color: SKIN.gold, align: 'center', track: 4, max: cw - 80 });
       },
       buttons,
       this.hover,
@@ -1929,22 +2013,21 @@ export class MenuSystem extends createSystem({}) {
     }
     const [cw, ch] = BOARD.cardPx;
     const armed = buildView.armed?.() ?? null;
+    const sg = plant.siege;
     // Three columns, measured off the card instead of nailed to pixels —
     // the card grew and every hard-coded 166 would have left a gutter.
     const colW = (cw - 2 * CARD_PAD - 2 * CARD_GAP) / 3;
     const colX = (c: number): number => CARD_PAD + c * (colW + CARD_GAP);
-    // The page tabs are THREE across, on their own measure.
-    const tabW = (cw - 2 * CARD_PAD - 2 * CARD_GAP) / 3;
     const tab = (id: string, label: string, on: boolean, c: number): PanelButton => ({
       id,
       label,
       small: true,
-      px: 24,
+      px: 22,
       selected: on,
-      x: CARD_PAD + c * (tabW + CARD_GAP),
-      y: 162,
-      w: tabW,
-      h: 42,
+      x: colX(c),
+      y: CARD_TABS,
+      w: colW,
+      h: 46,
     });
     const buttons: PanelButton[] = [
       tab('card:build', 'BUILD', this.cardMode === 'build', 0),
@@ -1954,57 +2037,41 @@ export class MenuSystem extends createSystem({}) {
         id: 'resume',
         label: 'RESUME',
         primary: true,
-        x: 34,
-        y: ch - 84,
-        w: cw / 2 - 46,
+        px: 34,
+        x: CARD_PAD,
+        y: ch - 92,
+        w: cw / 2 - CARD_PAD - 7,
         h: 64,
       },
       {
         id: 'quit',
         label: this.quitArm > 0 ? 'SURE? PRESS AGAIN' : 'QUIT',
         tone: UI.danger,
-        x: cw / 2 + 12,
-        y: ch - 84,
-        w: cw / 2 - 46,
+        x: cw / 2 + 7,
+        y: ch - 92,
+        w: cw / 2 - CARD_PAD - 7,
         h: 64,
         small: true,
       },
     ];
 
+    // The catalogue: the core (alone, until it stands), then the towers.
+    // A tower you cannot pay for is a tower you cannot pick up.
+    const kit = (['dock', 'turret', 'hammer', 'flamer', 'tesla', 'mortar'] as BuildTool[]).filter(
+      (t) => t !== 'dock' || typeAvailable('dock'),
+    );
+    const TILE_H = 128;
     if (this.cardMode === 'build') {
-      // EVERY TOOL CARRIES ITS PICTURE. Seven words in one weight is a
-      // list you re-read every time you open the card; seven silhouettes
-      // is a thing you learn once and then recognise on the floor,
-      // because the ghost on your ray wears the same shape.
-      //
-      // The wrecking bar sits in the catalogue like any other tool —
-      // playtest went looking for a delete and found nothing.
-      const kit: Array<{ tool: BuildTool; label: string }> = [
-        { tool: 'dock', label: 'CORE' },
-        { tool: 'turret', label: 'TURRET' },
-        { tool: 'hammer', label: 'HAMMER' },
-        { tool: 'flamer', label: 'FLAMER' },
-        { tool: 'tesla', label: 'TESLA' },
-        { tool: 'mortar', label: 'MORTAR' },
-      ].filter((e) => e.tool !== 'dock' || typeAvailable('dock')) as Array<{ tool: BuildTool; label: string }>;
-      kit.forEach((entry, i) => {
+      kit.forEach((tool, i) => {
         buttons.push({
-          id: `build:${entry.tool}`,
-          label: entry.label,
-          small: true,
-          px: 22,
-          glyph: toolGlyph(entry.tool),
-          // A gun you cannot pay for is a gun you cannot pick up.
-          disabled:
-            entry.tool === 'delete'
-              ? false
-              : !typeAvailable(entry.tool as UnitType) || !canAfford(entry.tool as UnitType),
-          selected: armed === entry.tool,
-          tone: entry.tool === 'delete' ? UI.danger : undefined,
+          id: `build:${tool}`,
+          label: '',
+          ghost: true,
+          disabled: !typeAvailable(tool as UnitType) || !canAfford(tool as UnitType),
           x: colX(i % 3),
-          y: CARD_BODY + Math.floor(i / 3) * 100,
+          y: CARD_BODY + Math.floor(i / 3) * (TILE_H + CARD_GAP),
           w: colW,
-          h: 92,
+          h: TILE_H,
         });
       });
     } else if (this.cardMode === 'supply') {
@@ -2023,20 +2090,19 @@ export class MenuSystem extends createSystem({}) {
     }
 
     // START — the build phase ends when you say so.
-    const sg = plant.siege;
     const starting = sg.phase === 'build';
-    const START_W = 200;
+    const START_W = 176;
     if (starting) {
       buttons.push({
         id: 'card:start',
         label: 'START WAVE',
         small: true,
-        px: 21,
-        tone: UI.accent,
-        x: cw - 34 - START_W,
-        y: 101,
+        px: 22,
+        tone: SKIN.gold,
+        x: cw - CARD_PAD - START_W,
+        y: CARD_HUD,
         w: START_W,
-        h: 50,
+        h: 84,
       });
     }
     const wave = waveSpec(sg.wave);
@@ -2044,73 +2110,8 @@ export class MenuSystem extends createSystem({}) {
     this.card.paint(
       title,
       (g) => {
-        // THE READOUT: three small-caps labels over three figures — the
-        // clock (or the count), the core, the purse — in one row with
-        // START at its end.
-        const LABEL_Y = 113;
-        const VALUE_Y = 145;
-        const label = (text: string, x: number, align: CanvasTextAlign = 'left'): void => {
-          g.textAlign = align;
-          g.font = font(600, 15);
-          g.fillStyle = UI.faint;
-          g.fillText(text, x, LABEL_Y);
-        };
-        g.textBaseline = 'alphabetic';
-        let clockLabel = '';
-        let clock = '';
-        let clockTone: string = UI.accent;
-        if (sg.phase === 'build') {
-          const secs = Math.ceil(sg.buildT);
-          clockLabel = 'NEXT WAVE IN';
-          clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-        } else if (sg.phase === 'wave') {
-          clockLabel = 'ENEMIES LEFT';
-          clock = siegeLeft().toLocaleString('en-US');
-          clockTone = UI.danger;
-        } else if (sg.phase === 'core') {
-          clockLabel = 'FIRST';
-          clock = 'PLACE THE CORE';
-        } else {
-          clockLabel = 'THE CORE';
-          clock = 'FALLEN';
-          clockTone = UI.danger;
-        }
-        label(clockLabel, 36);
-        g.textAlign = 'left';
-        g.font = font(700, clock.length > 6 ? 26 : 34);
-        g.fillStyle = clockTone;
-        g.fillText(clock, 36, VALUE_Y, 150);
-        // THE CORE, as a bar — the number the whole siege is about.
-        const coinsW = 130;
-        const right = starting ? cw - 34 - START_W - 22 : cw - 36;
-        const barX = 206;
-        const barW = right - coinsW - 22 - barX;
-        const core = coreHealth();
-        label('CORE', barX);
-        label(`${Math.round(core * 100)}%`, barX + barW, 'right');
-        g.fillStyle = 'rgba(255,255,255,0.08)';
-        g.beginPath();
-        g.roundRect(barX, 127, barW, 14, 7);
-        g.fill();
-        g.fillStyle = core > 0.5 ? UI.positive : core > 0.25 ? UI.warn : UI.danger;
-        g.beginPath();
-        g.roundRect(barX, 127, Math.max(7, barW * core), 14, 7);
-        g.fill();
-        // THE PURSE, behind a coin.
-        label('COINS', right, 'right');
-        g.textAlign = 'right';
-        g.font = font(700, 30);
-        g.fillStyle = '#ffd36a';
-        const coins = sg.coins.toLocaleString('en-US');
-        g.fillText(coins, right, VALUE_Y, coinsW - 30);
-        const cwid = Math.min(coinsW - 30, g.measureText(coins).width);
-        g.beginPath();
-        g.arc(right - cwid - 16, VALUE_Y - 11, 10, 0, Math.PI * 2);
-        g.fill();
-        g.fillStyle = 'rgba(14,11,7,0.75)';
-        g.beginPath();
-        g.arc(right - cwid - 16, VALUE_Y - 11, 5, 0, Math.PI * 2);
-        g.fill();
+        const hudR = starting ? cw - CARD_PAD - START_W - 12 : cw - CARD_PAD;
+        this.paintHud(g, CARD_PAD, CARD_HUD, hudR - CARD_PAD, 84);
         g.textAlign = 'left';
         g.textBaseline = 'middle';
 
@@ -2118,15 +2119,31 @@ export class MenuSystem extends createSystem({}) {
         else if (this.cardMode === 'supply') this.paintBills(g, cw, ch);
         else if (this.cardMode === 'controls') this.paintCardControls(g);
         else {
+          kit.forEach((tool, i) => {
+            const id = `build:${tool}`;
+            towerCard(g, colX(i % 3), CARD_BODY + Math.floor(i / 3) * (TILE_H + CARD_GAP), colW, TILE_H, {
+              tool,
+              name: tool === 'dock' ? 'CORE' : TOWER_SHORT[tool as WeaponId],
+              cost: tool === 'dock' ? undefined : unitCost(tool as UnitType),
+              note: tool === 'dock' ? 'PLACE IT FIRST' : undefined,
+              costAt: 'foot',
+              live: typeAvailable(tool as UnitType) && canAfford(tool as UnitType),
+              armed: armed === tool,
+              hover: this.card.hoverOf(id),
+              layout: 'row',
+            });
+          });
           g.textAlign = 'center';
+          g.textBaseline = 'middle';
           const hoveredTool = this.hover?.startsWith('build:') ? this.hover.slice(6) : null;
           const describedTool = hoveredTool ?? armed;
+          const lineY = ch - CARD_FOOT + 4;
           if (describedTool && describedTool in UNIT_DOCKET) {
-            g.font = font(500, 18);
+            g.font = font(500, 19);
             g.fillStyle = UI.dim;
-            g.fillText(UNIT_DOCKET[describedTool as UnitType], cw / 2, ch - CARD_FOOT - 64, cw - 2 * CARD_PAD);
+            g.fillText(UNIT_DOCKET[describedTool as UnitType], cw / 2, lineY - 46, cw - 2 * CARD_PAD);
           }
-          g.font = font(500, 20);
+          g.font = font(500, 19);
           g.fillStyle = UI.faint;
           g.fillText(
             armed === 'delete'
@@ -2135,29 +2152,101 @@ export class MenuSystem extends createSystem({}) {
                 ? ''
                 : armed && isWeapon(armed as UnitType)
                   ? say(
-                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) anywhere on the floor · it fires on its own`,
-                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) anywhere on the floor · it fires on its own`,
+                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) anywhere on the floor \u00b7 it fires on its own`,
+                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) anywhere on the floor \u00b7 it fires on its own`,
                     )
                   : armed
-                    ? say('Aim at the floor · Trigger: place', 'Aim at the floor · Pinch: place')
+                    ? say('Aim at the floor \u00b7 Trigger: place', 'Aim at the floor \u00b7 Pinch: place')
                     : say('Choose a tower. Empty-handed: trigger a tower to upgrade or sell it.', 'Choose a tower. Touch a tower to upgrade or sell it.'),
             cw / 2,
-            ch - CARD_FOOT - 34,
+            lineY - 22,
+            cw - 2 * CARD_PAD,
           );
           // THE WAY BACK OUT. Arming a tool used to be a one-way door
           // and nothing on this card said otherwise, so it says so now —
           // on the page where you pick the tool up, which is the only
           // place anybody is going to read it.
           if (armed) {
-            g.font = font(600, 19);
-            g.fillStyle = UI.dim;
-            g.fillText(say('\u24cd / \u24ce PUT TOOL AWAY', 'PALM \u00b7 DOWN PUTS THE TOOL AWAY'), cw / 2, ch - CARD_FOOT - 8);
+            caps(g, say('\u24cd / \u24ce PUTS THE TOOL AWAY', 'PALM \u00b7 DOWN PUTS THE TOOL AWAY'), cw / 2, lineY, {
+              px: 16,
+              color: SKIN.gold,
+              align: 'center',
+              track: 2,
+            });
           }
         }
       },
       buttons,
       this.hover,
     );
+  }
+
+  /**
+   * THE HUD STRIP — the three numbers a siege is about, in one recessed
+   * bay: the clock to the next wave (or how many are left), the core as
+   * the same ten segments that float over it in the room, and the purse.
+   */
+  private paintHud(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+    const sg = plant.siege;
+    well(g, x, y, w, h, 12);
+    let clockLabel = '';
+    let clock = '';
+    let clockTone: string = SKIN.gold;
+    if (sg.phase === 'build') {
+      const secs = Math.ceil(sg.buildT);
+      clockLabel = 'NEXT WAVE IN';
+      clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    } else if (sg.phase === 'wave') {
+      clockLabel = 'ENEMIES LEFT';
+      clock = siegeLeft().toLocaleString('en-US');
+      clockTone = SKIN.magentaSoft;
+    } else if (sg.phase === 'core') {
+      clockLabel = 'FIRST';
+      clock = 'PLACE THE CORE';
+    } else {
+      clockLabel = 'THE CORE';
+      clock = 'FALLEN';
+      clockTone = SKIN.magenta;
+    }
+    const ly = y + 24;
+    const vy = y + h - 28;
+    const clockW = 170;
+    const coinsW = 128;
+    g.textBaseline = 'middle';
+    caps(g, clockLabel, x + 18, ly, { px: 14, track: 2 });
+    g.textAlign = 'left';
+    g.font = font(700, clock.length > 6 ? 24 : 36);
+    g.fillStyle = clockTone;
+    g.shadowColor = rgba(clockTone, 0.6);
+    g.shadowBlur = 10;
+    g.fillText(clock, x + 18, vy, clockW - 26);
+    g.shadowBlur = 0;
+
+    // Hairlines between the cells.
+    g.strokeStyle = SKIN.lineFaint;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(x + clockW, y + 14);
+    g.lineTo(x + clockW, y + h - 14);
+    g.moveTo(x + w - coinsW, y + 14);
+    g.lineTo(x + w - coinsW, y + h - 14);
+    g.stroke();
+
+    // Before the core stands there is nothing to gauge: the bar sits dark.
+    const core = sg.phase === 'core' ? 0 : coreHealth();
+    const gx = x + clockW + 18;
+    const gw = w - clockW - coinsW - 36;
+    caps(g, 'CORE', gx, ly, { px: 14, track: 2 });
+    caps(g, sg.phase === 'core' ? '\u2014' : `${Math.round(core * 100)}%`, gx + gw, ly, {
+      px: 14,
+      track: 1,
+      align: 'right',
+      color: UI.dim,
+    });
+    coreGauge(g, gx, vy - 9, gw, 18, core);
+
+    caps(g, 'COINS', x + w - coinsW + 18, ly, { px: 14, track: 2 });
+    price(g, sg.coins, x + w - coinsW + 18, vy, { px: 30 });
   }
 
   /**
@@ -2170,16 +2259,28 @@ export class MenuSystem extends createSystem({}) {
       { shape: 'cuff', name: 'YOUR PALM', does: 'Turn your left palm toward you: the towers, the wave, the coins. Poke a tower with your right index finger to pick it up.' },
       { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down, anywhere on the floor.' },
       { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s START begins the next wave early.' },
+      { shape: 'fist', name: 'FIST', does: 'Close a fist on a mite or a beetle and it is yours. Open your hand to throw it.' },
     ];
+    const rowH = Math.min(pitch - 10, 110);
     let y = y0;
     for (const row of rows) {
-      handGlyph(g, row.shape, x0 + 6, y, 60);
+      chamfer(g, x0, y, w, rowH, 12);
+      g.fillStyle = 'rgba(150,175,255,0.045)';
+      g.fill();
+      g.strokeStyle = SKIN.lineFaint;
+      g.lineWidth = 1.5;
+      g.stroke();
+      const gs = Math.min(64, rowH - 20);
+      hexPad(g, x0 + 16 + gs / 2, y + rowH / 2, gs * 0.62, SKIN.gold);
+      handGlyph(g, row.shape, x0 + 16, y + (rowH - gs) / 2, gs);
       g.textAlign = 'left';
-      g.textBaseline = 'top';
+      g.textBaseline = 'middle';
       g.font = font(700, 22);
-      g.fillStyle = UI.accent;
-      g.fillText(row.name, x0 + 90, y);
-      wrapText(g, row.does, x0 + 90, y + 32, w - 96, 22, font(500, 18), UI.dim);
+      g.letterSpacing = '2px';
+      g.fillStyle = SKIN.gold;
+      g.fillText(row.name, x0 + gs + 36, y + 24);
+      g.letterSpacing = '0px';
+      wrapText(g, row.does, x0 + gs + 36, y + 52, w - gs - 52, 22, font(500, 18), UI.dim);
       y += pitch;
     }
     g.textBaseline = 'middle';
@@ -2190,52 +2291,100 @@ export class MenuSystem extends createSystem({}) {
    *  way forward and it is the next wave. */
   private paintWaves(g: CanvasRenderingContext2D, cw: number, ch: number): void {
     const sg = plant.siege;
-    let y = CARD_BODY + 10;
     const spec = waveSpec(sg.wave);
-    g.textAlign = 'left';
+    const X = CARD_PAD;
+    const R = cw - CARD_PAD;
+    const bottom = ch - CARD_FOOT;
+    let y = CARD_BODY + 10;
     g.textBaseline = 'middle';
-    g.font = font(500, 20);
-    g.fillStyle = UI.faint;
-    g.fillText(sg.phase === 'wave' ? 'FIGHTING' : 'NEXT UP', CARD_PAD, y);
-    y += 34;
-    g.font = font(700, 30);
+    caps(g, sg.phase === 'wave' ? 'FIGHTING NOW' : 'NEXT UP', X, y, { px: 15, color: SKIN.gold, track: 3 });
+    y += 32;
+    g.textAlign = 'left';
+    g.font = font(700, 32);
+    g.letterSpacing = '3px';
     g.fillStyle = UI.textHi;
-    g.fillText(spec.name, CARD_PAD, y);
-    y += 30;
-    g.font = font(500, 19);
-    g.fillStyle = UI.dim;
-    g.fillText(waveSummary(spec), CARD_PAD, y, cw - 2 * CARD_PAD);
-    y += 28;
-    y +=
-      26 * wrapText(g, spec.tip, CARD_PAD, y, cw - 2 * CARD_PAD, 26, font(600, 21), UI.accent) + 14;
-    // What lives in the walls — every kind this wave sends.
-    const kinds = [...new Set(spec.spawns.map((sp) => sp.enemy))];
-    for (const k of kinds) {
-      if (y > ch - CARD_FOOT - 120) break;
-      const e = ENEMIES[k];
-      g.font = font(700, 20);
+    g.fillText(spec.name, X, y);
+    g.letterSpacing = '0px';
+    y += 38;
+
+    // The bill, as chips: one per kind in its neon, and where they come from.
+    const counts = new Map<EnemyId, number>();
+    for (const sp of spec.spawns) counts.set(sp.enemy, (counts.get(sp.enemy) ?? 0) + sp.count);
+    const packs = spec.spawns.filter((sp) => sp.pack).length;
+    let cx = X;
+    const chip = (text: string, hue: string): void => {
+      g.font = font(700, 18);
+      g.letterSpacing = '1.5px';
+      const tw = g.measureText(text).width;
+      const w = tw + 40;
+      chamfer(g, cx, y - 16, w, 32, 8);
+      g.fillStyle = rgba(hue, 0.1);
+      g.fill();
+      g.strokeStyle = rgba(hue, 0.45);
+      g.lineWidth = 1.5;
+      g.stroke();
+      dot(g, cx + 15, y, 5, hue);
+      g.textAlign = 'left';
       g.fillStyle = UI.text;
-      g.fillText(e.name, CARD_PAD, y);
+      g.fillText(text, cx + 28, y + 1);
+      g.letterSpacing = '0px';
+      cx += w + 8;
+    };
+    for (const [e, n] of counts) chip(`${n.toLocaleString('en-US')} ${ENEMIES[e].name}`, enemyHue(e));
+    chip(packs > 0 ? `${packs} PACK${packs === 1 ? '' : 'S'} IN THE FLOOR` : 'EVERY WALL', packs > 0 ? SKIN.magenta : SKIN.info);
+    y += 34;
+
+    // The wave's lesson, in a lit bay.
+    g.font = font(600, 20);
+    const lines = measureLines(g, spec.tip, R - X - 40);
+    const tipH = 22 + lines * 25;
+    chamfer(g, X, y, R - X, tipH, 10);
+    g.fillStyle = rgba(SKIN.gold, 0.07);
+    g.fill();
+    g.strokeStyle = rgba(SKIN.gold, 0.3);
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = SKIN.gold;
+    g.fillRect(X + 12, y + 12, 4, tipH - 24);
+    wrapText(g, spec.tip, X + 28, y + 23, R - X - 40, 25, font(600, 20), SKIN.goldHi);
+    y += tipH + 22;
+
+    // What lives in the walls — every kind this wave sends.
+    for (const k of counts.keys()) {
+      if (y > bottom - 110) break;
+      const e = ENEMIES[k];
+      dot(g, X + 7, y, 6, enemyHue(k));
+      g.textAlign = 'left';
+      g.font = font(700, 19);
+      g.letterSpacing = '1.5px';
+      g.fillStyle = enemyHue(k);
+      g.fillText(e.name, X + 22, y);
+      g.letterSpacing = '0px';
       g.font = font(500, 18);
-      g.fillStyle = UI.faint;
-      g.fillText(e.docket, CARD_PAD + 120, y, cw - 2 * CARD_PAD - 120);
+      g.fillStyle = UI.dim;
+      g.fillText(e.docket, X + 120, y, R - X - 120);
       y += 28;
     }
-    y += 10;
-    // The ladder ahead.
-    g.font = font(500, 18);
-    g.fillStyle = UI.faint;
-    g.fillText('AFTER THAT', CARD_PAD, y);
-    y += 28;
-    for (let n = sg.wave + 1; n < sg.wave + 6 && y < ch - CARD_FOOT - 20; n++) {
+    y += 12;
+
+    // The ladder ahead: the next three, no more.
+    if (y < bottom - 40) {
+      rule(g, 'AFTER THAT', X, R, y, UI.faint, 14);
+      y += 30;
+    }
+    for (let n = sg.wave + 1; n < sg.wave + 4 && y < bottom - 8; n++) {
       const w = waveSpec(n);
-      g.font = font(600, 20);
-      g.fillStyle = UI.dim;
-      g.fillText(`${n + 1}. ${w.name}`, CARD_PAD, y, 230);
-      g.font = font(500, 17);
+      g.textAlign = 'left';
+      g.font = font(700, 18);
       g.fillStyle = UI.faint;
-      g.fillText(waveSummary(w), CARD_PAD + 240, y, cw - 2 * CARD_PAD - 240);
-      y += 28;
+      g.fillText(String(n + 1).padStart(2, '0'), X, y);
+      g.font = font(600, 19);
+      g.fillStyle = UI.dim;
+      g.fillText(w.name, X + 38, y, 220);
+      g.font = font(500, 16);
+      g.fillStyle = UI.faint;
+      g.fillText(waveSummary(w), X + 270, y, R - X - 270);
+      y += 27;
     }
   }
 
@@ -2251,48 +2400,46 @@ export class MenuSystem extends createSystem({}) {
    */
   private paintCardControls(g: CanvasRenderingContext2D): void {
     if (intents.handMode) {
-      this.paintHandControls(g, CARD_PAD, CARD_BODY, BOARD.cardPx[0] - 2 * CARD_PAD, 94);
+      this.paintHandControls(g, CARD_PAD, CARD_BODY, BOARD.cardPx[0] - 2 * CARD_PAD, 84);
       return;
     }
-    const S = 160;
+    // Each callout is a label with a line under it, so they stand 54
+    // apart — closer and one's sub-line runs into the next one's name.
+    const S = 120;
     const X0 = CARD_PAD + 10;
     const RY = CARD_BODY + 4;
-    const LY = RY + S + 28;
-    const LBL = 250;
+    const LY = RY + S + 24;
+    const LBL = 206;
+    const PITCH = 54;
     const litRight = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
     const litLeft = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
 
     const aR = drawController(g, 'right', X0, RY, S, litRight);
     const aL = drawController(g, 'left', X0, LY, S, litLeft);
-    g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = font(500, 16);
-    g.letterSpacing = '2px';
-    g.fillStyle = UI.faint;
-    g.fillText('RIGHT HAND', X0 + S / 2, RY + S + 12);
-    g.fillText('LEFT HAND', X0 + S / 2, LY + S + 12);
-    g.letterSpacing = '0px';
+    caps(g, 'RIGHT HAND', X0 + S / 2, RY + S + 10, { px: 14, align: 'center' });
+    caps(g, 'LEFT HAND', X0 + S / 2, LY + S + 10, { px: 14, align: 'center' });
 
     const r = (c: Control): { x: number; y: number } => aR[c];
     const l = (c: Control): { x: number; y: number } => aL[c];
-    callout(g, r('trigger'), LBL, RY + 12, 'right', 'TRIGGER',
+    callout(g, r('trigger'), LBL, RY + 8, 'right', 'TRIGGER',
       'Place the tower. Empty-handed on a tower: upgrade or sell.');
-    callout(g, r('upper'), LBL, RY + 60, 'right', faceGlyph('right', 'upper'),
+    callout(g, r('upper'), LBL, RY + 8 + PITCH, 'right', faceGlyph('right', 'upper'),
       'Turn the tower in hand a quarter.');
-    callout(g, r('lower'), LBL, RY + 108, 'right', faceGlyph('right', 'lower'),
+    callout(g, r('lower'), LBL, RY + 8 + PITCH * 2, 'right', faceGlyph('right', 'lower'),
       'This card. Also puts a tower panel away.');
-    callout(g, r('grip'), LBL, RY + 156, 'right', 'GRIP',
-      'Not used.');
+    callout(g, r('grip'), LBL, RY + 8 + PITCH * 3, 'right', 'GRIP',
+      'On a mite or a beetle: grab it. Let go to throw.');
     callout(
       g,
       l('lower'),
       LBL,
-      LY + 40,
+      RY + 8 + PITCH * 4,
       'right',
       `${faceGlyph('left', 'lower')} ${faceGlyph('left', 'upper')}`,
       'Put the tool away.',
     );
-    callout(g, l('stick'), LBL, LY + 96, 'right', 'STICKS · MENU', 'Not used. Walk — it is your room.', false);
+    callout(g, l('stick'), LBL, RY + 8 + PITCH * 5, 'right', 'STICKS \u00b7 MENU', 'Not used. Walk \u2014 it is your room.', false);
   }
 
   /* ── THE BOX PANEL ────────────────────────────────────────────────────
@@ -2314,22 +2461,26 @@ export class MenuSystem extends createSystem({}) {
     const unit = unitById(site.inspect);
     if (!unit) return;
     // THE TOWER PANEL, kept to the one decision it is for: what it is,
-    // how far it has come, and two big buttons — UPGRADE (its price) and
-    // SELL (what you get back). The numbers live in the game, not here.
+    // how far it has come, how it is holding up, and two big buttons —
+    // UPGRADE (its price) and SELL (what you get back). It wears the
+    // tower's own neon, so the panel and the thing you touched are one.
     const [cw, ch] = BOARD.boxPx;
-    const PAD = 22;
+    const PAD = 24;
     const tower = isWeapon(unit.type);
+    const hue = neonOf(unit.type);
+    this.box.setAccent(hue);
     const level = levelOf(unit);
     const next = tower ? upgradeCost(unit) : null;
     const coins = plant.siege.coins;
-    const half = (cw - PAD * 2 - 14) / 2;
+    const half = (cw - PAD * 2 - 12) / 2;
     const footY = ch - PAD - 84;
     const buttons: PanelButton[] = [];
     if (tower) {
       buttons.push(
         {
           id: 'box:upgrade',
-          label: next === null ? 'MAX' : `UPGRADE ${next}`,
+          label: next === null ? 'MAX LEVEL' : 'UPGRADE',
+          sub: next === null ? 'fully built' : `${next} coins`,
           px: 26,
           disabled: next === null || coins < next,
           tone: next !== null && coins >= next ? UI.positive : undefined,
@@ -2340,50 +2491,56 @@ export class MenuSystem extends createSystem({}) {
         },
         {
           id: 'box:remove',
-          label: `SELL ${sellValue(unit)}`,
+          label: 'SELL',
+          sub: `+${sellValue(unit)} coins`,
           px: 26,
           tone: UI.danger,
-          x: PAD + half + 14,
+          x: PAD + half + 12,
           y: footY,
           w: half,
           h: 84,
         },
       );
     }
-    buttons.push({ id: 'box:close', label: '✕', small: true, px: 22, x: cw - PAD - 48, y: 16, w: 48, h: 44 });
+    buttons.push({ id: 'box:close', label: '\u2715', small: true, px: 22, x: cw - PAD - 46, y: 22, w: 46, h: 42 });
 
     this.box.paint(
-      unit.type === 'dock' ? 'THE CORE' : UNIT_NAME[unit.type],
+      '',
       (g) => {
-        g.textAlign = 'left';
         g.textBaseline = 'middle';
-        const midY = 136;
-        unitGlyph(g, unit.type, PAD, midY - 40, 80);
+        // The tower itself, on its pad.
+        const pcx = PAD + 54;
+        const pcy = 96;
+        hexPad(g, pcx, pcy + 6, 54, hue);
+        unitGlyph(g, unit.type, pcx - 46, pcy - 46, 92);
+
+        const tx = PAD + 124;
+        g.textAlign = 'left';
+        g.font = font(700, 30);
+        g.letterSpacing = '3px';
+        g.fillStyle = UI.textHi;
+        g.shadowColor = rgba(hue, 0.7);
+        g.shadowBlur = 12;
+        g.fillText(unit.type === 'dock' ? 'THE CORE' : UNIT_NAME[unit.type], tx, 50, cw - tx - PAD - 56);
+        g.shadowBlur = 0;
+        g.letterSpacing = '0px';
+
         if (!tower) {
-          g.font = font(600, 26);
-          g.fillStyle = UI.text;
-          g.fillText(`${Math.round(coreHealth() * 100)}%`, PAD + 88, midY);
+          const core = coreHealth();
+          caps(g, 'INTEGRITY', tx, 92, { px: 14, track: 2 });
+          caps(g, `${Math.round(core * 100)}%`, cw - PAD, 92, { px: 16, track: 1, align: 'right', color: UI.text });
+          coreGauge(g, tx, 108, cw - PAD - tx, 16, core);
+          wrapText(g, 'It never heals. Whatever reaches it takes a bite.', PAD, 196, cw - 2 * PAD, 24, font(500, 19), UI.dim);
           return;
         }
-        // THE LEVEL: one dot per level, lit up to this one.
-        const hex = `#${WEAPONS[unit.type as WeaponId].color.toString(16).padStart(6, '0')}`;
-        for (let k = 0; k < SIEGE.levels.length; k++) {
-          const x = PAD + 122 + k * 42;
-          g.beginPath();
-          g.arc(x, midY, 13, 0, Math.PI * 2);
-          if (k < level) {
-            g.fillStyle = hex;
-            g.fill();
-          } else {
-            g.strokeStyle = 'rgba(255,255,255,0.25)';
-            g.lineWidth = 3;
-            g.stroke();
-          }
-        }
-        g.font = font(600, 22);
-        g.fillStyle = UI.faint;
-        g.textAlign = 'right';
-        g.fillText(`${coins} COINS`, cw - PAD, midY);
+        // THE LEVEL: one hex per level, lit in the tower's neon.
+        pips(g, tx, 90, SIEGE.levels.length, level, hue, 10, 25);
+        caps(g, `LEVEL ${level}/${SIEGE.levels.length}`, tx + SIEGE.levels.length * 25 + 8, 91, { px: 14, track: 2, color: UI.dim });
+        price(g, coins, cw - PAD, 91, { px: 20, align: 'right' });
+        // THE PLATE: how much chewing it can still take.
+        const hp = unit.maxHp > 0 ? Math.max(0, unit.hp / unit.maxHp) : 1;
+        caps(g, 'PLATE', tx, 128, { px: 14, track: 2 });
+        coreGauge(g, tx + 64, 120, cw - PAD - tx - 64, 15, hp);
       },
       buttons,
       this.hover,
@@ -2416,7 +2573,7 @@ export class MenuSystem extends createSystem({}) {
         label: 'TRY AGAIN',
         primary: true,
         x: cw / 2 - 440,
-        y: ch - 132,
+        y: ch - 136,
         w: 420,
         h: 92,
       },
@@ -2424,113 +2581,72 @@ export class MenuSystem extends createSystem({}) {
         id: 'fin:board',
         label: 'BACK TO THE BOARD',
         x: cw / 2 + 20,
-        y: ch - 132,
+        y: ch - 136,
         w: 420,
         h: 92,
       },
     ];
     const sg = plant.siege;
+    // The fall wears the tide's colour: they got what they came for.
+    this.finale.setAccent(SKIN.magenta);
     this.finale.paint(
       '',
       (g) => {
         g.textAlign = 'center';
         g.textBaseline = 'middle';
 
-        // THE PLATE: a bolted rectangle with a hairline inside it and
-        // four hex heads holding it on, in the works' own iron.
-        const px = 40;
-        const py = 30;
-        const pw = cw - px * 2;
-        const ph = ch - py - 158;
-        g.fillStyle = 'rgba(255,162,46,0.05)';
-        g.beginPath();
-        g.roundRect(px, py, pw, ph, 18);
-        g.fill();
-        g.strokeStyle = UI.accentDim;
-        g.lineWidth = 3;
-        g.stroke();
-        g.strokeStyle = UI.lineFaint;
-        g.lineWidth = 1.5;
-        g.beginPath();
-        g.roundRect(px + 13, py + 13, pw - 26, ph - 26, 12);
-        g.stroke();
-        for (const [bx, by] of [
-          [px + 34, py + 34],
-          [px + pw - 34, py + 34],
-          [px + 34, py + ph - 34],
-          [px + pw - 34, py + ph - 34],
-        ]) {
-          g.beginPath();
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-            const hx = bx + Math.cos(a) * 11;
-            const hy = by + Math.sin(a) * 11;
-            if (i === 0) g.moveTo(hx, hy);
-            else g.lineTo(hx, hy);
-          }
-          g.closePath();
-          g.fillStyle = 'rgba(255,255,255,0.10)';
-          g.fill();
-          g.strokeStyle = UI.line;
-          g.lineWidth = 2;
-          g.stroke();
-        }
+        // THE CORE, gone dark on a magenta pad.
+        g.save();
+        const glow = g.createRadialGradient(cw / 2, 104, 0, cw / 2, 104, 200);
+        glow.addColorStop(0, rgba(SKIN.magenta, 0.2));
+        glow.addColorStop(1, rgba(SKIN.magenta, 0));
+        g.fillStyle = glow;
+        g.fillRect(0, 0, cw, 320);
+        g.restore();
+        hexPad(g, cw / 2, 112, 66, SKIN.magenta);
+        g.save();
+        g.globalAlpha = 0.5;
+        unitGlyph(g, 'dock', cw / 2 - 52, 52, 104, GLYPH_DEAD);
+        g.restore();
 
-        unitGlyph(g, 'dock', cw / 2 - 52, 64, 104, GLYPH_LIVE);
+        titleBar(g, 'THE CORE HAS FALLEN', cw / 2, 220, { px: 54, accent: SKIN.magenta, span: 120 });
 
-        g.font = font(700, 58);
-        g.letterSpacing = '8px';
-        g.fillStyle = UI.textHi;
-        g.fillText('THE CORE HAS FALLEN', cw / 2, 214);
-        g.letterSpacing = '0px';
-        g.font = font(600, 28);
-        g.fillStyle = UI.accent;
-        g.fillText(
-          `${sg.wave} wave${sg.wave === 1 ? '' : 's'} held \u00b7 ${sg.kills} put down`,
-          cw / 2,
-          262,
-        );
+        // THE TALLY: what you held, what you put down.
+        const stats: Array<[string, string, string]> = [
+          ['WAVES HELD', `${sg.wave}`, SKIN.gold],
+          ['PUT DOWN', sg.kills.toLocaleString('en-US'), SKIN.magentaSoft],
+          ['BEST EVER', `${Math.max(bestWave(), sg.wave)}`, UI.text],
+        ];
+        const SW = 230;
+        const GAP = 18;
+        const x0 = cw / 2 - (stats.length * SW + (stats.length - 1) * GAP) / 2;
+        stats.forEach(([label, value, tone], k) => {
+          const sx = x0 + k * (SW + GAP);
+          well(g, sx, 268, SW, 84, 12);
+          caps(g, label, sx + SW / 2, 290, { px: 15, align: 'center', track: 3 });
+          g.textAlign = 'center';
+          g.font = font(700, 38);
+          g.fillStyle = tone;
+          g.fillText(value, sx + SW / 2, 326, SW - 24);
+        });
 
-        // The stamped rule under the title: amber, broken in the middle
-        // the way a maker's plate carries its serial.
-        g.strokeStyle = UI.accent;
-        g.lineWidth = 3;
-        for (const dir of [-1, 1]) {
-          g.beginPath();
-          g.moveTo(cw / 2 + dir * 56, 296);
-          g.lineTo(cw / 2 + dir * 296, 296);
-          g.stroke();
-        }
-        g.fillStyle = UI.accent;
-        g.beginPath();
-        g.arc(cw / 2, 296, 6, 0, Math.PI * 2);
-        g.fill();
-
-        // THE CREDITS: small stencilled label over a big name — a plate,
-        // not a paragraph. The names are given the type size that FITS
-        // rather than a fixed one, because a name is not something to
-        // wrap, hyphenate or run off the end of a card.
-        const stencil = (label: string, y: number): void => {
-          g.font = font(600, 21);
-          g.letterSpacing = '6px';
-          g.fillStyle = UI.faint;
-          g.fillText(label, cw / 2, y);
-          g.letterSpacing = '0px';
-        };
+        // THE CREDITS: small stencilled label over a big name. The names
+        // get the type size that FITS rather than a fixed one, because a
+        // name is not something to wrap or run off the end of a card.
         const name = (text: string, y: number, want: number, colour: string): void => {
           let size = want;
           for (; size > 18; size -= 2) {
             g.font = font(700, size);
-            if (g.measureText(text).width <= pw - 96) break;
+            if (g.measureText(text).width <= cw - 160) break;
           }
+          g.textAlign = 'center';
           g.fillStyle = colour;
           g.fillText(text, cw / 2, y);
         };
-
-        stencil('CREATED BY', 348);
-        name('yellkell', 396, 48, UI.accent);
-        stencil('MUSIC BY', 460);
-        name('IBWildcat1998, poopoodoodoo698 & JakeThePro', 506, 34, UI.text);
+        caps(g, 'CREATED BY', cw / 2, 388, { px: 17, align: 'center', track: 6 });
+        name('yellkell', 424, 42, SKIN.gold);
+        caps(g, 'MUSIC BY', cw / 2, 470, { px: 17, align: 'center', track: 6 });
+        name('IBWildcat1998, poopoodoodoo698 & JakeThePro', 506, 30, UI.text);
       },
       buttons,
       this.hover,
@@ -2623,6 +2739,27 @@ export class MenuSystem extends createSystem({}) {
 
 /* ── little helpers ───────────────────────────────────────────────────────── */
 
+/** A kind's neon, as CSS. */
+function enemyHue(e: EnemyId): string {
+  return `#${ENEMIES[e].neon.toString(16).padStart(6, '0')}`;
+}
+
+/** How many lines `text` wraps to at `maxW` in the current font. */
+function measureLines(g: CanvasRenderingContext2D, text: string, maxW: number): number {
+  let line = '';
+  let lines = 0;
+  for (const word of text.split(' ')) {
+    const probe = line ? `${line} ${word}` : word;
+    if (g.measureText(probe).width > maxW && line) {
+      lines++;
+      line = word;
+    } else {
+      line = probe;
+    }
+  }
+  return lines + (line ? 1 : 0);
+}
+
 function fmtMs(ms: number): string {
   const total = Math.max(0, Math.round(ms / 100) / 10);
   const m = Math.floor(total / 60);
@@ -2638,15 +2775,16 @@ function fmtMs(ms: number): string {
  * was all fixed offsets that had outgrown a 500 px card.
  */
 const CARD_PAD = 34;
-const CARD_GAP = 8;
-/** Where a page's body may start — clear of the tabs at y 162. */
-const CARD_BODY = 220;
+const CARD_GAP = 10;
+/** The HUD strip under the title, and the page tabs under that. */
+const CARD_HUD = 112;
+const CARD_TABS = 210;
+/** Where a page's body may start — clear of the tabs. */
+const CARD_BODY = 272;
 /** How much of the bottom belongs to the footer, measured up from ch.
- *  BACK TO IT / QUIT sit at ch − 84 and stand 64 tall, so 124 is that
- *  band plus a hairline of air — the old 150 was sized for a shorter
- *  card and left every page a dead stripe it could have been reading
- *  in. */
-const CARD_FOOT = 124;
+ *  RESUME / QUIT sit at ch − 92 and stand 64 tall, so 112 is that band
+ *  plus a little air; a page may park its last lines just above it. */
+const CARD_FOOT = 112;
 
 /** Row pitch for the goals ladder: share the body band out over the
  *  book, so a longer book tightens up instead of running off the card. */

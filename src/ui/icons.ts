@@ -37,6 +37,39 @@ export const GLYPH_DEAD: GlyphInk = {
 /** Everything a tool can be pointed at, for the catalogue. */
 export type GlyphId = UnitType | 'delete' | 'unplug';
 
+/** Where the subject actually sits in each photograph (its lit pixels),
+ *  measured once: a photograph carries air round the subject, and the
+ *  core floats over its pad with a gap in between, so "the square" is a
+ *  poor guide to where the machine is. */
+const bounds = new Map<PictureId, { x: number; y: number; w: number; h: number }>();
+function boundsOf(id: PictureId, pic: HTMLCanvasElement): { x: number; y: number; w: number; h: number } {
+  let b = bounds.get(id);
+  if (b) return b;
+  const W = pic.width;
+  const H = pic.height;
+  let x0 = W;
+  let y0 = H;
+  let x1 = -1;
+  let y1 = -1;
+  try {
+    const d = pic.getContext('2d')!.getImageData(0, 0, W, H).data;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] < 24) continue;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  } catch {
+    /* a tainted canvas: fall back to the whole frame */
+  }
+  b = x1 < 0 ? { x: 0, y: 0, w: W, h: H } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  bounds.set(id, b);
+  return b;
+}
+
 function draw(
   g: CanvasRenderingContext2D,
   id: PictureId,
@@ -52,10 +85,15 @@ function draw(
     g.globalAlpha = 0.38;
     g.filter = 'grayscale(1)';
   }
-  // Photographs carry air round the subject; draw them a third larger
-  // about the same centre so the machine fills the slot a drawing did.
-  const big = size * 1.3;
-  g.drawImage(pic, x - (big - size) / 2, y - (big - size) / 2, big, big);
+  // FIT THE SUBJECT, not the photograph: the machine's own lit pixels are
+  // scaled to fill the square and centred in it, so a picture never spills
+  // past its slot onto the words under it (the core's pad used to sit
+  // right on top of its name).
+  const b = boundsOf(id, pic);
+  const k = size / Math.max(b.w, b.h);
+  const dw = b.w * k;
+  const dh = b.h * k;
+  g.drawImage(pic, b.x, b.y, b.w, b.h, x + (size - dw) / 2, y + (size - dh) / 2, dw, dh);
   g.restore();
 }
 

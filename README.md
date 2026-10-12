@@ -102,9 +102,13 @@ top of it.
   flickering while the pack climbs out, a dim scar once it's spent, gone
   when the wave is.
 
-The tide and its cracks are magenta. The menus
-use no drawings: at load, a small studio (`src/ui/pictures.ts`) photographs
-every tower with the same builders the floor uses.
+The tide and its cracks are magenta. The menus are cut from the same
+crystal (`src/ui/skin.ts`): black glass panes with faceted corners, a faint
+hex lattice and a neon edge — core gold for the menus, a tower's own neon on
+its panel, the tide's magenta when the core falls. They use no drawings: at
+load, a small studio (`src/ui/pictures.ts`) photographs every tower with the
+same builders the floor uses, and every menu shows a tower the same way
+(`src/ui/tiles.ts`).
 
 ## Bare hands — your left palm is the menu
 
@@ -157,6 +161,7 @@ node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
 node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
 node tools/enemy-look.mjs   # the three kinds: a line-up, each close from three angles, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
+node tools/panel-look.mjs   # every menu panel photographed as the headset gets it (shots/panels/)
 ```
 
 ## Map of the parts

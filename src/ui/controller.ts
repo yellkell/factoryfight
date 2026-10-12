@@ -95,7 +95,7 @@ export function controllerGlyph(
   g.strokeStyle = ink.ink;
 
   const body = 'rgba(255,255,255,0.05)';
-  const liveFill = 'rgba(255,162,46,0.16)';
+  const liveFill = 'rgba(255,207,58,0.16)';
   const strokeFor = (c: Control): string => (lit.has(c) ? ink.accent : ink.ink);
   const fillFor = (c: Control): string => (lit.has(c) ? liveFill : body);
 
@@ -216,17 +216,30 @@ export function callout(
   g.save();
   // The leader: a diagonal to the margin, then a short flat run into
   // the text — the classic exploded-drawing elbow.
-  g.strokeStyle = live ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.18)';
+  g.strokeStyle = live ? 'rgba(255,207,58,0.5)' : 'rgba(160,185,255,0.2)';
   g.lineWidth = 1.5;
   g.beginPath();
   g.moveTo(from.x, from.y);
   g.lineTo(lx - dir * 22, ly);
   g.lineTo(lx - dir * 6, ly);
   g.stroke();
+  // The end on the control: a small lit hex, the skin's status dot.
   g.fillStyle = live ? UI.accent : UI.disabled;
+  if (live) {
+    g.shadowColor = UI.accent;
+    g.shadowBlur = 6;
+  }
   g.beginPath();
-  g.arc(from.x, from.y, 4, 0, Math.PI * 2);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const px = from.x + Math.cos(a) * 4.5;
+    const py = from.y + Math.sin(a) * 4.5;
+    if (i === 0) g.moveTo(px, py);
+    else g.lineTo(px, py);
+  }
+  g.closePath();
   g.fill();
+  g.shadowBlur = 0;
 
   g.textAlign = side === 'right' ? 'left' : 'right';
   g.textBaseline = 'middle';
@@ -275,7 +288,7 @@ export function drawController(
     const a = anchors[c];
     g.beginPath();
     g.arc(a.x, a.y, size * 0.062, 0, Math.PI * 2);
-    g.fillStyle = 'rgba(255,162,46,0.22)';
+    g.fillStyle = 'rgba(255,207,58,0.22)';
     g.fill();
     g.lineWidth = Math.max(1.5, size * 0.012);
     g.strokeStyle = UI.accent;

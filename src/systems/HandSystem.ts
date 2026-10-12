@@ -60,8 +60,10 @@ import { plant } from '../factory/state.js';
 import { coreHealth, siegeLeft, startWave } from '../factory/siege.js';
 import { canAfford, isWeapon, unitCost } from '../factory/sim.js';
 import { font } from '../ui/fonts.js';
-import { GLYPH_DEAD, GLYPH_LIVE, unitGlyph, type GlyphId } from '../ui/icons.js';
+import type { GlyphId } from '../ui/icons.js';
 import { UI } from '../ui/panel.js';
+import { SKIN, caps, coreGauge, hexPath, pane, price, rgba } from '../ui/skin.js';
+import { towerCard } from '../ui/tiles.js';
 import {
   J,
   curledFingers,
@@ -95,6 +97,9 @@ export const handsView: {
   tip?: (hand: HandSide) => [number, number, number] | null;
   /** Fingers curled per hand (0–4) — the fist detector's raw reading. */
   curl?: () => { left: number; right: number };
+  /** The palm panel's raw canvases — the header, each shown stud and each
+   *  shown tile — as data URLs, for pixel checks of the painted faces. */
+  snap?: () => { header: string; studs: string[]; tiles: Record<string, string> };
 } = {};
 
 /* ── the numbers (room metres) ──────────────────────────────────────────── */
@@ -236,8 +241,11 @@ export class HandSystem extends createSystem({}) {
     this.cuff.add(plateMesh);
     this.face = { ctx: pctx, tex: ptex, key: '' };
 
-    const studGeo = new CircleGeometry(CUFF.stud, 28);
-    const ringGeo = new RingGeometry(CUFF.stud * 1.02, CUFF.stud * 1.22, 32);
+    // The studs are HEXES — the pads every tower stands on — and so is
+    // the flash ring round each (six segments: the ring lines up with
+    // the hex painted on the face).
+    const studGeo = new CircleGeometry(CUFF.stud, 6);
+    const ringGeo = new RingGeometry(CUFF.stud * 1.04, CUFF.stud * 1.24, 6);
     for (let k = 0; k < 3; k++) {
       const poke = makePoke(`stud${k}`, studGeo, ringGeo, 128, 128, CUFF.stud * 1.4);
       poke.group.position.set((k - 1) * CUFF.pitch, -CUFF.h * 0.2, 0.002);
@@ -269,6 +277,16 @@ export class HandSystem extends createSystem({}) {
       return { shown: this.cuff.visible && this.shown > 0.5, facing: this.facing, studs: out };
     };
     handsView.curl = () => ({ ...this.curl });
+    handsView.snap = () => {
+      const url = (g: CanvasRenderingContext2D): string => (g.canvas as HTMLCanvasElement).toDataURL('image/png');
+      const tiles: Record<string, string> = {};
+      for (const [tool, t] of this.tiles) if (t.group.visible) tiles[tool] = url(t.ctx);
+      return {
+        header: url(this.face.ctx),
+        studs: this.studs.filter((s) => s.group.visible).map((s) => url(s.ctx)),
+        tiles,
+      };
+    };
     handsView.tip = (hand) => {
       const o = this.world.playerSpaceEntities?.indexTipSpaces?.[hand]?.object3D as Object3D | undefined;
       return o ? o.getWorldPosition(new Vector3()).toArray() : null;
@@ -614,7 +632,7 @@ export class HandSystem extends createSystem({}) {
     let core = -1;
     if (site.screen === 'factory' && sg.phase !== 'off') {
       left = { label: 'WAVE', value: `${sg.wave + 1}`, tone: UI.text, sub: sg.wave < 10 ? '/10' : '' };
-      right = { label: 'COINS', value: sg.coins.toLocaleString('en-US'), tone: '#ffd36a' };
+      right = { label: 'COINS', value: sg.coins.toLocaleString('en-US'), tone: SKIN.goldHi };
       core = coreHealth();
       if (sg.phase === 'core') {
         left = null;
@@ -625,7 +643,7 @@ export class HandSystem extends createSystem({}) {
         const t = Math.ceil(sg.buildT);
         mid = { label: 'NEXT WAVE IN', value: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, tone: UI.accent };
       } else if (sg.phase === 'wave') {
-        mid = { label: 'ENEMIES LEFT', value: siegeLeft().toLocaleString('en-US'), tone: UI.danger };
+        mid = { label: 'ENEMIES LEFT', value: siegeLeft().toLocaleString('en-US'), tone: SKIN.magentaSoft };
       } else {
         mid = { label: 'THE CORE', value: 'FALLEN', tone: UI.danger };
       }
@@ -642,73 +660,43 @@ export class HandSystem extends createSystem({}) {
     const W = g.canvas.width;
     const H = g.canvas.height;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(11,10,7,0.88)';
-    g.beginPath();
-    g.roundRect(3, 3, W - 6, H - 6, 26);
-    g.fill();
-    g.strokeStyle = 'rgba(255,162,46,0.5)';
-    g.lineWidth = 3;
-    g.stroke();
-    g.textBaseline = 'alphabetic';
-    const LABEL_Y = 34;
-    const VALUE_Y = 80;
-    const label = (text: string, x: number, align: CanvasTextAlign): void => {
-      g.textAlign = align;
-      g.font = font(600, 17);
-      g.fillStyle = UI.faint;
-      g.fillText(text, x, LABEL_Y);
-    };
+    // The same pane as every panel in the game: cut glass, lattice, a
+    // gold neon edge.
+    pane(g, 4, 4, W - 8, H - 8, { cut: 18, glow: 6 });
+    g.textBaseline = 'middle';
+    const LABEL_Y = 32;
+    const VALUE_Y = 68;
     // WAVE, on the left.
     if (left) {
-      label(left.label, 24, 'left');
+      caps(g, left.label, 24, LABEL_Y, { px: 15, track: 2 });
       g.textAlign = 'left';
-      g.font = font(700, 42);
+      g.font = font(700, 40);
       g.fillStyle = left.tone;
       g.fillText(left.value, 24, VALUE_Y);
       if (left.sub) {
         const w = g.measureText(left.value).width;
         g.font = font(600, 18);
         g.fillStyle = UI.faint;
-        g.fillText(left.sub, 24 + w + 3, VALUE_Y);
+        g.fillText(left.sub, 24 + w + 3, VALUE_Y + 6);
       }
     }
     // The clock (or the count), in the middle and biggest.
     const solo = !left && !right;
-    if (mid.label) label(mid.label, W / 2, 'center');
+    if (mid.label) caps(g, mid.label, W / 2, LABEL_Y, { px: 15, track: 2, align: 'center', color: solo ? SKIN.gold : UI.faint });
     g.textAlign = 'center';
-    g.font = font(700, solo ? 34 : 46);
+    g.font = font(700, solo ? 32 : 44);
     g.fillStyle = mid.tone;
-    g.fillText(mid.value, W / 2, solo ? 76 : VALUE_Y + 2, solo ? W - 40 : 150);
+    g.shadowColor = rgba(mid.tone.startsWith('#') ? mid.tone : SKIN.gold, 0.6);
+    g.shadowBlur = 10;
+    g.fillText(mid.value, W / 2, solo ? VALUE_Y + 2 : VALUE_Y, solo ? W - 40 : 150);
+    g.shadowBlur = 0;
     // COINS, on the right, behind a coin.
     if (right) {
-      label(right.label, W - 24, 'right');
-      g.textAlign = 'right';
-      g.font = font(700, 30);
-      g.fillStyle = right.tone;
-      g.fillText(right.value, W - 24, VALUE_Y - 4, 92);
-      const w = Math.min(92, g.measureText(right.value).width);
-      g.beginPath();
-      g.arc(W - 24 - w - 13, VALUE_Y - 14, 9, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = 'rgba(11,10,7,0.7)';
-      g.beginPath();
-      g.arc(W - 24 - w - 13, VALUE_Y - 14, 4.5, 0, Math.PI * 2);
-      g.fill();
+      caps(g, right.label, W - 24, LABEL_Y, { px: 15, track: 2, align: 'right' });
+      price(g, right.value, W - 24, VALUE_Y, { px: 30, align: 'right' });
     }
-    // THE CORE: a slim bar right across, coloured by how much is left.
-    if (core >= 0) {
-      const x = 24;
-      const y = 96;
-      const bw = W - 48;
-      g.fillStyle = 'rgba(255,255,255,0.1)';
-      g.beginPath();
-      g.roundRect(x, y, bw, 7, 3.5);
-      g.fill();
-      g.fillStyle = core > 0.5 ? UI.positive : core > 0.25 ? UI.warn : UI.danger;
-      g.beginPath();
-      g.roundRect(x, y, Math.max(7, bw * core), 7, 3.5);
-      g.fill();
-    }
+    // THE CORE: the same ten segments that float over it in the room.
+    if (core >= 0) coreGauge(g, 24, 94, W - 48, 12, core);
     this.face.tex.needsUpdate = true;
   }
 }
@@ -747,7 +735,7 @@ function makePoke(
   let ring: MeshBasicMaterial | null = null;
   if (ringGeo) {
     ring = new MeshBasicMaterial({
-      color: 0xffa22e,
+      color: 0xffcf3a,
       transparent: true,
       blending: AdditiveBlending,
       depthWrite: false,
@@ -777,11 +765,30 @@ function paintStud(s: Poke, label: string, icon: Icon | null, primary: boolean):
   const g = s.ctx;
   g.clearRect(0, 0, 128, 128);
   if (label && icon) {
-    g.fillStyle = primary ? UI.accent : '#211a10';
-    g.beginPath();
-    g.arc(64, 64, 62, 0, Math.PI * 2);
-    g.fill();
-    const ink = primary ? '#1a1206' : UI.accent;
+    // A hex of glass with a gold rim — or, for START, solid gold: the one
+    // thing a build phase is for.
+    hexPath(g, 64, 64, 61);
+    if (primary) {
+      const fill = g.createLinearGradient(0, 4, 0, 124);
+      fill.addColorStop(0, SKIN.goldHi);
+      fill.addColorStop(1, SKIN.goldDeep);
+      g.fillStyle = fill;
+      g.fill();
+    } else {
+      const fill = g.createLinearGradient(0, 4, 0, 124);
+      fill.addColorStop(0, 'rgba(24,30,48,0.96)');
+      fill.addColorStop(1, 'rgba(8,10,18,0.96)');
+      g.fillStyle = fill;
+      g.fill();
+      g.strokeStyle = SKIN.gold;
+      g.lineWidth = 4;
+      g.stroke();
+      hexPath(g, 64, 64, 50);
+      g.strokeStyle = rgba(SKIN.gold, 0.2);
+      g.lineWidth = 2;
+      g.stroke();
+    }
+    const ink = primary ? SKIN.onGold : SKIN.gold;
     g.fillStyle = ink;
     g.strokeStyle = ink;
     g.lineWidth = 7;
@@ -790,8 +797,10 @@ function paintStud(s: Poke, label: string, icon: Icon | null, primary: boolean):
     drawIcon(g, icon, 64, 50);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = font(700, label.length > 5 ? 17 : 20);
-    g.fillText(label, 64, 94);
+    g.font = font(700, label.length > 5 ? 17 : 19);
+    g.letterSpacing = '1px';
+    g.fillText(label, 64, 92);
+    g.letterSpacing = '0px';
   }
   s.tex.needsUpdate = true;
 }
@@ -849,29 +858,41 @@ function drawIcon(g: CanvasRenderingContext2D, icon: Icon, x: number, y: number)
   }
 }
 
-/** A toolbelt tile: the machine's shop drawing, its name, its price. */
+/** A toolbelt tile: the tower card every menu draws (ui/tiles.ts) — its
+ *  photograph on its pad, its name, and its price or what to do with it. */
 function paintTile(t: Poke, tool: string, armed: boolean, afford: boolean, cost: string): void {
   const g = t.ctx;
   const W = 160;
   const H = 176;
   g.clearRect(0, 0, W, H);
-  g.fillStyle = armed ? 'rgba(255,162,46,0.28)' : 'rgba(11,10,7,0.86)';
+  // Dark glass behind the card: the tiles float in the room on their own.
+  g.fillStyle = 'rgba(8,10,18,0.9)';
   g.beginPath();
-  g.roundRect(3, 3, W - 6, H - 6, 22);
+  g.moveTo(14, 3);
+  g.lineTo(W - 14, 3);
+  g.lineTo(W - 3, 14);
+  g.lineTo(W - 3, H - 14);
+  g.lineTo(W - 14, H - 3);
+  g.lineTo(14, H - 3);
+  g.lineTo(3, H - 14);
+  g.lineTo(3, 14);
+  g.closePath();
   g.fill();
-  g.strokeStyle = armed ? '#ffa22e' : tool === 'delete' ? 'rgba(255,90,70,0.6)' : 'rgba(255,162,46,0.45)';
-  g.lineWidth = armed ? 6 : 3;
-  g.stroke();
-  unitGlyph(g, tool as GlyphId, 25, 8, 110, afford ? GLYPH_LIVE : GLYPH_DEAD);
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.font = font(700, 24);
-  g.fillStyle = !afford ? 'rgba(250,244,235,0.35)' : tool === 'delete' ? '#ff6a52' : '#fdf6ec';
-  g.fillText(TOOL_NAME[tool] ?? tool.toUpperCase(), W / 2, 128, W - 16);
-  if (cost) {
-    g.font = font(600, 17);
-    g.fillStyle = afford ? '#ffa22e' : 'rgba(255,90,70,0.8)';
-    g.fillText(cost, W / 2, 154, W - 16);
-  }
+  const n = unitCostOf(tool);
+  towerCard(g, 3, 3, W - 6, H - 6, {
+    tool: tool as GlyphId,
+    name: TOOL_NAME[tool] ?? tool.toUpperCase(),
+    cost: cost ? n : undefined,
+    note: tool === 'dock' ? 'PLACE IT' : undefined,
+    costAt: 'foot',
+    live: afford,
+    armed,
+    scale: 1.3,
+  });
   t.tex.needsUpdate = true;
+}
+
+/** A tool's price in coins (0 for the core). */
+function unitCostOf(tool: string): number {
+  return unitCost(tool as UnitType);
 }
