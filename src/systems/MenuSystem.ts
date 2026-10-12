@@ -1511,12 +1511,12 @@ export class MenuSystem extends createSystem({}) {
       {
         shape: 'poke',
         name: 'POKE',
-        does: 'Press a tower on your palm with your right index finger and it is in your hand. Poke it again to put it back.',
+        does: 'Poke a tower on your palm with your right index finger to pick it up; poke it again to put it back. Remember to close the panel to interact with something else.',
       },
       {
         shape: 'pinch',
         name: 'PINCH',
-        does: 'Aim with your right hand and pinch to set the tower down, anywhere on the floor. It fires on its own.',
+        does: 'Aim with your right hand and pinch to set the tower down, anywhere on the floor. Remember to close the panel to interact with something else.',
       },
       {
         shape: 'touch',
@@ -1525,7 +1525,7 @@ export class MenuSystem extends createSystem({}) {
       },
       {
         shape: 'fist',
-        name: 'FIST',
+        name: 'GRAB',
         does: 'Close a fist on a mite or a beetle and it is yours. Open your hand to throw it into the crowd.',
       },
     ];
