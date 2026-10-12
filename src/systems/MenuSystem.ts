@@ -1516,12 +1516,12 @@ export class MenuSystem extends createSystem({}) {
       {
         shape: 'pinch',
         name: 'PINCH',
-        does: 'Aim with your right hand and pinch to set the tower down, anywhere on the floor. Remember to close the panel to interact with something else.',
+        does: 'Aim with your right hand and pinch to set the tower down, anywhere on the floor. It fires on its own.',
       },
       {
         shape: 'touch',
         name: 'TOUCH A TOWER',
-        does: 'Reach out and touch one standing on the floor: its panel opens. UPGRADE it, or SELL it.',
+        does: 'Reach out and touch one standing on the floor: its panel opens. UPGRADE it, or SELL it. Remember to close the panel to interact with something else.',
       },
       {
         shape: 'fist',
