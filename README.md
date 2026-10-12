@@ -134,9 +134,6 @@ hands, everything is **poked with your right index finger**.
 - **Panels come to you.** Pause and tower panels appear within arm's reach,
   and you press them by touch.
 
-With controllers, the same verbs are on trigger, Ⓐ, Ⓑ and Ⓧ/Ⓨ: aim at a
-tower and pull the trigger to open its panel.
-
 ## Quick start
 
 ```bash

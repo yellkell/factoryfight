@@ -58,14 +58,10 @@ import {
   LINES,
   ORDERS,
   SIEGE,
-  UPGRADES,
   WAVES,
   WEAPONS,
   type WeaponId,
   ENEMIES,
-  type WaveSpec,
-  type EnemyId,
-  type ItemId,
   type UnitType,
   type UpgradeId,
 } from '../config.js';
@@ -91,7 +87,6 @@ import {
   ownedUpgrades,
   resetProgress,
   unlockedJobs,
-  upgradeOwned,
 } from '../game/progress.js';
 import { jobSpec, site } from '../game/state.js';
 import {
@@ -102,30 +97,23 @@ import {
   runSeatedAt,
   unitById,
 } from '../factory/state.js';
-import { canAfford, isWeapon, refundUnit, removeUnit, unitCost } from '../factory/sim.js';
+import { isWeapon, refundUnit, removeUnit } from '../factory/sim.js';
 
-/** "50 COINS" — what a tower costs out of the purse. */
-function costText(type: UnitType): string {
-  const n = unitCost(type);
-  return n > 0 ? `${n} COINS` : 'free';
-}
 import { coreHealth, levelOf, sellValue, siegeLeft, startWave, upgradeCost, upgradeTower, waveSpec } from '../factory/siege.js';
-import { buildView, typeAvailable, type BuildTool } from './BuildSystem.js';
+import { buildView, type BuildTool } from './BuildSystem.js';
 import { goopView } from './GoopSystem.js';
 import { font } from '../ui/fonts.js';
 import {
   GLYPH_DEAD,
-  GLYPH_LIVE,
 
-  itemGlyph,
   unitGlyph,
 } from '../ui/icons.js';
 import { Panel, UI, type PanelButton } from '../ui/panel.js';
-import { towerCard } from '../ui/tiles.js';
 import {
   SKIN,
   titleBar,
   caps,
+  hexPath,
   chamfer,
   coreGauge,
   dot,
@@ -137,8 +125,6 @@ import {
   rule,
   well,
 } from '../ui/skin.js';
-import { callout, drawController, faceGlyph, type Control, type Hand } from '../ui/controller.js';
-import { controllerModelView, onControllerImage } from '../ui/controllerModel.js';
 import { PointerRay } from '../ui/pointer.js';
 import { walls } from './WallSystem.js';
 import { stage } from '../room/stage.js';
@@ -161,24 +147,6 @@ export const UNIT_NAME: Record<UnitType, string> = {
   hammer: 'HAMMER',
 };
 
-/** One line on what each piece of plant is FOR — the box panel's
- *  subtitle, and the catalogue's tooltip line. */
-const UNIT_DOCKET: Record<UnitType, string> = {
-  dock: 'What they are coming for. Every one that reaches it takes a bite. Lose it, lose the siege.',
-  maker: 'Turns a supply feed into parts. Feed colour sets the recipe.',
-  belt: 'Carries parts between machines. Hold trigger to extend.',
-  combiner: 'Combines two parts. Inputs on the sides; output at the front.',
-  chest: 'Stores parts from rails. Grip a part to take it out.',
-  post: 'Guides a rail route. Place where you want it to bend.',
-  vat: 'Takes the green feed. Fill it to complete the final goal.',
-  turret: 'Rapid rounds at one target. The workhorse.',
-  mortar: 'Lobs shells into the thick of the crowd. Long reach, blind up close.',
-  tesla: 'A bolt that jumps through ten of them at once.',
-  flamer: 'A cone of fire: a whole crowd burns. Short reach, so put it close to the core.',
-  hammer: 'Heaves up and smashes the crowd beside it. Flattens a whole clump at once.',
-  wall: 'Costs 1 GEAR. Thick plate they have to chew. Drag to lay a run.',
-};
-
 /** A tower's name where a tile is narrow (FLAMETHROWER won't fit one). */
 const TOWER_SHORT: Record<WeaponId, string> = {
   turret: 'TURRET',
@@ -197,97 +165,104 @@ const TOWER_ROLE: Record<WeaponId, string> = {
   mortar: 'LONG-RANGE SHELLS',
 };
 
-/** The same instruction, said for the hands you are actually using: a
- *  controller's buttons, or a pinch and the wrist cuff. */
-function say(pad: string, hand: string): string {
-  return intents.handMode ? hand : pad;
-}
-
-/** The four gestures, drawn as plain line-art: a pinch is two fingertips
- *  meeting, a fist a closed knuckle row, two fists a pair, the cuff a
- *  wrist with a plate on it and a finger coming in. */
-function handGlyph(
-  g: CanvasRenderingContext2D,
-  shape: 'pinch' | 'fist' | 'fists' | 'cuff',
-  x: number,
-  y: number,
-  size: number,
-): void {
+/** The gestures, drawn as gold line-art in a 100-unit square: the open
+ *  palm with the menu over it, a fingertip poking, a pinch, a fingertip
+ *  on a tower, and a fist. */
+type Gesture = 'palm' | 'poke' | 'pinch' | 'touch' | 'fist';
+function handGlyph(g: CanvasRenderingContext2D, shape: Gesture, x: number, y: number, size: number): void {
   g.save();
   g.translate(x, y);
   g.scale(size / 100, size / 100);
   g.lineWidth = 5;
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  g.strokeStyle = 'rgba(255,255,255,0.85)';
-  const fist = (cx: number): void => {
+  const ink = 'rgba(255,255,255,0.88)';
+  const gold = SKIN.gold;
+  g.strokeStyle = ink;
+  /** An index finger, from (x0, y0) to its tip at (x1, y1). */
+  const finger = (x0: number, y0: number, x1: number, y1: number): void => {
     g.beginPath();
-    g.roundRect(cx - 22, 34, 44, 46, 12);
-    g.stroke();
-    for (let k = 0; k < 3; k++) {
-      g.beginPath();
-      g.moveTo(cx - 22 + 11 * (k + 1), 34);
-      g.lineTo(cx - 22 + 11 * (k + 1), 50);
-      g.stroke();
-    }
-    g.beginPath();
-    g.moveTo(cx - 14, 80);
-    g.lineTo(cx - 14, 96);
-    g.moveTo(cx + 14, 80);
-    g.lineTo(cx + 14, 96);
+    g.moveTo(x0, y0);
+    g.lineTo(x1, y1);
     g.stroke();
   };
-  if (shape === 'pinch') {
+  const tip = (cx: number, cy: number, r = 6): void => {
+    g.fillStyle = gold;
+    g.beginPath();
+    g.arc(cx, cy, r, 0, Math.PI * 2);
+    g.fill();
+  };
+  if (shape === 'palm') {
+    // An open hand, palm on, and the menu hanging over it.
+    g.beginPath();
+    g.roundRect(32, 56, 36, 34, 10);
+    g.stroke();
+    for (const [fx, top] of [[38, 40], [47, 34], [56, 36], [64, 44]]) finger(fx, 56, fx, top);
+    finger(32, 70, 20, 58);
+    g.strokeStyle = gold;
+    g.lineWidth = 4;
+    g.beginPath();
+    g.moveTo(26, 10);
+    g.lineTo(74, 10);
+    g.lineTo(78, 14);
+    g.lineTo(78, 24);
+    g.lineTo(74, 28);
+    g.lineTo(26, 28);
+    g.lineTo(22, 24);
+    g.lineTo(22, 14);
+    g.closePath();
+    g.stroke();
+  } else if (shape === 'poke') {
+    // A fingertip pressing a hex button.
+    g.strokeStyle = gold;
+    g.lineWidth = 4;
+    hexPath(g, 34, 34, 20);
+    g.stroke();
+    g.strokeStyle = ink;
+    g.lineWidth = 5;
+    finger(86, 92, 44, 44);
+    finger(86, 92, 78, 62);
+    tip(42, 42);
+  } else if (shape === 'pinch') {
+    finger(30, 96, 30, 96);
     g.beginPath();
     g.moveTo(30, 96);
     g.quadraticCurveTo(26, 50, 52, 30);
     g.moveTo(72, 96);
     g.quadraticCurveTo(84, 60, 58, 32);
     g.stroke();
-    g.fillStyle = '#ffcf3a';
+    tip(55, 30, 7);
+  } else if (shape === 'touch') {
+    // A finger reaching to a tower on its pad.
+    g.strokeStyle = gold;
+    g.lineWidth = 4;
     g.beginPath();
-    g.arc(55, 30, 7, 0, Math.PI * 2);
-    g.fill();
-  } else if (shape === 'fist') {
-    fist(50);
-  } else if (shape === 'fists') {
-    fist(26);
-    fist(74);
-    g.strokeStyle = '#ffcf3a';
-    g.beginPath();
-    g.moveTo(4, 24);
-    g.lineTo(96, 24);
+    g.moveTo(22, 88);
+    g.lineTo(54, 88);
+    g.moveTo(30, 88);
+    g.lineTo(34, 40);
+    g.lineTo(42, 40);
+    g.lineTo(46, 88);
     g.stroke();
+    g.strokeStyle = ink;
+    g.lineWidth = 5;
+    finger(94, 70, 50, 46);
+    finger(94, 70, 86, 84);
+    tip(50, 46);
   } else {
+    // A fist: a knuckle row, closed.
     g.beginPath();
-    g.moveTo(10, 90);
-    g.lineTo(60, 40);
-    g.moveTo(30, 98);
-    g.lineTo(76, 52);
+    g.roundRect(18, 34, 44, 46, 12);
     g.stroke();
-    g.fillStyle = 'rgba(255,207,58,0.85)';
-    g.save();
-    g.translate(42, 70);
-    g.rotate(-Math.PI / 4);
-    g.fillRect(-16, -9, 32, 18);
-    g.restore();
-    g.strokeStyle = '#ffcf3a';
-    g.beginPath();
-    g.moveTo(90, 8);
-    g.lineTo(58, 52);
-    g.stroke();
+    for (let k = 0; k < 3; k++) finger(18 + 11 * (k + 1), 34, 18 + 11 * (k + 1), 50);
+    finger(26, 80, 26, 96);
+    finger(54, 80, 54, 96);
+    // …and the throw: three gold streaks off it.
+    g.strokeStyle = gold;
+    g.lineWidth = 4;
+    for (const dy of [-12, 0, 12]) finger(80, 56 + dy, 94 - Math.abs(dy) * 0.4, 56 + dy * 1.3);
   }
   g.restore();
-}
-
-/** One wave's bill of crawlers, in a line: "300 MITE · 14 BEETLE · 1 PACK". */
-function waveSummary(w: WaveSpec): string {
-  const n = new Map<string, number>();
-  for (const sp of w.spawns) n.set(sp.enemy, (n.get(sp.enemy) ?? 0) + sp.count);
-  const parts = [...n.entries()].map(([e, c]) => `${c} ${ENEMIES[e as keyof typeof ENEMIES].name}`);
-  const packs = w.spawns.filter((sp) => sp.pack).length;
-  parts.push(packs > 0 ? `${packs} PACK${packs === 1 ? '' : 'S'}` : 'EVERY WALL');
-  return parts.join(' \u00b7 ');
 }
 
 /** Canvas geometry of the board. */
@@ -353,8 +328,6 @@ export const menuView: {
   /** THE COACH LINE — is it up, and what does it say. */
   coachUp?: () => boolean;
   snapCoach?: () => string;
-  /** THE REAL CONTROLLER — its picture, for the CONTROLS pages. */
-  controllers?: typeof controllerModelView;
 } = {};
 
 const _origin = new Vector3();
@@ -509,13 +482,6 @@ export class MenuSystem extends createSystem({}) {
     menuView.snapFinale = () =>
       (this.finale.ctx().canvas as HTMLCanvasElement).toDataURL('image/png');
     menuView.coachUp = () => this.coach.isShown;
-    menuView.controllers = controllerModelView;
-    // The real controller pictures arrive after the first paint of a
-    // CONTROLS page; when they do, the page that drew the stand-in
-    // redraws with the thing itself.
-    onControllerImage(() => {
-      this.lastKey = '';
-    });
     menuView.snapCoach = () => (this.coach.ctx().canvas as HTMLCanvasElement).toDataURL('image/png');
   }
 
@@ -1110,7 +1076,7 @@ export class MenuSystem extends createSystem({}) {
     // The rail.
     const tabs: Array<{ id: string; tab: Tab; label: string }> = [
       { id: 'tab:factory', tab: 'factory', label: 'SIEGE' },
-      { id: 'tab:controls', tab: 'controls', label: 'CONTROLS' },
+      { id: 'tab:controls', tab: 'controls', label: 'HANDS' },
       { id: 'tab:sys', tab: 'sys', label: 'SETTINGS' },
     ];
     tabs.forEach((t, i) => {
@@ -1393,8 +1359,8 @@ export class MenuSystem extends createSystem({}) {
         // THE ONE CONTROL NOBODY CAN GUESS: every verb in the siege lives
         // on the menu, so the first thing to know is where the menu is.
         id: 'shop-note',
-        label: say('\u24b6  MENU', 'LEFT PALM \u00b7 MENU'),
-        sub: say('build, waves, controls', 'turn it toward you'),
+        label: 'LEFT PALM \u00b7 MENU',
+        sub: 'turn it toward you',
         display: true,
         small: true,
         x: CONTENT_X + CW - NOTE_W,
@@ -1528,166 +1494,68 @@ export class MenuSystem extends createSystem({}) {
     };
   }
 
-  /* ── CONTROLS tab ─────────────────────────────────────────────────────── */
+  /* ── HANDS tab ────────────────────────────────────────────────────────── */
 
   /**
-   * THE CONTROLS TAB — both controllers drawn, every button named, and a
-   * table of what each one does on each kind of shift.
-   *
-   * Five controls carry the whole game and until now the only one written
-   * down before you needed it was Ⓐ. The diagram is the thing in your
-   * hands with the words pointing at it; the table under it is the
-   * part you come back for — "what does Ⓑ do in the factory again" —
-   * split by where you are, because the trigger mounts a flange on one
-   * shift and stamps a machine on the next. No buttons: it is a sheet
-   * you read, not one you press.
+   * THE HANDS TAB — the whole game is five gestures, so this is a sheet
+   * of five: each drawn on its pad beside what it does. No controllers:
+   * the siege is played with bare hands. Read, not pressed.
    */
   private paintControls(): void {
-    if (intents.handMode) {
-      this.boardControlsBody = (g: CanvasRenderingContext2D): void =>
-        this.paintHandControls(g, CONTENT_X, 172, W - CONTENT_X - 34, 128);
-      return;
-    }
-    const S = 230;
-    const TOP = 186;
-    const LX = 470;
-    const RX = 930;
-    const MID = (LX + S + RX) / 2;
-    const litRight = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
-    const litLeft = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
-
-    // THE TABLE. Rows are the controls, columns are the two places you
-    // can be; each cell is at most two short lines, and a dash is an
-    // honest cell: that button does nothing there.
-    const T0 = 462;
-    const LBL_W = 150;
-    const COL_X0 = ROW_X + LBL_W + 18;
-    const COL_GAP = 24;
-    const COL_W = (W - 40 - COL_X0 - COL_GAP) / 2;
-    const PITCH = 70;
-    const rows: Array<{ name: string; hand: string; cells: [string, string] }> = [
+    const rows: Array<{ shape: Gesture; name: string; does: string }> = [
       {
-        name: 'TRIGGER',
-        hand: 'right hand',
-        cells: [
-          'Place the tower in hand. Empty-handed, aim at a tower: its panel (UPGRADE, SELL).',
-          'Take a side of the tape, drag it, let go. It snaps to your walls.',
-        ],
+        shape: 'palm',
+        name: 'OPEN YOUR LEFT PALM',
+        does: 'Turn it toward you and the menu rises over it: the wave, the clock, your coins, START and PAUSE, and every tower you can build.',
       },
       {
-        name: 'GRIP',
-        hand: 'either hand',
-        cells: ['Squeeze on a mite or a beetle and it is yours. Let go to throw it.', '\u2014'],
+        shape: 'poke',
+        name: 'POKE',
+        does: 'Press a tower on your palm with your right index finger and it is in your hand. Poke it again to put it back.',
       },
       {
-        name: faceGlyph('right', 'lower'),
-        hand: 'right hand',
-        cells: ['The siege menu: BUILD \u00b7 WAVES \u00b7 CONTROLS. Also puts a tower panel away.', 'Done: the floor saves.'],
+        shape: 'pinch',
+        name: 'PINCH',
+        does: 'Aim with your right hand and pinch to set the tower down, anywhere on the floor. It fires on its own.',
       },
       {
-        name: faceGlyph('right', 'upper'),
-        hand: 'right hand',
-        cells: ['Holding a tower: turn it a quarter.', '\u2014'],
+        shape: 'touch',
+        name: 'TOUCH A TOWER',
+        does: 'Reach out and touch one standing on the floor: its panel opens. UPGRADE it, or SELL it.',
       },
       {
-        name: `${faceGlyph('left', 'lower')} ${faceGlyph('left', 'upper')}`,
-        hand: 'left hand',
-        cells: ['Put the tower in hand away.', `${faceGlyph('left', 'lower')}: done, the same as \u24b6.`],
+        shape: 'fist',
+        name: 'FIST',
+        does: 'Close a fist on a mite or a beetle and it is yours. Open your hand to throw it into the crowd.',
       },
     ];
-
     this.boardControlsBody = (g: CanvasRenderingContext2D): void => {
-      g.textAlign = 'left';
-      g.textBaseline = 'middle';
-      rule(g, 'THE CONTROLLERS', ROW_X, W - 34, ROW_Y0 - 6);
-
-      // THE PAIR — the real models when they are in, and the anchors
-      // every callout below points at come back from the drawing.
-      const anchors: Record<Hand, Record<Control, { x: number; y: number }>> = {
-        left: drawController(g, 'left', LX, TOP, S, litLeft),
-        right: drawController(g, 'right', RX, TOP, S, litRight),
-      };
-      const at = (hand: Hand, c: Control): { x: number; y: number } => anchors[hand][c];
-      caps(g, 'LEFT HAND', LX + S / 2, TOP + S + 18, { px: 17, align: 'center' });
-      caps(g, 'RIGHT HAND', RX + S / 2, TOP + S + 18, { px: 17, align: 'center' });
-
-      // Outer callouts: the face buttons and the trigger, out to each
-      // margin. Inner callouts: the stick and the grip, which the two
-      // controllers share, named once between them.
-      const lm = LX - 24;
-      const rm = RX + S + 24;
-      callout(g, at('left', 'trigger'), lm, TOP + 14, 'left', 'TRIGGER');
-      callout(g, at('left', 'upper'), lm, TOP + 54, 'left', faceGlyph('left', 'upper'));
-      callout(g, at('left', 'lower'), lm, TOP + 94, 'left', faceGlyph('left', 'lower'));
-      callout(g, at('right', 'trigger'), rm, TOP + 14, 'right', 'TRIGGER');
-      callout(g, at('right', 'upper'), rm, TOP + 54, 'right', faceGlyph('right', 'upper'));
-      callout(g, at('right', 'lower'), rm, TOP + 94, 'right', faceGlyph('right', 'lower'));
-      // The two shared controls sit at nearly the same height on the
-      // picture, so their words take rows of their own — STICK above,
-      // GRIP below — and the leaders fan to them.
-      const between = (c: Control, label: string, live: boolean, y: number): void => {
-        const l = at('left', c);
-        const r = at('right', c);
-        g.save();
-        g.strokeStyle = live ? rgba(SKIN.gold, 0.5) : 'rgba(160,185,255,0.2)';
-        g.lineWidth = 1.5;
-        g.beginPath();
-        g.moveTo(l.x, l.y);
-        g.lineTo(MID - 52, y);
-        g.moveTo(r.x, r.y);
-        g.lineTo(MID + 52, y);
-        g.stroke();
-        for (const p of [l, r]) dot(g, p.x, p.y, 4.5, live ? SKIN.gold : UI.disabled);
-        g.textAlign = 'center';
-        g.font = font(600, 22);
-        g.letterSpacing = '1.5px';
-        g.fillStyle = live ? UI.text : UI.disabled;
-        g.fillText(label, MID, y);
-        g.restore();
-      };
-      between('stick', 'STICK', false, TOP + 30);
-      between('grip', 'GRIP', true, TOP + 176);
-
-      // THE TABLE.
-      ['IN THE SIEGE', 'MARKING THE FLOOR'].forEach((h, c) => {
-        caps(g, h, COL_X0 + c * (COL_W + COL_GAP), T0 + 6, { px: 17, color: SKIN.gold, track: 3 });
-      });
-
+      const CW = W - 34 - CONTENT_X;
+      const PITCH = 138;
+      const RH = 124;
       rows.forEach((row, i) => {
-        const y = T0 + 30 + i * PITCH;
-        chamfer(g, ROW_X, y, W - 34 - ROW_X, PITCH - 8, 10);
-        g.fillStyle = i % 2 === 0 ? 'rgba(150,175,255,0.05)' : 'rgba(150,175,255,0.025)';
+        const y = 168 + i * PITCH;
+        chamfer(g, CONTENT_X, y, CW, RH, 14);
+        g.fillStyle = 'rgba(150,175,255,0.045)';
         g.fill();
-        // The control's name, on a key cap.
-        const kx = ROW_X + 12;
-        const ky = y + 9;
-        chamfer(g, kx, ky, LBL_W - 12, 30, 7);
-        g.fillStyle = rgba(SKIN.gold, 0.1);
-        g.fill();
-        g.strokeStyle = rgba(SKIN.gold, 0.45);
+        g.strokeStyle = SKIN.lineFaint;
         g.lineWidth = 1.5;
         g.stroke();
-        g.textAlign = 'center';
-        g.font = font(700, 21);
-        g.letterSpacing = '1px';
-        g.fillStyle = UI.text;
-        g.fillText(row.name, kx + (LBL_W - 12) / 2, ky + 16);
+        const cx = CONTENT_X + 72;
+        const cy = y + RH / 2;
+        hexPad(g, cx, cy, 52, SKIN.gold);
+        handGlyph(g, row.shape, cx - 42, cy - 42, 84);
+        g.textBaseline = 'middle';
+        caps(g, String(i + 1).padStart(2, '0'), CONTENT_X + CW - 22, y + 26, { px: 15, align: 'right', track: 2 });
+        g.textAlign = 'left';
+        g.font = font(700, 27);
+        g.letterSpacing = '3px';
+        g.fillStyle = SKIN.gold;
+        g.fillText(row.name, CONTENT_X + 150, y + 34);
         g.letterSpacing = '0px';
-        caps(g, row.hand.toUpperCase(), kx + (LBL_W - 12) / 2, y + 52, { px: 12, align: 'center', track: 2 });
-        row.cells.forEach((cell, c) => {
-          const x = COL_X0 + c * (COL_W + COL_GAP);
-          if (cell === '\u2014') {
-            g.textAlign = 'left';
-            g.font = font(500, 20);
-            g.fillStyle = UI.disabled;
-            g.fillText(cell, x, y + (PITCH - 8) / 2);
-            return;
-          }
-          wrapText(g, cell, x, y + 20, COL_W - 8, 23, font(500, 20), UI.dim);
-        });
+        wrapText(g, row.does, CONTENT_X + 150, y + 72, CW - 210, 28, font(500, 22), UI.dim);
       });
-
-      caps(g, 'THE STICKS AND THE MENU BUTTONS DO NOTHING. WALK \u2014 IT IS YOUR ROOM.', ROW_X, H - 34, {
+      caps(g, 'TURN YOUR HAND AWAY AND THE MENU GOES. WALK \u2014 IT IS YOUR ROOM.', CONTENT_X, H - 34, {
         px: 15,
         track: 2,
       });
@@ -1990,195 +1858,9 @@ export class MenuSystem extends createSystem({}) {
     );
   }
 
-  private canAfford(id: UpgradeId): boolean {
-    const spec = UPGRADES.find((u) => u.id === id);
-    if (!spec) return false;
-    for (const [item, n] of Object.entries(spec.bill)) {
-      if ((plant.bank[item as ItemId] ?? 0) < (n ?? 0)) return false;
-    }
-    return true;
-  }
-
-  /**
-   * THE SHIFT CARD — Ⓐ, dead ahead, and the only menu a shift has.
-   * Three pages: BUILD (the plant, plus the wrecking bar), GOALS (the
-   * book, tappable for what a sheet actually asks of you) and SUPPLY
-   * (the bank's bills). The live goal rides the header, so the room
-   * floats nothing.
-   */
+  /** THE SIEGE'S PAUSE: the plate you poke (paintHandPause). */
   private paintFactoryCard(): void {
-    if (intents.handMode) {
-      this.paintHandPause();
-      return;
-    }
-    const [cw, ch] = BOARD.cardPx;
-    const armed = buildView.armed?.() ?? null;
-    const sg = plant.siege;
-    // Three columns, measured off the card instead of nailed to pixels —
-    // the card grew and every hard-coded 166 would have left a gutter.
-    const colW = (cw - 2 * CARD_PAD - 2 * CARD_GAP) / 3;
-    const colX = (c: number): number => CARD_PAD + c * (colW + CARD_GAP);
-    const tab = (id: string, label: string, on: boolean, c: number): PanelButton => ({
-      id,
-      label,
-      small: true,
-      px: 22,
-      selected: on,
-      x: colX(c),
-      y: CARD_TABS,
-      w: colW,
-      h: 46,
-    });
-    const buttons: PanelButton[] = [
-      tab('card:build', 'BUILD', this.cardMode === 'build', 0),
-      tab('card:goals', 'WAVES', this.cardMode === 'goals', 1),
-      tab('card:controls', 'CONTROLS', this.cardMode === 'controls', 2),
-      {
-        id: 'resume',
-        label: 'RESUME',
-        primary: true,
-        px: 34,
-        x: CARD_PAD,
-        y: ch - 92,
-        w: cw / 2 - CARD_PAD - 7,
-        h: 64,
-      },
-      {
-        id: 'quit',
-        label: this.quitArm > 0 ? 'SURE? PRESS AGAIN' : 'QUIT',
-        tone: UI.danger,
-        x: cw / 2 + 7,
-        y: ch - 92,
-        w: cw / 2 - CARD_PAD - 7,
-        h: 64,
-        small: true,
-      },
-    ];
-
-    // The catalogue: the core (alone, until it stands), then the towers.
-    // A tower you cannot pay for is a tower you cannot pick up.
-    const kit = (['dock', 'turret', 'hammer', 'flamer', 'tesla', 'mortar'] as BuildTool[]).filter(
-      (t) => t !== 'dock' || typeAvailable('dock'),
-    );
-    const TILE_H = 128;
-    if (this.cardMode === 'build') {
-      kit.forEach((tool, i) => {
-        buttons.push({
-          id: `build:${tool}`,
-          label: '',
-          ghost: true,
-          disabled: !typeAvailable(tool as UnitType) || !canAfford(tool as UnitType),
-          x: colX(i % 3),
-          y: CARD_BODY + Math.floor(i / 3) * (TILE_H + CARD_GAP),
-          w: colW,
-          h: TILE_H,
-        });
-      });
-    } else if (this.cardMode === 'supply') {
-      UPGRADES.forEach((u, i) => {
-        buttons.push({
-          id: `buy:${u.id}`,
-          label: '',
-          ghost: true,
-          disabled: upgradeOwned(u.id) || !this.canAfford(u.id),
-          x: CARD_PAD,
-          y: CARD_BODY + i * billRowStep(ch),
-          w: cw - 2 * CARD_PAD,
-          h: billRowStep(ch) - 8,
-        });
-      });
-    }
-
-    // START — the build phase ends when you say so.
-    const starting = sg.phase === 'build';
-    const START_W = 176;
-    if (starting) {
-      buttons.push({
-        id: 'card:start',
-        label: 'START WAVE',
-        small: true,
-        px: 22,
-        tone: SKIN.gold,
-        x: cw - CARD_PAD - START_W,
-        y: CARD_HUD,
-        w: START_W,
-        h: 84,
-      });
-    }
-    const wave = waveSpec(sg.wave);
-    const title = `WAVE ${sg.wave + 1} \u00b7 ${wave.name}`;
-    this.card.paint(
-      title,
-      (g) => {
-        const hudR = starting ? cw - CARD_PAD - START_W - 12 : cw - CARD_PAD;
-        this.paintHud(g, CARD_PAD, CARD_HUD, hudR - CARD_PAD, 84);
-        g.textAlign = 'left';
-        g.textBaseline = 'middle';
-
-        if (this.cardMode === 'goals') this.paintWaves(g, cw, ch);
-        else if (this.cardMode === 'supply') this.paintBills(g, cw, ch);
-        else if (this.cardMode === 'controls') this.paintCardControls(g);
-        else {
-          kit.forEach((tool, i) => {
-            const id = `build:${tool}`;
-            towerCard(g, colX(i % 3), CARD_BODY + Math.floor(i / 3) * (TILE_H + CARD_GAP), colW, TILE_H, {
-              tool,
-              name: tool === 'dock' ? 'CORE' : TOWER_SHORT[tool as WeaponId],
-              cost: tool === 'dock' ? undefined : unitCost(tool as UnitType),
-              note: tool === 'dock' ? 'PLACE IT FIRST' : undefined,
-              costAt: 'foot',
-              live: typeAvailable(tool as UnitType) && canAfford(tool as UnitType),
-              armed: armed === tool,
-              hover: this.card.hoverOf(id),
-              layout: 'row',
-            });
-          });
-          g.textAlign = 'center';
-          g.textBaseline = 'middle';
-          const hoveredTool = this.hover?.startsWith('build:') ? this.hover.slice(6) : null;
-          const describedTool = hoveredTool ?? armed;
-          const lineY = ch - CARD_FOOT + 4;
-          if (describedTool && describedTool in UNIT_DOCKET) {
-            g.font = font(500, 19);
-            g.fillStyle = UI.dim;
-            g.fillText(UNIT_DOCKET[describedTool as UnitType], cw / 2, lineY - 46, cw - 2 * CARD_PAD);
-          }
-          g.font = font(500, 19);
-          g.fillStyle = UI.faint;
-          g.fillText(
-            armed === 'delete'
-              ? say('Aim at a machine; trigger to remove (refunds its cost)', 'Aim at a machine; pinch to remove (refunds its cost)')
-              : armed === 'belt'
-                ? ''
-                : armed && isWeapon(armed as UnitType)
-                  ? say(
-                      `Place a ${UNIT_NAME[armed as UnitType]} (${costText(armed as UnitType)}) anywhere on the floor \u00b7 it fires on its own`,
-                      `Pinch a ${UNIT_NAME[armed as UnitType]} down (${costText(armed as UnitType)}) anywhere on the floor \u00b7 it fires on its own`,
-                    )
-                  : armed
-                    ? say('Aim at the floor \u00b7 Trigger: place', 'Aim at the floor \u00b7 Pinch: place')
-                    : say('Choose a tower. Empty-handed: trigger a tower to upgrade or sell it.', 'Choose a tower. Touch a tower to upgrade or sell it.'),
-            cw / 2,
-            lineY - 22,
-            cw - 2 * CARD_PAD,
-          );
-          // THE WAY BACK OUT. Arming a tool used to be a one-way door
-          // and nothing on this card said otherwise, so it says so now —
-          // on the page where you pick the tool up, which is the only
-          // place anybody is going to read it.
-          if (armed) {
-            caps(g, say('\u24cd / \u24ce PUTS THE TOOL AWAY', 'PALM \u00b7 DOWN PUTS THE TOOL AWAY'), cw / 2, lineY, {
-              px: 16,
-              color: SKIN.gold,
-              align: 'center',
-              track: 2,
-            });
-          }
-        }
-      },
-      buttons,
-      this.hover,
-    );
+    this.paintHandPause();
   }
 
   /**
@@ -2247,199 +1929,6 @@ export class MenuSystem extends createSystem({}) {
 
     caps(g, 'COINS', x + w - coinsW + 18, ly, { px: 14, track: 2 });
     price(g, sg.coins, x + w - coinsW + 18, vy, { px: 30 });
-  }
-
-  /**
-   * BARE HANDS — the controls page when there is nothing in your hands.
-   * Four gestures carry the whole game, so it is a table of four, each
-   * with the shape drawn beside it.
-   */
-  private paintHandControls(g: CanvasRenderingContext2D, x0: number, y0: number, w: number, pitch: number): void {
-    const rows: Array<{ shape: 'pinch' | 'fist' | 'fists' | 'cuff'; name: string; does: string }> = [
-      { shape: 'cuff', name: 'YOUR PALM', does: 'Turn your left palm toward you: the towers, the wave, the coins. Poke a tower with your right index finger to pick it up.' },
-      { shape: 'pinch', name: 'PINCH', does: 'Aim with your right hand and pinch to put the tower down, anywhere on the floor.' },
-      { shape: 'pinch', name: 'TOUCH', does: 'Reach out and touch a tower: UPGRADE it, or SELL it. The palm\'s START begins the next wave early.' },
-      { shape: 'fist', name: 'FIST', does: 'Close a fist on a mite or a beetle and it is yours. Open your hand to throw it.' },
-    ];
-    const rowH = Math.min(pitch - 10, 110);
-    let y = y0;
-    for (const row of rows) {
-      chamfer(g, x0, y, w, rowH, 12);
-      g.fillStyle = 'rgba(150,175,255,0.045)';
-      g.fill();
-      g.strokeStyle = SKIN.lineFaint;
-      g.lineWidth = 1.5;
-      g.stroke();
-      const gs = Math.min(64, rowH - 20);
-      hexPad(g, x0 + 16 + gs / 2, y + rowH / 2, gs * 0.62, SKIN.gold);
-      handGlyph(g, row.shape, x0 + 16, y + (rowH - gs) / 2, gs);
-      g.textAlign = 'left';
-      g.textBaseline = 'middle';
-      g.font = font(700, 22);
-      g.letterSpacing = '2px';
-      g.fillStyle = SKIN.gold;
-      g.fillText(row.name, x0 + gs + 36, y + 24);
-      g.letterSpacing = '0px';
-      wrapText(g, row.does, x0 + gs + 36, y + 52, w - gs - 52, 22, font(500, 18), UI.dim);
-      y += pitch;
-    }
-    g.textBaseline = 'middle';
-  }
-
-  /** THE WAVES PAGE — where you are on the ladder, what this wave is
-   *  teaching, and what is coming after it. Read-only: the siege has one
-   *  way forward and it is the next wave. */
-  private paintWaves(g: CanvasRenderingContext2D, cw: number, ch: number): void {
-    const sg = plant.siege;
-    const spec = waveSpec(sg.wave);
-    const X = CARD_PAD;
-    const R = cw - CARD_PAD;
-    const bottom = ch - CARD_FOOT;
-    let y = CARD_BODY + 10;
-    g.textBaseline = 'middle';
-    caps(g, sg.phase === 'wave' ? 'FIGHTING NOW' : 'NEXT UP', X, y, { px: 15, color: SKIN.gold, track: 3 });
-    y += 32;
-    g.textAlign = 'left';
-    g.font = font(700, 32);
-    g.letterSpacing = '3px';
-    g.fillStyle = UI.textHi;
-    g.fillText(spec.name, X, y);
-    g.letterSpacing = '0px';
-    y += 38;
-
-    // The bill, as chips: one per kind in its neon, and where they come from.
-    const counts = new Map<EnemyId, number>();
-    for (const sp of spec.spawns) counts.set(sp.enemy, (counts.get(sp.enemy) ?? 0) + sp.count);
-    const packs = spec.spawns.filter((sp) => sp.pack).length;
-    let cx = X;
-    const chip = (text: string, hue: string): void => {
-      g.font = font(700, 18);
-      g.letterSpacing = '1.5px';
-      const tw = g.measureText(text).width;
-      const w = tw + 40;
-      chamfer(g, cx, y - 16, w, 32, 8);
-      g.fillStyle = rgba(hue, 0.1);
-      g.fill();
-      g.strokeStyle = rgba(hue, 0.45);
-      g.lineWidth = 1.5;
-      g.stroke();
-      dot(g, cx + 15, y, 5, hue);
-      g.textAlign = 'left';
-      g.fillStyle = UI.text;
-      g.fillText(text, cx + 28, y + 1);
-      g.letterSpacing = '0px';
-      cx += w + 8;
-    };
-    for (const [e, n] of counts) chip(`${n.toLocaleString('en-US')} ${ENEMIES[e].name}`, enemyHue(e));
-    chip(packs > 0 ? `${packs} PACK${packs === 1 ? '' : 'S'} IN THE FLOOR` : 'EVERY WALL', packs > 0 ? SKIN.magenta : SKIN.info);
-    y += 34;
-
-    // The wave's lesson, in a lit bay.
-    g.font = font(600, 20);
-    const lines = measureLines(g, spec.tip, R - X - 40);
-    const tipH = 22 + lines * 25;
-    chamfer(g, X, y, R - X, tipH, 10);
-    g.fillStyle = rgba(SKIN.gold, 0.07);
-    g.fill();
-    g.strokeStyle = rgba(SKIN.gold, 0.3);
-    g.lineWidth = 1.5;
-    g.stroke();
-    g.fillStyle = SKIN.gold;
-    g.fillRect(X + 12, y + 12, 4, tipH - 24);
-    wrapText(g, spec.tip, X + 28, y + 23, R - X - 40, 25, font(600, 20), SKIN.goldHi);
-    y += tipH + 22;
-
-    // What lives in the walls — every kind this wave sends.
-    for (const k of counts.keys()) {
-      if (y > bottom - 110) break;
-      const e = ENEMIES[k];
-      dot(g, X + 7, y, 6, enemyHue(k));
-      g.textAlign = 'left';
-      g.font = font(700, 19);
-      g.letterSpacing = '1.5px';
-      g.fillStyle = enemyHue(k);
-      g.fillText(e.name, X + 22, y);
-      g.letterSpacing = '0px';
-      g.font = font(500, 18);
-      g.fillStyle = UI.dim;
-      g.fillText(e.docket, X + 120, y, R - X - 120);
-      y += 28;
-    }
-    y += 12;
-
-    // The ladder ahead: the next three, no more.
-    if (y < bottom - 40) {
-      rule(g, 'AFTER THAT', X, R, y, UI.faint, 14);
-      y += 30;
-    }
-    for (let n = sg.wave + 1; n < sg.wave + 4 && y < bottom - 8; n++) {
-      const w = waveSpec(n);
-      g.textAlign = 'left';
-      g.font = font(700, 18);
-      g.fillStyle = UI.faint;
-      g.fillText(String(n + 1).padStart(2, '0'), X, y);
-      g.font = font(600, 19);
-      g.fillStyle = UI.dim;
-      g.fillText(w.name, X + 38, y, 220);
-      g.font = font(500, 16);
-      g.fillStyle = UI.faint;
-      g.fillText(waveSummary(w), X + 270, y, R - X - 270);
-      y += 27;
-    }
-  }
-
-  /**
-   * THE CARD'S CONTROLS PAGE — the factory's buttons, with the
-   * controller they live on drawn beside them.
-   *
-   * The board's CONTROLS tab is the whole map; this is the one page of
-   * it that matters mid-shift, at arm's length, with the words pointing
-   * at the button. The right controller carries nearly everything, so
-   * it goes on top; the left is here for Ⓧ, and to say the grip is a
-   * two-handed thing.
-   */
-  private paintCardControls(g: CanvasRenderingContext2D): void {
-    if (intents.handMode) {
-      this.paintHandControls(g, CARD_PAD, CARD_BODY, BOARD.cardPx[0] - 2 * CARD_PAD, 84);
-      return;
-    }
-    // Each callout is a label with a line under it, so they stand 54
-    // apart — closer and one's sub-line runs into the next one's name.
-    const S = 120;
-    const X0 = CARD_PAD + 10;
-    const RY = CARD_BODY + 4;
-    const LY = RY + S + 24;
-    const LBL = 206;
-    const PITCH = 54;
-    const litRight = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
-    const litLeft = new Set<Control>(['trigger', 'grip', 'upper', 'lower']);
-
-    const aR = drawController(g, 'right', X0, RY, S, litRight);
-    const aL = drawController(g, 'left', X0, LY, S, litLeft);
-    g.textBaseline = 'middle';
-    caps(g, 'RIGHT HAND', X0 + S / 2, RY + S + 10, { px: 14, align: 'center' });
-    caps(g, 'LEFT HAND', X0 + S / 2, LY + S + 10, { px: 14, align: 'center' });
-
-    const r = (c: Control): { x: number; y: number } => aR[c];
-    const l = (c: Control): { x: number; y: number } => aL[c];
-    callout(g, r('trigger'), LBL, RY + 8, 'right', 'TRIGGER',
-      'Place the tower. Empty-handed on a tower: upgrade or sell.');
-    callout(g, r('upper'), LBL, RY + 8 + PITCH, 'right', faceGlyph('right', 'upper'),
-      'Turn the tower in hand a quarter.');
-    callout(g, r('lower'), LBL, RY + 8 + PITCH * 2, 'right', faceGlyph('right', 'lower'),
-      'This card. Also puts a tower panel away.');
-    callout(g, r('grip'), LBL, RY + 8 + PITCH * 3, 'right', 'GRIP',
-      'On a mite or a beetle: grab it. Let go to throw.');
-    callout(
-      g,
-      l('lower'),
-      LBL,
-      RY + 8 + PITCH * 4,
-      'right',
-      `${faceGlyph('left', 'lower')} ${faceGlyph('left', 'upper')}`,
-      'Put the tool away.',
-    );
-    callout(g, l('stick'), LBL, RY + 8 + PITCH * 5, 'right', 'STICKS \u00b7 MENU', 'Not used. Walk \u2014 it is your room.', false);
   }
 
   /* ── THE BOX PANEL ────────────────────────────────────────────────────
@@ -2653,77 +2142,6 @@ export class MenuSystem extends createSystem({}) {
     );
   }
 
-  /**
-   * THE BANK'S BILLS.
-   *
-   * The old cut printed a bill as a run of words — "8 CELL + 4 PUMP" —
-   * on a row of grey text, which told you the price and nothing at all
-   * about whether you could pay it: you had to hold the number in your
-   * head and go and look at the bank. Every bill is CHIPS now, one per
-   * ingredient, each carrying the part's own drawing, what it costs, and
-   * what the bank actually holds — and each chip turns green on its own
-   * the moment that line of the bill is covered. You can see at a glance
-   * which single part you are short of, which is the only question
-   * anybody ever asks this page.
-   */
-  private paintBills(g: CanvasRenderingContext2D, cw: number, ch: number): void {
-    const hoverOf = (id: string): number => this.card.hoverOf(id);
-    const step = billRowStep(ch);
-    const h = step - 8;
-    const CHIP = 94;
-    UPGRADES.forEach((u, i) => {
-      const y = CARD_BODY + i * step;
-      const owned = upgradeOwned(u.id);
-      const afford = this.canAfford(u.id);
-      const hov = hoverOf(`buy:${u.id}`);
-      g.fillStyle = owned
-        ? UI.accentFaint
-        : `rgba(255,255,255,${(0.035 + 0.05 * hov).toFixed(3)})`;
-      g.beginPath();
-      g.roundRect(CARD_PAD, y, cw - 2 * CARD_PAD, h, 12);
-      g.fill();
-      g.strokeStyle = owned
-        ? 'rgba(255,162,46,0.5)'
-        : `rgba(255,255,255,${(0.08 + 0.2 * hov).toFixed(3)})`;
-      g.lineWidth = 2;
-      g.stroke();
-
-      const bill = Object.entries(u.bill) as Array<[ItemId, number]>;
-      const billW = owned ? 96 : bill.length * CHIP;
-      g.textAlign = 'left';
-      g.textBaseline = 'middle';
-      g.font = font(600, 21);
-      g.fillStyle = owned ? UI.dim : afford ? UI.text : UI.disabled;
-      g.fillText(u.name, CARD_PAD + 18, y + h / 2 - 12, cw - 2 * CARD_PAD - billW - 40);
-      g.font = font(500, 16);
-      g.fillStyle = UI.faint;
-      g.fillText(u.effect, CARD_PAD + 18, y + h / 2 + 13, cw - 2 * CARD_PAD - billW - 40);
-
-      if (owned) {
-        g.textAlign = 'right';
-        g.font = font(700, 19);
-        g.fillStyle = UI.accent;
-        g.fillText('FITTED', cw - CARD_PAD - 20, y + h / 2);
-        return;
-      }
-      // One chip per ingredient: the drawing, the price, and what the
-      // bank has against it.
-      bill.forEach(([item, need], n) => {
-        const have = plant.bank[item] ?? 0;
-        const covered = have >= (need ?? 0);
-        const x = cw - CARD_PAD - billW + n * CHIP + 6;
-        itemGlyph(g, item, x, y + h / 2 - 17, 34, covered ? GLYPH_LIVE : GLYPH_DEAD);
-        g.textAlign = 'left';
-        g.font = font(700, 19);
-        g.fillStyle = covered ? UI.positive : UI.warn;
-        g.fillText(String(need ?? 0), x + 40, y + h / 2 - 9);
-        g.font = font(500, 14);
-        g.fillStyle = UI.faint;
-        g.fillText(`bank ${have}`, x + 40, y + h / 2 + 12);
-      });
-    });
-  }
-
   /* ── shared body dispatcher ───────────────────────────────────────────── */
 
   /** Panel.paint takes one body; the board's is whichever tab's painter
@@ -2739,27 +2157,6 @@ export class MenuSystem extends createSystem({}) {
 
 /* ── little helpers ───────────────────────────────────────────────────────── */
 
-/** A kind's neon, as CSS. */
-function enemyHue(e: EnemyId): string {
-  return `#${ENEMIES[e].neon.toString(16).padStart(6, '0')}`;
-}
-
-/** How many lines `text` wraps to at `maxW` in the current font. */
-function measureLines(g: CanvasRenderingContext2D, text: string, maxW: number): number {
-  let line = '';
-  let lines = 0;
-  for (const word of text.split(' ')) {
-    const probe = line ? `${line} ${word}` : word;
-    if (g.measureText(probe).width > maxW && line) {
-      lines++;
-      line = word;
-    } else {
-      line = probe;
-    }
-  }
-  return lines + (line ? 1 : 0);
-}
-
 function fmtMs(ms: number): string {
   const total = Math.max(0, Math.round(ms / 100) / 10);
   const m = Math.floor(total / 60);
@@ -2767,34 +2164,10 @@ function fmtMs(ms: number): string {
   return m > 0 ? `${m}:${s.padStart(4, '0')}` : `${s}s`;
 }
 
-/* ── the shift card's layout band ───────────────────────────────────────
- * The card has three fixed zones — header (goal + clock), body (the
- * page), footer (BACK TO IT / DOWN TOOLS, and whatever the page parks
- * above them) — and every page measures itself against these instead of
- * guessing pixels. Playtest found text over text on the GOALS page; it
- * was all fixed offsets that had outgrown a 500 px card.
- */
+/* ── the pause plate's layout ───────────────────────────────────────── */
 const CARD_PAD = 34;
-const CARD_GAP = 10;
-/** The HUD strip under the title, and the page tabs under that. */
+/** The HUD strip under the title. */
 const CARD_HUD = 112;
-const CARD_TABS = 210;
-/** Where a page's body may start — clear of the tabs. */
-const CARD_BODY = 272;
-/** How much of the bottom belongs to the footer, measured up from ch.
- *  RESUME / QUIT sit at ch − 92 and stand 64 tall, so 112 is that band
- *  plus a little air; a page may park its last lines just above it. */
-const CARD_FOOT = 112;
-
-/** Row pitch for the goals ladder: share the body band out over the
- *  book, so a longer book tightens up instead of running off the card. */
-
-/** The same share-out for the bills. They are fatter than goal rows
- *  because each one carries its bill as chips rather than as words. */
-function billRowStep(ch: number): number {
-  const band = ch - CARD_FOOT - 26 - CARD_BODY;
-  return Math.max(46, Math.min(72, Math.floor(band / Math.max(1, UPGRADES.length))));
-}
 
 function wrapText(
   g: CanvasRenderingContext2D,

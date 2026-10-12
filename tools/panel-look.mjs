@@ -6,8 +6,8 @@
  *   npm run dev
  *   node tools/panel-look.mjs
  *
- * The board's three tabs, the siege card's pages (controllers), the
- * pause plate (hands), the palm: header, studs and tiles from the first
+ * The board's three tabs, the pause plate, the palm: header, studs and
+ * tiles from the first
  * core to the full arsenal, a tower's panel and the core's, and the last
  * card. Plus a room shot of the palm, which is how it is actually read.
  * Every control on every panel is also checked to sit inside its frame.
@@ -66,7 +66,7 @@ const inFrame = async (what, rects, layout) => {
 console.log('THE BOARD');
 for (const [tab, name] of [
   ['tab:factory', 'board-siege'],
-  ['tab:controls', 'board-controls'],
+  ['tab:controls', 'board-hands'],
   ['tab:sys', 'board-settings'],
 ]) {
   await act(tab);
@@ -75,29 +75,20 @@ for (const [tab, name] of [
 }
 await act('tab:factory');
 
-/* ── THE SIEGE CARD (controllers) ───────────────────────────────────── */
+/* ── THE PAUSE PLATE ─────────────────────────────────────────────────── */
 
-console.log('THE SIEGE CARD');
+console.log('THE PAUSE PLATE');
 await page.evaluate(() => window.__tubes.startShop());
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
 await frames(6);
 await page.evaluate(() => window.__tubes.menu.setPause(true));
 await frames(6);
-save('card-core', await page.evaluate(() => window.__tubes.menu.snapCard()));
+save('pause-core', await page.evaluate(() => window.__tubes.menu.snapCard()));
 await page.evaluate(() => window.__tubes.siege.core());
 await page.evaluate(() => window.__tubes.menu.setPause(true));
 await frames(6);
-for (const [tab, name] of [
-  ['card:build', 'card-build'],
-  ['card:goals', 'card-waves'],
-  ['card:controls', 'card-controls'],
-]) {
-  await act(tab);
-  await frames(4);
-  save(name, await page.evaluate(() => window.__tubes.menu.snapCard()));
-  await inFrame(name, await page.evaluate(() => window.__tubes.menu.cardRects()), await page.evaluate(() => window.__tubes.menu.cardLayout()));
-}
-await act('card:build');
+save('pause-build', await page.evaluate(() => window.__tubes.menu.snapCard()));
+await inFrame('pause-build', await page.evaluate(() => window.__tubes.menu.cardRects()), await page.evaluate(() => window.__tubes.menu.cardLayout()));
 await page.evaluate(() => window.__tubes.menu.setPause(false));
 await frames(4);
 
@@ -139,12 +130,6 @@ await page.evaluate(() => {
   window.IWER_DEVICE.primaryInputMode = 'hand';
 });
 await frames(6);
-await act('tab:controls');
-await frames(4);
-save('board-controls-hands', await page.evaluate(() => window.__tubes.menu.snapBoard()));
-await act('tab:factory');
-await frames(4);
-save('board-siege-hands', await page.evaluate(() => window.__tubes.menu.snapBoard()));
 
 await page.evaluate(() => window.__tubes.startShop());
 await page.waitForFunction(() => window.__tubes.site.screen === 'factory', undefined, { timeout: 5000 });
@@ -185,12 +170,11 @@ await page.evaluate(() => window.__tubes.siege.start());
 await frames(10);
 await palm('palm-wave');
 
-console.log('THE PAUSE PLATE');
-await page.evaluate(() => window.__tubes.siege.clear?.());
+console.log('THE PAUSE PLATE, MID-WAVE');
 await page.evaluate(() => window.__tubes.menu.setPause(true));
 await frames(8);
-save('pause-hands', await page.evaluate(() => window.__tubes.menu.snapCard()));
-await inFrame('pause-hands', await page.evaluate(() => window.__tubes.menu.cardRects()), await page.evaluate(() => window.__tubes.menu.cardLayout()));
+save('pause-wave', await page.evaluate(() => window.__tubes.menu.snapCard()));
+await inFrame('pause-wave', await page.evaluate(() => window.__tubes.menu.cardRects()), await page.evaluate(() => window.__tubes.menu.cardLayout()));
 await page.evaluate(() => window.__tubes.menu.setPause(false));
 
 /* ── THE LAST CARD ───────────────────────────────────────────────────── */

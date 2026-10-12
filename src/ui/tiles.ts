@@ -31,9 +31,6 @@ export interface TowerCardOpts {
   flash?: number;
   /** Text scale against the card's width (1 = the default). */
   scale?: number;
-  /** 'stack' (picture over words, the default) or 'row' (picture left,
-   *  words right) — for a card wider than it is tall. */
-  layout?: 'stack' | 'row';
 }
 
 export function towerCard(
@@ -80,12 +77,6 @@ export function towerCard(
   g.lineWidth = armed ? 3.5 : 2;
   g.stroke();
   g.shadowBlur = 0;
-
-  if (o.layout === 'row') {
-    rowBody(g, x, y, w, h, o, hue, live, armed);
-    g.restore();
-    return;
-  }
 
   // The picture, on its pad — in its own band, clear of the words: the
   // band ends well above the name, so nothing it shows (the core's pad,
@@ -150,46 +141,3 @@ export function towerCard(
   g.restore();
 }
 
-/** The ROW layout: the picture on its pad down the left, the name and
- *  the price (or role) stacked to its right. */
-function rowBody(
-  g: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  o: TowerCardOpts,
-  hue: string,
-  live: boolean,
-  armed: boolean,
-): void {
-  const k = o.scale ?? 1;
-  const box = Math.min(h - 20, w * 0.42);
-  const pcx = x + 10 + box / 2;
-  const pcy = y + h / 2;
-  hexPad(g, pcx, pcy, box * 0.5, hue, live);
-  const size = box * 0.92;
-  unitGlyph(g, o.tool, pcx - size / 2, pcy - size / 2, size, live ? GLYPH_LIVE : GLYPH_DEAD);
-  const tx = x + box + 22;
-  const tw = w - (tx - x) - 10;
-  g.textAlign = 'left';
-  g.font = font(700, Math.round(22 * k));
-  g.letterSpacing = `${Math.max(1, Math.round(2 * k))}px`;
-  g.fillStyle = live ? SKIN.text : SKIN.disabled;
-  g.fillText(o.name, tx, pcy - 14 * k, tw);
-  g.letterSpacing = '0px';
-  const footY = pcy + 18 * k;
-  if (armed) {
-    caps(g, 'IN HAND', tx, footY, { px: Math.round(16 * k), color: hue, track: 2, max: tw });
-  } else if (o.note) {
-    caps(g, o.note, tx, footY, { px: Math.round(15 * k), color: SKIN.gold, track: 2, max: tw });
-  } else if (o.cost !== undefined) {
-    price(g, o.cost, tx, footY, {
-      px: Math.round(22 * k),
-      color: live ? SKIN.goldHi : SKIN.magentaSoft,
-      coinColor: live ? SKIN.gold : 'rgba(205,215,245,0.4)',
-    });
-  } else if (o.role) {
-    caps(g, o.role, tx, footY, { px: Math.round(14 * k), color: live ? hue : SKIN.disabled, track: 2, max: tw });
-  }
-}
