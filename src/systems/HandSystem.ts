@@ -24,7 +24,7 @@
  *       START  start the next wave now (build phase only)
  *       PAUSE  the pause plate (BACK while it, or the core, is open)
  *       TURN   a quarter turn for the piece in hand   ┐ only while
- *       DOWN   put the tool away                      ┘ holding one
+ *       READY  put the tool away (done placing)       ┘ holding one
  *       DONE   while you are marking out the floor
  *
  * It only takes pokes while you are looking at it, and goes away while
@@ -525,7 +525,7 @@ export class HandSystem extends createSystem({}) {
     const label: Record<Action, string> = {
       menu: open ? 'BACK' : 'PAUSE',
       turn: 'TURN',
-      stow: 'DOWN',
+      stow: 'READY',
       done: 'DONE',
       start: 'START',
     };
@@ -545,7 +545,8 @@ export class HandSystem extends createSystem({}) {
       s.group.visible = act !== null;
       // Centre whatever row there is.
       s.group.position.x = (k - (acts.length - 1) / 2) * CUFF.pitch;
-      const icon: Icon | null = act === 'menu' ? (open ? 'back' : 'pause') : act;
+      // READY wears the tick: you are done with the piece in hand.
+      const icon: Icon | null = act === 'menu' ? (open ? 'back' : 'pause') : act === 'stow' ? 'done' : act;
       const key = act ? `${act}|${label[act]}|${icon}` : '';
       if (key !== s.key) {
         s.key = key;

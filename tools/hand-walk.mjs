@@ -16,7 +16,7 @@
  *   THE FIST          open / pinch / point never grab; a fist does, and holds
  *   THE PALM          turn the hand and the panel rises: header + towers,
  *                     in one plane, nothing covering anything
- *   THE POKE          the right index tip presses PAUSE, BACK, DOWN, tiles
+ *   THE POKE          the right index tip presses PAUSE, BACK, READY, tiles
  *   THE OTHER PALM    the right palm turned up carries the menu too, and
  *                     the left index pokes it
  *   TOUCH A TOWER     its panel opens: UPGRADE it, then SELL it
@@ -298,9 +298,9 @@ await frames(6);
 await poke(await stud('tool:turret'));
 check((await armed()) === 'turret', 'POKE the TURRET tile: a gun in your hand');
 ids = (await cuff()).studs.map((s) => s.id);
-check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
+check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and READY (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
 await poke(await stud('stow'));
-check((await armed()) === null, 'POKE DOWN: the tool is put away');
+check((await armed()) === null, 'POKE READY: the tool is put away');
 await poke(await stud('tool:hammer'));
 check((await armed()) === 'hammer', 'pick the HAMMER');
 await poke(await stud('tool:hammer'));

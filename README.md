@@ -141,7 +141,7 @@ other hand's, anything else with either.
     to the NEXT WAVE or how many ENEMIES are LEFT, and your COINS) over a
     slim bar for the core, and the buttons a hand doesn't have, each an
     icon over a word: **▶▶ START** (start the next wave now), **❚❚ PAUSE**,
-    and **TURN** / **DOWN** while you're holding a tower.
+    and **TURN** / **READY** (put it away) while you're holding a tower.
   - **The towers** below it: each tile shows the tower's picture and price,
     dimmed when you can't afford it. Poke one to pick it up, aim with your
     right hand and **pinch** to put it down. Poke the same tile again to put
