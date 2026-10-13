@@ -1535,7 +1535,7 @@ export class MenuSystem extends createSystem({}) {
       {
         shape: 'touch',
         name: 'TOUCH A TOWER',
-        does: 'Reach out and touch one standing on the floor: its panel opens. UPGRADE it, or SELL it. Remember to close the panel to interact with something else.',
+        does: 'Reach out and touch one standing on the floor: its panel opens. UPGRADE it, or SELL it. Touch another tower and the panel switches to it.',
       },
       {
         shape: 'fist',

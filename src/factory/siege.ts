@@ -665,6 +665,17 @@ function tickHorde(dt: number): void {
     // A TOWER IN THE WAY: if the road runs through it, chew; if not,
     // slide along it.
     const here = live ? field.at(x, z) : -1;
+    // …unless it holds a GRUDGE (ENEMIES' aggro, settled at birth by its
+    // veer): then any tower it is up against gets chewed, in the way or
+    // not. A ring of guns is a wall the tide gnaws at, not a fence it
+    // files past.
+    if (here >= 0 && nearTower[here] && spec.aggro > h.veer[i] + 0.5) {
+      const t = touching(x, z, r, here);
+      if (t) {
+        bite(i, t, spec.bite, dt);
+        continue;
+      }
+    }
     if (here >= 0 && nearTower[here]) {
       const ml = Math.sqrt(vx * vx + vz * vz) || 1;
       const lx = (vx / ml) * r * 0.8;
@@ -708,6 +719,18 @@ const TAU = Math.PI * 2;
 /** An angle back into −π..π. */
 function wrap(a: number): number {
   return a > Math.PI ? a - TAU : a < -Math.PI ? a + TAU : a;
+}
+
+/** A tower a crawler of radius r at (x, z) is touching, if any — the
+ *  cells either side of it along both axes, a whisker past its body. */
+function touching(x: number, z: number, r: number, here: number): Unit | undefined {
+  const d = r + 0.05;
+  return (
+    blocker(field.at(x + d, z), here) ??
+    blocker(field.at(x - d, z), here) ??
+    blocker(field.at(x, z + d), here) ??
+    blocker(field.at(x, z - d), here)
+  );
 }
 
 /** Crawler i is up against tower t, and the way runs through it: chew. */

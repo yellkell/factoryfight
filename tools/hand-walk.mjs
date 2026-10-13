@@ -16,7 +16,7 @@
  *   THE FIST          open / pinch / point never grab; a fist does, and holds
  *   THE PALM          turn the hand and the panel rises: header + towers,
  *                     in one plane, nothing covering anything
- *   THE POKE          the right index tip presses PAUSE, BACK, DOWN, tiles
+ *   THE POKE          the right index tip presses PAUSE, BACK, READY, tiles
  *   THE OTHER PALM    the right palm turned up carries the menu too, and
  *                     the left index pokes it
  *   TOUCH A TOWER     its panel opens: UPGRADE it, then SELL it
@@ -298,9 +298,9 @@ await frames(6);
 await poke(await stud('tool:turret'));
 check((await armed()) === 'turret', 'POKE the TURRET tile: a gun in your hand');
 ids = (await cuff()).studs.map((s) => s.id);
-check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and DOWN (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
+check(['turn', 'stow', 'menu'].every((i) => ids.includes(i)), `the header grows TURN and READY (${ids.filter((i) => !i.startsWith('tool:')).join(', ')})`);
 await poke(await stud('stow'));
-check((await armed()) === null, 'POKE DOWN: the tool is put away');
+check((await armed()) === null, 'POKE READY: the tool is put away');
 await poke(await stud('tool:hammer'));
 check((await armed()) === 'hammer', 'pick the HAMMER');
 await poke(await stud('tool:hammer'));
@@ -326,6 +326,34 @@ await frames(4);
 await tipTo(towerPt, 0);
 await frames(14);
 check((await page.evaluate(() => window.__tubes.menu.panelsUp())).includes('box'), 'touch the tower: its panel opens');
+{
+  // ANOTHER TOWER, PANEL STILL OPEN: touching it switches the panel to
+  // it — no ✕ first.
+  const first = await page.evaluate(() => window.__tubes.site.inspect);
+  const other = await page.evaluate(({ i, j }) => {
+    for (const [di, dj] of [[0, 2], [0, -2], [2, 0], [-2, 0]]) {
+      if (window.__tubes.build.placeAt(i + di, j + dj, 'turret', 0)) return { i: i + di, j: j + dj };
+    }
+    return null;
+  }, spot);
+  const pt = { x: (other.i + 0.5) * 0.35 * S, y: 0.5, z: (other.j + 0.5) * 0.35 * S, nx: 0, ny: 1, nz: 0 };
+  await tipTo(pt, 0.3);
+  await frames(4);
+  await tipTo(pt, 0);
+  await frames(14);
+  const now = await page.evaluate(() => window.__tubes.site.inspect);
+  check(now >= 0 && now !== first, `touch ANOTHER tower with the panel open: it switches to that one (${first} → ${now})`);
+  await tipTo(pt, 0.35);
+  await frames(4);
+  // Back to the first, for the upgrade and sell below.
+  await tipTo(towerPt, 0.3);
+  await frames(4);
+  await tipTo(towerPt, 0);
+  await frames(14);
+  await page.evaluate((o) => window.__tubes.build.removeAt(o.i, o.j), other);
+  await frames(4);
+  check((await page.evaluate(() => window.__tubes.site.inspect)) === first, 'and touching the first switches back');
+}
 await tipTo(towerPt, 0.35);
 await frames(4);
 await page.screenshot({ path: 'shots/hands/tower-panel.png' });

@@ -24,7 +24,7 @@
  *       START  start the next wave now (build phase only)
  *       PAUSE  the pause plate (BACK while it, or the core, is open)
  *       TURN   a quarter turn for the piece in hand   ┐ only while
- *       DOWN   put the tool away                      ┘ holding one
+ *       READY  put the tool away (done placing)       ┘ holding one
  *       DONE   while you are marking out the floor
  *
  * It only takes pokes while you are looking at it, and goes away while
@@ -134,6 +134,10 @@ const BELT = {
   perRow: 3,
   /** How high over the palm the belt floats. */
   lift: 0.075,
+  /** …and how far UP the hand it sits (along the panel's up — toward
+   *  the fingers when the palm is turned to you), so it rides the hand
+   *  rather than hanging off the heel of it. */
+  up: 0.035,
 };
 
 /** A tower's (or the core's) touchable body (room metres): a column. */
@@ -221,6 +225,10 @@ export class HandSystem extends createSystem({}) {
   };
   private pokeCool = 0;
   private towerArmed: Record<HandSide, boolean> = { left: true, right: true };
+  /** The tower each fingertip last touched: a DIFFERENT tower counts as a
+   *  fresh touch straight away, so a finger can go from one tower to the
+   *  next without first backing off into open floor. */
+  private towerLast: Record<HandSide, number> = { left: -1, right: -1 };
 
   init(): void {
     this.cuff = new Group();
@@ -444,6 +452,8 @@ export class HandSystem extends createSystem({}) {
     _c.copy(pc).addScaledVector(pn, BELT.lift);
     _x.copy(_cam).sub(_c).normalize();
     faceBasis(_x, _up, _m, _c);
+    _c.addScaledVector(_a.setFromMatrixColumn(_m, 1), BELT.up);
+    _m.setPosition(_c);
     this.belt.matrix.copy(_m);
     this.belt.matrixWorldNeedsUpdate = true;
     _c.set(0, HEADER_UP, 0).applyMatrix4(_m);
@@ -515,7 +525,7 @@ export class HandSystem extends createSystem({}) {
     const label: Record<Action, string> = {
       menu: open ? 'BACK' : 'PAUSE',
       turn: 'TURN',
-      stow: 'DOWN',
+      stow: 'READY',
       done: 'DONE',
       start: 'START',
     };
@@ -535,7 +545,8 @@ export class HandSystem extends createSystem({}) {
       s.group.visible = act !== null;
       // Centre whatever row there is.
       s.group.position.x = (k - (acts.length - 1) / 2) * CUFF.pitch;
-      const icon: Icon | null = act === 'menu' ? (open ? 'back' : 'pause') : act;
+      // READY wears the tick: you are done with the piece in hand.
+      const icon: Icon | null = act === 'menu' ? (open ? 'back' : 'pause') : act === 'stow' ? 'done' : act;
       const key = act ? `${act}|${label[act]}|${icon}` : '';
       if (key !== s.key) {
         s.key = key;
@@ -616,13 +627,14 @@ export class HandSystem extends createSystem({}) {
 
   /* ── A TOWER, touched ─────────────────────────────────────────────── */
 
-  /** Reach out and touch a tower (or the core): its panel opens. */
+  /** Reach out and touch a tower (or the core): its panel opens — and
+   *  with one panel already open, touching ANOTHER tower switches the
+   *  panel straight to it, no ✕ in between. */
   private tickTowerTouch(): void {
     const can =
       intents.handMode &&
       site.screen === 'factory' &&
       !site.paused &&
-      site.inspect < 0 &&
       (buildView.armed?.() ?? null) === null;
     site.hover.hand = -1;
     for (const hand of ['left', 'right'] as const) {
@@ -649,8 +661,10 @@ export class HandSystem extends createSystem({}) {
       // REACHING FOR ONE: a fingertip near a tower (closer than the touch
       // that opens it) is asking about it, and it shows its health.
       if (reach >= 0) site.hover.hand = reach;
-      if (hit >= 0 && this.towerArmed[hand]) {
+      if (hit >= 0 && (this.towerArmed[hand] || hit !== this.towerLast[hand])) {
         this.towerArmed[hand] = false;
+        this.towerLast[hand] = hit;
+        if (hit === site.inspect) continue; // already its panel
         site.inspect = hit;
         sfx.uiClick();
       } else if (hit < 0 && near > TOWER_TOUCH.r + 0.05) {

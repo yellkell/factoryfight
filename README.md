@@ -50,12 +50,13 @@ from every side at once: a *They Are Billions* horde in your living room.
   beetle, 25 a hulk); clearing a wave pays more (40 + 15 × the wave). You
   start with 150: three turrets.
 - **They get tougher every wave.** Hit points grow with the wave
-  (× 1 + 0.15w + 0.11w² for wave index w): over twice as tough by wave 4,
-  four and a half times by wave 6, eleven by the last. A level-1 turret
+  (× 1 + 0.15w + 0.125w² for wave index w): over twice as tough by wave 4,
+  nearly five times by wave 6, twelve and a half by the last. A level-1 turret
   one-shots a mite only in the first wave; after that, upgrade or lose. `tools/balance-bot.mjs` plays the whole
   ladder the blunt way (upgrade whatever has earned it, then spend
-  everything on the free cells nearest the core) and finishes it
-  bloodied, at about a sixth of a core.
+  everything on the free cells nearest the core): it holds the first five
+  easily, is mauled by THE HULKS and falls around wave 8. A careful player
+  — spending every coin, placing with thought, throwing — gets further.
 - **They come out of EVERY WALL.** When a wave starts they climb out of the
   foot of every real wall in the room, anywhere along it, and make for the
   core: a hundred in the first wave, thousands by the end. Nobody knows the
@@ -71,7 +72,10 @@ from every side at once: a *They Are Billions* horde in your living room.
 - **They CHEW what's in the way.** A lone tower gets walked round. Box the
   core in and they chew through the weakest tower in the ring (a mite
   nibbles, a beetle gnaws, a hulk wrecks); one chewed to nothing is scrap.
-  Towers patch up whole between waves.
+  And some carry a GRUDGE (`ENEMIES[…].aggro`): half the hulks, most
+  beetles and a fifth of the mites turn on any tower they brush past and
+  chew it, in their way or not — so the front of a ring is always under
+  teeth late on. Towers patch up whole between waves.
 - **Three kinds,** all the same neon-legged body:
   - **MITE:** the tide itself. Tiny and quick.
   - **BEETLE:** a lime-green shell that takes a few hits.
@@ -137,7 +141,7 @@ other hand's, anything else with either.
     to the NEXT WAVE or how many ENEMIES are LEFT, and your COINS) over a
     slim bar for the core, and the buttons a hand doesn't have, each an
     icon over a word: **▶▶ START** (start the next wave now), **❚❚ PAUSE**,
-    and **TURN** / **DOWN** while you're holding a tower.
+    and **TURN** / **READY** (put it away) while you're holding a tower.
   - **The towers** below it: each tile shows the tower's picture and price,
     dimmed when you can't afford it. Poke one to pick it up, aim with your
     right hand and **pinch** to put it down. Poke the same tile again to put
