@@ -77,6 +77,9 @@ export interface Unit {
   /** TOWER LEVEL (1–3), and every coin put into it (sells for a share). */
   level?: number;
   spent?: number;
+  /** XP: every hit point of damage this tower has dealt, all told. It
+   *  has to earn a level's worth before the coins can buy it. */
+  xp?: number;
   /** THE HAMMER, mid-swing: where it will land and seconds until it does. */
   strike?: { x: number; z: number; t: number };
 }
@@ -240,6 +243,8 @@ export interface Fire {
   r: number;
   t: number;
   life: number;
+  /** The tower whose flame lit it (unit id) — it earns the burn. */
+  by?: number;
 }
 
 export interface Breach {
@@ -272,6 +277,8 @@ export interface Shot {
   at?: number;
   /** What it does when it lands (the tower's level is in it). */
   damage?: number;
+  /** The tower that fired it (unit id) — it earns what it does. */
+  by?: number;
   t: number;
   dur: number;
 }

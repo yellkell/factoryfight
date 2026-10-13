@@ -27,11 +27,24 @@ from every side at once: a *They Are Billions* horde in your living room.
 - **Ask a tower how it's holding up.** Point at one (or hover the mouse,
   in the emulator), reach a fingertip toward it, or open its panel, and it
   shows a health gauge like the core's; otherwise towers stay clean.
-- **Touch a tower to UPGRADE or SELL it.** The panel is just the tower, its
-  level dots and two big buttons: UPGRADE (with its price) and SELL (with what
-  you get back). Three levels, each buying damage, reach and rate of fire. An
-  upgraded tower stands a little bigger, wears a neon ring per level and
-  has thicker plate (×1.5, then ×2.2 hit points). Selling returns 70% of
+- **Towers UPGRADE — earned, then bought.** Every hit point of damage a
+  tower deals is XP (counted in first-wave hit points, so a wave's work is
+  worth about the same early and late; a flamer's burn counts too). Once it
+  has earned its next level a gold ring breathes on the floor round it, and
+  you can spend the coins to upgrade it. Three levels, each a big step
+  (×1.75, then ×3 damage, more reach and rate of fire, ×1.6 then ×2.4
+  hit points), and each one an exaggerated form of the same tower: it
+  grows (mostly UP: a level-3 turret stands three quarters taller) and
+  more of its own parts: the turret heavier lances, then a third and a
+  second collar of plate; the tesla coil windings and a ring, then a
+  fourth plate and a bigger orb; the flamer canisters and stacks, then a
+  reserve tank and a wider bell; the hammer a counterweight, then a far
+  bigger head; the mortar taller cheeks, then side tubes and a heavier
+  breech. XP needed per tower is in `WEAPONS[…].xp`: about a wave and a
+  half for the first upgrade, four or five more for the last.
+- **Touch a tower to UPGRADE or SELL it.** The panel is the tower, its
+  level, its XP bar and plate, and two big buttons: UPGRADE (how much XP to
+  go, then its price) and SELL (what you get back). Selling returns 70% of
   everything you put in.
 - **Coins are tight.** Kills pay a little (a fifth of a coin a mite, 2 a
   beetle, 25 a hulk); clearing a wave pays more (40 + 15 × the wave). You
@@ -40,8 +53,9 @@ from every side at once: a *They Are Billions* horde in your living room.
   (× 1 + 0.15w + 0.11w² for wave index w): over twice as tough by wave 4,
   four and a half times by wave 6, eleven by the last. A level-1 turret
   one-shots a mite only in the first wave; after that, upgrade or lose. `tools/balance-bot.mjs` plays the whole
-  ladder the blunt way (spend everything, every wave, on the free cells
-  nearest the core) and finishes it at about half a core.
+  ladder the blunt way (upgrade whatever has earned it, then spend
+  everything on the free cells nearest the core) and finishes it
+  bloodied, at about a sixth of a core.
 - **They come out of EVERY WALL.** When a wave starts they climb out of the
   foot of every real wall in the room, anywhere along it, and make for the
   core: a hundred in the first wave, thousands by the end. Nobody knows the
@@ -102,17 +116,23 @@ top of it.
   flickering while the pack climbs out, a dim scar once it's spent, gone
   when the wave is.
 
-The tide and its cracks are magenta. The menus
-use no drawings: at load, a small studio (`src/ui/pictures.ts`) photographs
-every tower with the same builders the floor uses.
+The tide and its cracks are magenta. The menus are cut from the same
+crystal (`src/ui/skin.ts`): black glass panes with faceted corners, a faint
+hex lattice and a neon edge — core gold for the menus, a tower's own neon on
+its panel, the tide's magenta when the core falls. They use no drawings: at
+load, a small studio (`src/ui/pictures.ts`) photographs every tower with the
+same builders the floor uses, and every menu shows a tower the same way
+(`src/ui/tiles.ts`).
 
-## Bare hands — your left palm is the menu
+## Bare hands — your palm is the menu
 
 The game reads controllers or tracked hands through one layer
 (`src/input/intents.ts`), so nothing downstream knows which you are using. On
-hands, everything is **poked with your right index finger**.
+hands, everything is **poked with an index finger**: the palm menu with the
+other hand's, anything else with either.
 
-- **Turn your left palm toward you.** One panel rises over it, facing you:
+- **Turn either palm toward you.** One panel rises over it, facing you (the
+  palm that has it keeps it until it turns away):
   - **The header** across the top: three readouts (the WAVE, the clock
     to the NEXT WAVE or how many ENEMIES are LEFT, and your COINS) over a
     slim bar for the core, and the buttons a hand doesn't have, each an
@@ -130,9 +150,6 @@ hands, everything is **poked with your right index finger**.
 - **Panels come to you.** Pause and tower panels appear within arm's reach,
   and you press them by touch.
 
-With controllers, the same verbs are on trigger, Ⓐ, Ⓑ and Ⓧ/Ⓨ: aim at a
-tower and pull the trigger to open its panel.
-
 ## Quick start
 
 ```bash
@@ -149,14 +166,15 @@ stands in. Its hands can be switched on from its panel.
 ```bash
 npm run typecheck
 npm run dev &
-node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, upgrade, sell, a crack in the floor, the chew, a leak, the fall
-node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a tower to upgrade and sell
+node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, XP, upgrade, sell, a crack in the floor, the chew, a leak, the fall
+node tools/hand-walk.mjs    # bare hands: the palm panel (either palm), pokes, touching a tower to upgrade and sell
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost; CROWD=8000 for more), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)
 node tools/throw-walk.mjs   # grab a mite, throw it into a crowd; set a beetle down; a hulk won't lift
 node tools/enemy-look.mjs   # the three kinds: a line-up, each close from three angles, and a crowd
 node tools/floor-walk.mjs   # the hazard-tape floor
+node tools/panel-look.mjs   # every menu panel photographed as the headset gets it (shots/panels/)
 ```
 
 ## Map of the parts

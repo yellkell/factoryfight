@@ -78,7 +78,7 @@ export class PointerRay {
 
   constructor(scene: Object3D | Scene) {
     this.lineMat = new LineBasicMaterial({
-      color: 0xffa22e,
+      color: 0xffcf3a,
       transparent: true,
       opacity: 0.25,
       blending: AdditiveBlending,

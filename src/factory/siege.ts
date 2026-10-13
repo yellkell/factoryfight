@@ -31,6 +31,7 @@ import {
   type EnemyId,
   type WaveSpec,
   type WeaponId,
+  UPGRADE_SCALE,
 } from '../config.js';
 import { CELL, cellCenter, cellInFloor, worldToCell } from '../floor/grid.js';
 import { floorLayout } from '../floor/plan.js';
@@ -408,6 +409,10 @@ export function siegeTick(dt: number): void {
 function tickSiege(dt: number): void {
   const sg = plant.siege;
   if (frozen || sg.phase === 'off' || sg.phase === 'fallen') return;
+  // Who is standing, by id — so a shell in the air or a crawler on fire
+  // can find the tower that earned it.
+  towers.clear();
+  for (const u of plant.units) if (isWeapon(u.type)) towers.set(u.id, u);
   // The core just landed: the field is rooted and the siege begins.
   if (sg.phase === 'core') {
     if (dockUnit()) beginBuild(sg.wave);
@@ -477,7 +482,7 @@ function spawn(kind: EnemyId, rift: number): number {
   const r = rift >= 0 ? sg.breaches[rift] : undefined;
   const h = sg.horde;
   const w = sg.wave;
-  const hp = ENEMIES[kind].hp * (1 + SIEGE.hpPerWave * w + SIEGE.hpPerWave2 * w * w);
+  const hp = ENEMIES[kind].hp * toughness(w);
   if (r) {
     // UP OUT OF THE CRACK: somewhere along it, below the floor, and it
     // climbs out over one lip or the other.
@@ -562,7 +567,9 @@ function tickHorde(dt: number): void {
     // ON FIRE: it burns as it walks.
     if (BT[i] > 0) {
       BT[i] -= dt;
-      h.hp[i] -= h.burnDps[i] * dt;
+      const lose = h.burnDps[i] * dt;
+      earn(towers.get(h.burnBy[i]), Math.min(lose, Math.max(0, h.hp[i])));
+      h.hp[i] -= lose;
       if (h.hp[i] <= 0) {
         die(i, W.flamer);
         continue;
@@ -865,6 +872,41 @@ const SHOT_Y = 0.08; // where a shot lands on a body (plant m up)
 export function levelOf(u: Unit): number {
   return u.level ?? 1;
 }
+
+/** The towers standing this tick, by unit id (refilled every tick). */
+const towers = new Map<number, Unit>();
+
+/** How much tougher than the first wave's they come in wave index w. */
+function toughness(w: number): number {
+  return 1 + SIEGE.hpPerWave * w + SIEGE.hpPerWave2 * w * w;
+}
+
+/** XP for a tower: the damage it dealt, counted in FIRST-WAVE hit points
+ *  — a mite is worth the same XP in wave 9 as in wave 1, however much
+ *  tougher it has grown, so a wave's work earns about the same all the
+ *  way up the ladder. */
+function earn(u: Unit | undefined, n: number): void {
+  if (u && n > 0) u.xp = (u.xp ?? 0) + n / toughness(plant.siege.wave);
+}
+
+/** A tower's XP so far. */
+export function xpOf(u: Unit): number {
+  return u.xp ?? 0;
+}
+
+/** THE XP a tower must have earned, all told, before it can buy its
+ *  next level (null at the top) — set per tower (WEAPONS[…].xp), since a
+ *  flamer burning a crowd earns far faster than a turret picking one off. */
+export function xpNeed(u: Unit): number | null {
+  if (!isWeapon(u.type) || levelOf(u) >= SIEGE.levels.length) return null;
+  return WEAPONS[u.type as WeaponId].xp[levelOf(u) - 1];
+}
+
+/** Has it earned its next level (whatever the purse says)? */
+export function xpReady(u: Unit): boolean {
+  const need = xpNeed(u);
+  return need !== null && xpOf(u) >= need;
+}
 const lv = (u: Unit) => SIEGE.levels[Math.min(SIEGE.levels.length, levelOf(u)) - 1];
 
 export function rangeOf(u: Unit): number {
@@ -884,7 +926,7 @@ export function upgradeCost(u: Unit): number | null {
 export function upgradeTower(u: Unit): boolean {
   const cost = upgradeCost(u);
   const sg = plant.siege;
-  if (cost === null || sg.coins < cost) return false;
+  if (cost === null || sg.coins < cost || !xpReady(u)) return false;
   sg.coins -= cost;
   // Thicker plate with every level: the new hit points come on whole.
   const was = lv(u).hp;
@@ -1002,7 +1044,8 @@ function tickWeapons(dt: number): void {
     const reach = w === 'mortar' ? 0.22 : 0.18;
     const mx = _c.x + Math.sin(yaw) * reach;
     const mz = _c.z + Math.cos(yaw) * reach;
-    const my = spec.muzzleY;
+    // An upgraded tower stands taller, and fires from where its muzzle is.
+    const my = spec.muzzleY * UPGRADE_SCALE[w][levelOf(u) - 1][1];
     if (w === 'flamer') {
       flame(u, mx, my, mz, yaw);
       continue;
@@ -1049,6 +1092,7 @@ function shoot(u: Unit, x: number, y: number, z: number, ti: number): void {
     t: 0,
     dur: Math.max(0.05, d / (spec.speed ?? 10)) * (w === 'mortar' ? 1.6 : 1),
     damage,
+    by: u.id,
   });
 }
 
@@ -1068,7 +1112,7 @@ function arc(u: Unit, ti: number, x: number, y: number, z: number): void {
     const cz = h.z[cur];
     path.push(cx, SHOT_Y + 0.05, cz);
     h.stunT[cur] = Math.max(h.stunT[cur], 0.2);
-    hurt(cur, dmg, W.tesla);
+    hurt(cur, dmg, W.tesla, true, u);
     dmg *= 0.92;
     let next = -1;
     let nd = reach;
@@ -1130,7 +1174,7 @@ function smash(u: Unit): void {
   const dmg = damageOf(u);
   const k0 = plant.siege.kills;
   h.near(st.x, st.z, r + MAX_R, (i, d) => {
-    hurt(i, dmg * (d < r * 0.6 ? 1 : 0.6), W.hammer);
+    hurt(i, dmg * (d < r * 0.6 ? 1 : 0.6), W.hammer, true, u);
     if (!h.dead[i]) h.stunT[i] = Math.max(h.stunT[i], spec.stunS ?? 0.4);
   });
   fx({ kind: 'punch', x: st.x, y: 0.02, z: st.z, weapon: 'hammer', unit: u.id, yaw: u.yaw ?? 0, radius: r, kills: plant.siege.kills - k0 });
@@ -1152,8 +1196,9 @@ function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
     if (off > cone && d > 0.15) return;
     hits++;
     h.burnT[i] = Math.max(h.burnT[i], spec.burn?.s ?? 2);
+    if (burnDps >= h.burnDps[i]) h.burnBy[i] = u.id;
     h.burnDps[i] = Math.max(h.burnDps[i], burnDps);
-    hurt(i, dmg, W.flamer, false);
+    hurt(i, dmg, W.flamer, false, u);
   });
   fx({ kind: 'flame', x, y, z, weapon: 'flamer', unit: u.id, yaw, reach });
   // Every so often the flame sets the floor alight where it lands.
@@ -1161,7 +1206,7 @@ function flame(u: Unit, x: number, y: number, z: number, yaw: number): void {
     const fl = plant.siege.fires;
     if (fl.length < 32) {
       const d = reach * (0.55 + Math.random() * 0.4);
-      fl.push({ x: x + Math.sin(yaw) * d, z: z + Math.cos(yaw) * d, r: 0.24, t: 0, life: 3 });
+      fl.push({ x: x + Math.sin(yaw) * d, z: z + Math.cos(yaw) * d, r: 0.24, t: 0, life: 3, by: u.id });
     }
   }
 }
@@ -1177,6 +1222,7 @@ function tickFires(dt: number): void {
     sg.fires[keep++] = f;
     h.near(f.x, f.z, f.r + MAX_R, (i) => {
       h.burnT[i] = Math.max(h.burnT[i], 1.2);
+      if (f.by && h.burnDps[i] <= 6) h.burnBy[i] = f.by;
       h.burnDps[i] = Math.max(h.burnDps[i], 6);
     });
   }
@@ -1216,11 +1262,12 @@ function tickShots(dt: number): void {
     const spec = WEAPONS[s.weapon];
     const cause = W[s.weapon];
     const dmg = s.damage ?? spec.damage;
+    const by = s.by ? towers.get(s.by) : undefined;
     if (spec.splash) {
       const r = spec.splash;
       const k0 = sg.kills;
       h.near(s.x1, s.z1, r + MAX_R, (i, d) => {
-        hurt(i, dmg * (d < r * 0.5 ? 1 : 0.6), cause);
+        hurt(i, dmg * (d < r * 0.5 ? 1 : 0.6), cause, true, by);
         // The blast throws the survivors out of it.
         if (!h.dead[i]) knock(i, s.x1, s.z1, 0.3 * SPECS[h.kind[i]].give * (1 - d / (r + MAX_R)), 0.18);
       });
@@ -1240,7 +1287,7 @@ function tickShots(dt: number): void {
       if (ti >= 0) {
         // Its booking comes off the one it was fired at (if it lives).
         if (s.target > 0) h.pend[ti] = Math.max(0, h.pend[ti] - dmg);
-        hurt(ti, dmg, cause);
+        hurt(ti, dmg, cause, true, by);
         fx({ kind: 'hit', x: s.x1, y: s.y1, z: s.z1, weapon: s.weapon });
       }
     }
@@ -1248,10 +1295,12 @@ function tickShots(dt: number): void {
   list.length = keep;
 }
 
-/** Damage one crawler; it dies at zero. */
-function hurt(i: number, dmg: number, cause: number, flash = true): void {
+/** Damage one crawler; it dies at zero. The tower that did it (`by`)
+ *  earns the hit points it actually took off — overkill earns nothing. */
+function hurt(i: number, dmg: number, cause: number, flash = true, by?: Unit): void {
   const h = plant.siege.horde;
   if (h.dead[i] || h.phase[i] === PHASE_HELD) return; // your fist shields it
+  earn(by, Math.min(dmg, Math.max(0, h.hp[i])));
   h.hp[i] -= dmg;
   if (flash) h.flash[i] = 0.12;
   if (h.hp[i] <= 0) die(i, cause);

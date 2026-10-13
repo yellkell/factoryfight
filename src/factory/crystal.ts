@@ -344,8 +344,9 @@ function muzzleFlash(parent: Object3D, hex: number, z: number, y = 0): { flash: 
  * THE TURRET — a squat armoured cupola: a broad hex plinth, a faceted
  * dome turning on it, and out of the dome's mantlet TWIN LANCES that slew
  * to the target and spit slugs. Low, wide-shouldered, long in the nose.
- * Level 2 bolts an armour skirt round the plinth and cheek pods on the
- * dome; level 3 a third lance over the two. Muzzles at 0.29.
+ * Level 2 bolts an armour skirt round the plinth, cheek pods and a
+ * cupola on the dome and jackets on the lances; level 3 a third lance, a
+ * second collar of plate and a halo. Muzzles at 0.29.
  */
 export function buildTurret(group: Group): GunRefs {
   const hex = NEON.turret;
@@ -360,6 +361,12 @@ export function buildTurret(group: Group): GunRefs {
       const a = (s / 6) * Math.PI * 2 + Math.PI / 6;
       base.solid(blockGeo(0.05, 0.04, 0.11), at(Math.sin(a) * 0.104, 0.09, Math.cos(a) * 0.104, 0, a, 0, 1, 1, 0.2), 0.0035);
     }
+    base.neon(new Trim().ring(0.06, 0.13, 0.004));
+    base.from = 3;
+    // A second, wider collar of plate up the plinth: more of the turret's
+    // own armour, not new kit.
+    base.solid(prismGeo(0.128, 0.122, 0.03), at(0, 0.17, 0, 0, Math.PI / 6), 0.004);
+    base.neon(new Trim().ring(0.19, 0.13, 0.004));
     const head = new Piece();
     // The turntable, and the dome on it: a faceted cupola, cut flat on top.
     head.solid(prismGeo(0.088, 0.084, 0.024), at(0, 0.012, 0), 0.0045);
@@ -370,6 +377,12 @@ export function buildTurret(group: Group): GunRefs {
     head.solid(blockGeo(0.05, 0.042, 0.05), at(0, 0.064, 0.072, Math.PI / 2, 0, 0, 1.3, 1, 0.75), 0.004);
     head.from = 2;
     for (const sx of [-1, 1]) head.solid(prismGeo(0.03, 0.026, 0.09), at(sx * 0.098, 0.06, -0.01, Math.PI / 2, 0, 0, 1, 1, 0.75), 0.004);
+    // A raised cupola on the dome, with its sight lit.
+    head.solid(prismGeo(0.04, 0.032, 0.03), at(0, 0.141, -0.015, 0, Math.PI / 6), 0.0035);
+    head.lit(new CircleGeometry(0.016, 6), at(0, 0.142, 0.018));
+    head.from = 3;
+    // A halo of light floating round the dome.
+    head.neon(new Trim().ring(0.1, 0.125, 0.005));
     const barrel = new Piece();
     // THE LANCES: two long hex barrels, each with a brake at the muzzle.
     for (const sx of [-1, 1]) {
@@ -377,6 +390,9 @@ export function buildTurret(group: Group): GunRefs {
       barrel.solid(prismGeo(0.026, 0.026, 0.036), at(sx * 0.032, 0, 0.255, Math.PI / 2), 0.004);
     }
     barrel.lit(new OctahedronGeometry(0.013, 0), at(0, 0.028, 0.1, 0, 0, 0, 1, 0.7, 1.4));
+    barrel.from = 2;
+    // Cooling jackets: heavier lances.
+    for (const sx of [-1, 1]) barrel.solid(prismGeo(0.025, 0.025, 0.07), at(sx * 0.032, 0, 0.12, Math.PI / 2), 0.0035);
     barrel.from = 3;
     barrel.solid(prismGeo(0.012, 0.01, 0.17), at(0, 0.05, 0.15, Math.PI / 2), 0.0035);
     barrel.solid(prismGeo(0.017, 0.017, 0.026), at(0, 0.05, 0.23, Math.PI / 2), 0.0035);
@@ -401,8 +417,9 @@ export function buildTurret(group: Group): GunRefs {
  * round a broad pad, a squat pedestal, and on its turntable a FAT STUBBY
  * TUBE cocked at the sky between two trunnion cheeks, ringed in teal at
  * the mouth. It kicks down its bore and lobs a shell over the room.
- * Level 2 racks shells on the pedestal and bands the tube; level 3 slings
- * two slim tubes either side of the big one. Mouth at 0.32.
+ * Level 2 racks shells on the pedestal, bands the tube and raises the
+ * cheeks; level 3 slings two slim tubes either side of the big one, a
+ * heavier breech and a wider pedestal. Mouth at 0.32.
  */
 export function buildMortar(group: Group): GunRefs {
   const hex = NEON.mortar;
@@ -420,15 +437,20 @@ export function buildMortar(group: Group): GunRefs {
       const a = Math.PI + s * 0.5;
       base.solid(shardGeo(0.018, 0.06, 0.012, 6), at(Math.sin(a) * 0.118, 0.115, Math.cos(a) * 0.118), 0.003);
     }
+    base.neon(new Trim().ring(0.105, 0.115, 0.004));
     base.from = 3;
-    for (let s = 0; s < 6; s++) {
-      const a = (s / 6) * Math.PI * 2;
-      base.solid(shardGeo(0.018, 0.07, 0.014), at(Math.sin(a) * 0.17, 0.035, Math.cos(a) * 0.17, Math.cos(a) * 0.6, 0, -Math.sin(a) * 0.6), 0.003);
-    }
+    // A heavier pedestal: a second, wider tier under the first.
+    base.solid(prismGeo(0.135, 0.13, 0.03), at(0, 0.045, 0), 0.004);
     const head = new Piece();
     head.solid(prismGeo(0.1, 0.088, 0.04), at(0, 0.02, 0));
     // The trunnion cheeks the tube is slung between.
     for (const sx of [-1, 1]) head.solid(blockGeo(0.05, 0.036, 0.1), at(sx * 0.084, 0.07, 0, 0, 0, 0, 0.3, 1, 1), 0.0035);
+    head.from = 2;
+    // Taller trunnion cheeks, the tube slung between bigger shoulders.
+    for (const sx of [-1, 1]) head.solid(blockGeo(0.04, 0.03, 0.05), at(sx * 0.084, 0.14, 0, 0, 0, 0, 0.3, 1, 1), 0.0035);
+    head.from = 3;
+    // A bar of light across the cheeks' tops.
+    head.neon(new Trim().line(-0.084, 0.168, 0, 0.084, 0.168, 0, 0.005));
     const barrel = new Piece();
     // THE TUBE: fat and short, a hex bore with a heavy breech.
     barrel.solid(prismGeo(0.072, 0.066, 0.2), at(0, 0, 0.07, Math.PI / 2));
@@ -443,6 +465,8 @@ export function buildMortar(group: Group): GunRefs {
       barrel.neon(new Trim().hoop(sx * 0.13, 0, 0.141, 0.027, 0.004));
     }
     barrel.neon(new Trim().line(-0.13, 0, 0, 0.13, 0, 0, 0.006));
+    // A heavier breech ring on the big tube.
+    barrel.solid(prismGeo(0.086, 0.086, 0.04), at(0, 0, -0.05, Math.PI / 2), 0.004);
     return { base, head, barrel };
   });
   const w = new Wardrobe(hex);
@@ -468,7 +492,8 @@ export function buildMortar(group: Group): GunRefs {
  * through a stack of hex plates, like the coils in the old photographs,
  * and on its point a bright orb held inside two crossed rings that never
  * stop turning. The arcs leave the orb. Doesn't turn. Level 2 adds a
- * third plate; level 3 a fourth and three lightning prongs round the orb.
+ * third plate, coil windings and a ring; level 3 a fourth plate, more
+ * windings, a broad foot plate, a bigger orb and a wider ring.
  * Orb at 0.72.
  */
 export function buildTesla(group: Group): GunRefs {
@@ -493,8 +518,17 @@ export function buildTesla(group: Group): GunRefs {
     plate(0.33, 0.078);
     base.from = 2;
     plate(0.47, 0.06);
+    // COIL WINDINGS: rings of light wound up the spire between the plates.
+    const wind = new Trim();
+    for (let k = 0; k < 4; k++) wind.ring(0.2 + k * 0.03, 0.05 - k * 0.002, 0.003);
+    base.neon(wind);
     base.from = 3;
     plate(0.58, 0.046);
+    // More windings, higher up, and a broad flared foot plate.
+    const wind3 = new Trim();
+    for (let k = 0; k < 4; k++) wind3.ring(0.37 + k * 0.026, 0.036 - k * 0.002, 0.003);
+    base.neon(wind3);
+    plate(0.06, 0.12);
     const crown = new Piece();
     for (const [rx, rz] of [
       [Math.PI / 2, 0.5],
@@ -504,10 +538,12 @@ export function buildTesla(group: Group): GunRefs {
     }
     crown.lit(new OctahedronGeometry(0.042, 1), at());
     crown.from = 3;
-    for (let s = 0; s < 3; s++) {
-      const a = (s / 3) * Math.PI * 2;
-      crown.solid(shardGeo(0.012, 0.07, 0.01, 4), at(Math.sin(a) * 0.045, -0.05, Math.cos(a) * 0.045, Math.cos(a) * 0.5, 0, -Math.sin(a) * 0.5), 0.003);
-    }
+    // A bigger orb.
+    crown.lit(new OctahedronGeometry(0.056, 1), at());
+    crown.from = 2;
+    crown.neon(new Trim().ring(0, 0.11, 0.004));
+    crown.from = 3;
+    crown.neon(new Trim().ring(0, 0.15, 0.004), at(0, 0, 0, 0.35, 0, 0));
     return { base, crown };
   });
   const w = new Wardrobe(hex);
@@ -531,7 +567,8 @@ let tongue: BufferGeometry | null = null;
  * with its gauge glowing in its side, and on its lid a pump on a
  * turntable feeding a wide FLARED BELL that points at the lane: the fire
  * pours from its mouth. Level 2 straps two canisters to the drum's
- * flanks; level 3 rings the bell with heat fins. Mouth at 0.27.
+ * flanks and stands exhaust stacks up its back; level 3 slings a reserve
+ * tank across the back and flares the bell wider. Mouth at 0.27.
  */
 export function buildFlamer(group: Group): GunRefs {
   const hex = NEON.flamer;
@@ -549,6 +586,15 @@ export function buildFlamer(group: Group): GunRefs {
       base.solid(prismGeo(0.04, 0.04, 0.13), at(sx * 0.15, 0.1, -0.03), 0.0035);
       base.solid(prismGeo(0.04, 0.012, 0.03), at(sx * 0.15, 0.18, -0.03), 0.0035);
     }
+    // EXHAUST STACKS up the back, glowing at the top.
+    for (const sx of [-1, 1]) {
+      base.solid(prismGeo(0.018, 0.022, 0.17), at(sx * 0.055, 0.25, -0.1), 0.0035);
+      base.lit(new CylinderGeometry(0.013, 0.013, 0.012, 6), at(sx * 0.055, 0.34, -0.1));
+    }
+    base.from = 3;
+    // A big reserve tank strapped across the back, banded like the drum.
+    base.solid(prismGeo(0.05, 0.05, 0.2), at(0, 0.11, -0.15, 0, 0, Math.PI / 2), 0.004);
+    for (const x of [-0.06, 0.06]) base.neon(new Trim().hoop(0, 0, 0, 0.052, 0.004), at(x, 0.11, -0.15, 0, Math.PI / 2, 0));
     const head = new Piece();
     head.solid(prismGeo(0.06, 0.055, 0.02), at(0, 0.01, 0), 0.004);
     head.solid(blockGeo(0.045, 0.035, 0.055), at(0, 0.045, -0.02, 0, 0, 0, 1, 1, 1.3), 0.004);
@@ -559,11 +605,12 @@ export function buildFlamer(group: Group): GunRefs {
     barrel.solid(new OctahedronGeometry(0.042, 0), at(0, 0, -0.035, 0, 0, 0, 1, 1, 1.2));
     barrel.neon(new Trim().hoop(0, 0, 0.16, 0.068, 0.006));
     barrel.lit(new SphereGeometry(1, 10, 8), at(0, 0, 0.17, 0, 0, 0, 0.022, 0.022, 0.03));
+    barrel.from = 2;
+    barrel.neon(new Trim().hoop(0, 0, 0.13, 0.058, 0.004));
     barrel.from = 3;
-    for (let s = 0; s < 6; s++) {
-      const a = (s / 6) * Math.PI * 2;
-      barrel.solid(shardGeo(0.012, 0.035, 0.006, 4), at(Math.sin(a) * 0.056, Math.cos(a) * 0.056, 0.12, 0, 0, -a), 0.003);
-    }
+    // A wider bell: the mouth flares out further.
+    barrel.solid(prismGeo(0.068, 0.09, 0.03), at(0, 0, 0.175, Math.PI / 2), 0.004);
+    barrel.neon(new Trim().hoop(0, 0, 0.19, 0.09, 0.005));
     return { base, head, barrel };
   });
   const w = new Wardrobe(hex);
@@ -615,7 +662,9 @@ export function buildFlamer(group: Group): GunRefs {
  * top, and on the end of the arm a great hex-prism head. It turns to
  * what is coming, heaves the head up, and brings it down on them.
  * SiegeSystem swings `swing` about X (0 = the arm level, + = down).
- * Level 2 bands the head with a collar; level 3 crowns it with studs.
+ * Level 2 bands the head with a collar, sleeves the pylon's foot and
+ * hangs a counterweight behind the hinge; level 3 shells the head in a
+ * bigger block and bands the pylon in light.
  */
 export function buildHammer(group: Group): GunRefs {
   const hex = NEON.hammer;
@@ -626,6 +675,12 @@ export function buildHammer(group: Group): GunRefs {
     // THE PYLON: one tapering crystal, turning with what it watches.
     const head = new Piece();
     head.solid(prismGeo(0.07, 0.05, 0.3), at(0, 0.18, -0.03));
+    head.from = 2;
+    // A thicker pylon: a sleeve of plate round its foot.
+    head.solid(prismGeo(0.085, 0.08, 0.08), at(0, 0.07, -0.03), 0.004);
+    head.from = 3;
+    // …and a band of light round its middle.
+    head.neon(new Trim().ring(0.2, 0.066, 0.005), at(0, 0, -0.03));
     const swing = new Piece();
     // The hinge: a gem through the top of the pylon.
     swing.solid(new OctahedronGeometry(0.045, 0), at(0, 0, 0, 0, 0, 0, 1.6, 0.8, 0.8));
@@ -638,11 +693,12 @@ export function buildHammer(group: Group): GunRefs {
     swing.lit(new CircleGeometry(0.06, 6), at(0, -0.101, 0.5, Math.PI / 2));
     swing.from = 2;
     swing.solid(prismGeo(0.078, 0.078, 0.04), at(0, -0.02, 0.5), 0.004);
+    // A counterweight on the arm's short end, behind the hinge.
+    swing.solid(prismGeo(0.04, 0.04, 0.07), at(0, 0, -0.07, Math.PI / 2), 0.0035);
     swing.from = 3;
-    for (let s = 0; s < 6; s++) {
-      const a = (s / 6) * Math.PI * 2;
-      swing.solid(shardGeo(0.012, 0.04, 0.005, 4), at(Math.sin(a) * 0.045, 0.06, 0.5 + Math.cos(a) * 0.045), 0.003);
-    }
+    // A BIGGER HEAD: a heavier shell round the striking block.
+    swing.solid(prismGeo(0.092, 0.092, 0.11), at(0, -0.02, 0.5), 0.0045);
+    swing.neon(new Trim().ring(-0.08, 0.094, 0.006), at(0, 0, 0.5));
     return { base, head, swing };
   });
   const w = new Wardrobe(hex);

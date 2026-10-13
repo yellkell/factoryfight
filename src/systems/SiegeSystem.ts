@@ -53,7 +53,7 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import { ENEMIES, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
+import { ENEMIES, UPGRADE_SCALE, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { intents } from '../input/intents.js';
@@ -73,6 +73,9 @@ import {
   debugFreeze,
   debugWakeAll,
   levelOf,
+  xpNeed,
+  xpOf,
+  xpReady,
   rangeOf,
   debugClear,
   debugTough,
@@ -161,9 +164,14 @@ export const siegeView: {
     level: number;
     hp: number;
     maxHp: number;
+    /** Damage dealt so far, and what the next level needs (null = top). */
+    xp: number;
+    xpNeed: number | null;
   }>;
   /** TOOLS ONLY: coins into the purse. */
   coins?: (n: number) => void;
+  /** TOOLS ONLY: XP onto one tower (unit id), as if it had dealt it. */
+  xp?: (unitId: number, n: number) => void;
   /** Which towers are wearing a health gauge right now, and how faded in. */
   towerGauges?: () => Array<{ unit: number; fade: number }>;
   /** TOOLS ONLY: pin THE LOAD's effect budget (0.35..1; null lets it
@@ -712,7 +720,13 @@ export class SiegeSystem extends createSystem({}) {
           level: u.level ?? 1,
           hp: u.hp,
           maxHp: u.maxHp,
+          xp: xpOf(u),
+          xpNeed: xpNeed(u),
         }));
+    siegeView.xp = (unitId, n) => {
+      const u = plant.units.find((x) => x.id === unitId);
+      if (u) u.xp = (u.xp ?? 0) + n;
+    };
   }
 
   update(delta: number): void {
@@ -1246,14 +1260,27 @@ export class SiegeSystem extends createSystem({}) {
       if (!isWeapon(u.type)) continue;
       const level = levelOf(u);
       const refs = liveUnitRefs.get(u.id);
-      // A levelled tower stands a little bigger…
-      if (refs) refs.group.scale.setScalar(1 + (level - 1) * 0.09);
+      cellCenter(u.i, u.j, _c);
+      // AN UPGRADED TOWER IS A BIGGER ANIMAL: it grows, mostly UP (the
+      // floor is shared with its neighbours; the sky is not)…
+      if (refs) {
+        const [sw, sh] = UPGRADE_SCALE[u.type as WeaponId][level - 1];
+        refs.group.scale.set(sw, sh, sw);
+      }
       // …wears what each level adds…
       refs?.gun?.dress?.(level);
+      // READY TO UPGRADE: it has earned its next level, and a gold ring
+      // breathes on the floor round it until you buy it.
+      if (xpReady(u) && n < 96) {
+        const r = 0.27 + 0.025 * Math.sin(this.clock * 5 + u.id);
+        trs(_m, _c.x, 0.011, _c.z, _q.identity(), r, 1, r);
+        this.levelRings.setMatrixAt(n, _m);
+        this.levelRings.setColorAt(n, _col.set(0xffcf3a));
+        n++;
+      }
       if (level < 2) continue;
       // …and wears a neon ring on the floor per level above the first.
-      cellCenter(u.i, u.j, _c);
-      const hex = WEAPONS[u.type as WeaponId].color;
+      const hex = NEON[u.type];
       for (let k = 0; k < level - 1 && n < 96; k++) {
         const r = 0.2 + k * 0.035;
         trs(_m, _c.x, 0.008 + k * 0.001, _c.z, _q.identity(), r, 1, r);

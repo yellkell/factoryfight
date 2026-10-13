@@ -1,11 +1,11 @@
 /**
- * HandSystem — bare hands are the controller, and the LEFT HAND IS THE MENU.
+ * HandSystem — bare hands are the controller, and YOUR PALM IS THE MENU.
  *
  * Runs FIRST every frame and fills in input/intents.ts from whatever the
  * headset is giving it: a controller's trigger, squeeze and face buttons,
  * or a tracked hand's pinch and fist. Nothing downstream ever asks which.
  *
- * On hands, there is no card to open to build. Turn your left hand open
+ * On hands, there is no card to open to build. Turn either hand open
  * toward you and ONE panel comes up off it, floating over the palm and
  * turned to your eyes — one plane, so nothing on it can hide anything
  * else on it (the watch used to sit on the wrist, and the palm's tiles
@@ -13,7 +13,7 @@
  *
  *   THE TOWERS — every tower you can build right now, each tile wearing
  *     its drawing and its price in coins, dimmed when the purse can't pay.
- *     Poke one with your right index finger and it is in your hand (aim,
+ *     Poke one with your other index finger and it is in your hand (aim,
  *     pinch to place); poke it again to put it down. On a fresh floor it
  *     holds exactly one tile — the CORE — because nothing else can stand
  *     until the core does.
@@ -28,7 +28,8 @@
  *       DONE   while you are marking out the floor
  *
  * It only takes pokes while you are looking at it, and goes away while
- * the left hand is closed.
+ * the hand is closed. The palm that has it keeps it until it turns away;
+ * then the other palm can take it.
  *
  * And a TOWER is touched to be upgraded: reach out and poke one (either
  * hand), and its panel opens — UPGRADE, SELL.
@@ -60,8 +61,10 @@ import { plant } from '../factory/state.js';
 import { coreHealth, siegeLeft, startWave } from '../factory/siege.js';
 import { canAfford, isWeapon, unitCost } from '../factory/sim.js';
 import { font } from '../ui/fonts.js';
-import { GLYPH_DEAD, GLYPH_LIVE, unitGlyph, type GlyphId } from '../ui/icons.js';
+import type { GlyphId } from '../ui/icons.js';
 import { UI } from '../ui/panel.js';
+import { SKIN, caps, coreGauge, hexPath, pane, price, rgba } from '../ui/skin.js';
+import { towerCard } from '../ui/tiles.js';
 import {
   J,
   curledFingers,
@@ -84,17 +87,22 @@ export const handsView: {
   press?: (verb: 'menu' | 'turn' | 'stow' | 'done') => void;
   /** Hold a gesture on a side regardless of what the hand is doing. */
   force?: (hand: HandSide, what: 'point' | 'grab', on: boolean | null) => void;
-  /** The left hand's menu as it stands: shown, and every pokeable thing
+  /** The palm's menu as it stands: shown, and every pokeable thing
    *  on it (watch studs AND toolbelt tiles), with where (world). */
   cuff?: () => {
     shown: boolean;
     facing: number;
+    /** Which palm it is on. */
+    side: HandSide;
     studs: Array<{ id: string; x: number; y: number; z: number; nx: number; ny: number; nz: number }>;
   };
   /** A hand's index tip, world (room) metres — what pokes things. */
   tip?: (hand: HandSide) => [number, number, number] | null;
   /** Fingers curled per hand (0–4) — the fist detector's raw reading. */
   curl?: () => { left: number; right: number };
+  /** The palm panel's raw canvases — the header, each shown stud and each
+   *  shown tile — as data URLs, for pixel checks of the painted faces. */
+  snap?: () => { header: string; studs: string[]; tiles: Record<string, string> };
 } = {};
 
 /* ── the numbers (room metres) ──────────────────────────────────────────── */
@@ -182,8 +190,9 @@ const _cam = new Vector3();
 const _tip = new Vector3();
 const _p = new Vector3();
 const _c = new Vector3();
-const _pc = new Vector3();
-const _pn = new Vector3();
+/** Each hand's palm centre and normal, read every frame. */
+const _pcs: Record<HandSide, Vector3> = { left: new Vector3(), right: new Vector3() };
+const _pns: Record<HandSide, Vector3> = { left: new Vector3(), right: new Vector3() };
 const _q = new Quaternion();
 const _cc = { x: 0, z: 0 };
 
@@ -200,6 +209,8 @@ export class HandSystem extends createSystem({}) {
   private tiles = new Map<string, Poke>();
   private shown = 0;
   private facing = 0;
+  /** Which palm the panel is on (the other hand pokes it). */
+  private side: HandSide = 'left';
   private fist: Record<HandSide, boolean> = { left: false, right: false };
   private pinch: Record<HandSide, boolean> = { left: false, right: false };
   private curl: Record<HandSide, number> = { left: 0, right: 0 };
@@ -236,8 +247,11 @@ export class HandSystem extends createSystem({}) {
     this.cuff.add(plateMesh);
     this.face = { ctx: pctx, tex: ptex, key: '' };
 
-    const studGeo = new CircleGeometry(CUFF.stud, 28);
-    const ringGeo = new RingGeometry(CUFF.stud * 1.02, CUFF.stud * 1.22, 32);
+    // The studs are HEXES — the pads every tower stands on — and so is
+    // the flash ring round each (six segments: the ring lines up with
+    // the hex painted on the face).
+    const studGeo = new CircleGeometry(CUFF.stud, 6);
+    const ringGeo = new RingGeometry(CUFF.stud * 1.04, CUFF.stud * 1.24, 6);
     for (let k = 0; k < 3; k++) {
       const poke = makePoke(`stud${k}`, studGeo, ringGeo, 128, 128, CUFF.stud * 1.4);
       poke.group.position.set((k - 1) * CUFF.pitch, -CUFF.h * 0.2, 0.002);
@@ -266,9 +280,19 @@ export class HandSystem extends createSystem({}) {
         if (s.group.visible && act) add(act, s);
       });
       for (const [tool, t] of this.tiles) if (t.group.visible) add(`tool:${tool}`, t);
-      return { shown: this.cuff.visible && this.shown > 0.5, facing: this.facing, studs: out };
+      return { shown: this.cuff.visible && this.shown > 0.5, facing: this.facing, side: this.side, studs: out };
     };
     handsView.curl = () => ({ ...this.curl });
+    handsView.snap = () => {
+      const url = (g: CanvasRenderingContext2D): string => (g.canvas as HTMLCanvasElement).toDataURL('image/png');
+      const tiles: Record<string, string> = {};
+      for (const [tool, t] of this.tiles) if (t.group.visible) tiles[tool] = url(t.ctx);
+      return {
+        header: url(this.face.ctx),
+        studs: this.studs.filter((s) => s.group.visible).map((s) => url(s.ctx)),
+        tiles,
+      };
+    };
     handsView.tip = (hand) => {
       const o = this.world.playerSpaceEntities?.indexTipSpaces?.[hand]?.object3D as Object3D | undefined;
       return o ? o.getWorldPosition(new Vector3()).toArray() : null;
@@ -341,24 +365,22 @@ export class HandSystem extends createSystem({}) {
     for (const verb of this.queued) intents[verb] = true;
     this.queued.clear();
 
-    this.tickLeftHand(delta);
+    this.tickPalm(delta);
     this.tickTowerTouch();
   }
 
-  /* ── THE LEFT HAND: watch + toolbelt ──────────────────────────────────── */
+  /* ── THE PALM: header + toolbelt, on whichever hand is up ─────────────── */
 
-  private tickLeftHand(delta: number): void {
+  /**
+   * Where one hand's palm is and which way it faces, into `centre` and
+   * `normal`; returns how square it is to the eyes (1 = dead on), or null
+   * when that hand isn't tracked.
+   */
+  private palmPose(side: HandSide, centre: Vector3, normal: Vector3): number | null {
     const xr = this.input.xr;
-    const joints = xr.visualAdapters.hand.left.jointTransforms;
-    const grip = this.world.playerSpaceEntities?.gripSpaces?.left?.object3D as Object3D | undefined;
-    // An open hand only: a fist on a collar, or a pinch, is busy.
-    const open = !intents.left.grab.pressed && !intents.left.point.pressed;
-    if (!xr.isPrimary('hand', 'left') || !joints || !grip) {
-      this.cuff.visible = false;
-      this.belt.visible = false;
-      this.shown = 0;
-      return;
-    }
+    const joints = xr.visualAdapters.hand[side].jointTransforms;
+    const grip = this.world.playerSpaceEntities?.gripSpaces?.[side]?.object3D as Object3D | undefined;
+    if (!xr.isPrimary('hand', side) || !joints || !grip) return null;
     grip.updateWorldMatrix(true, false);
     const at = (j: number, out: Vector3): Vector3 =>
       out.set(joints[j * 16 + 12], joints[j * 16 + 13], joints[j * 16 + 14]).applyMatrix4(grip.matrixWorld);
@@ -366,20 +388,60 @@ export class HandSystem extends createSystem({}) {
     at(J.indexMeta, _a).sub(_w);
     at(J.pinkyMeta, _b).sub(_w);
     at(J.middleMeta, _f);
-    _pc.copy(_f).add(_w).multiplyScalar(0.5); // the palm's middle
-    _f.sub(_w).normalize();
-    // The INSIDE of the left hand: the palm's normal. (Index-then-pinky
-    // across the back of a left hand points out of the knuckles, so the
-    // palm is the other way.)
-    _n.crossVectors(_a, _b).normalize().negate();
-    _pn.copy(_n);
+    centre.copy(_f).add(_w).multiplyScalar(0.5); // the palm's middle
+    // The INSIDE of the hand: the palm's normal. Index-then-pinky across
+    // the back of a LEFT hand points out of the knuckles, so the palm is
+    // the other way; a right hand is the mirror, and its cross is the palm.
+    normal.crossVectors(_a, _b).normalize();
+    if (side === 'left') normal.negate();
+    _p.copy(_cam).sub(centre).normalize();
+    return normal.dot(_p);
+  }
+
+  private tickPalm(delta: number): void {
+    const xr = this.input.xr;
     this.camera.getWorldPosition(_cam);
     _up.set(0, 1, 0).applyQuaternion(this.camera.getWorldQuaternion(_q));
+
+    // EITHER PALM. Each open hand turned to the eyes is a candidate; the
+    // one already carrying the panel keeps it (on the looser threshold)
+    // until it turns away, and only then can the other hand take it.
+    const facing: Record<HandSide, number | null> = {
+      left: this.palmPose('left', _pcs.left, _pns.left),
+      right: this.palmPose('right', _pcs.right, _pns.right),
+    };
+    // An open hand only: a fist on a collar, or a pinch, is busy.
+    const open = (side: HandSide): boolean => !intents[side].grab.pressed && !intents[side].point.pressed;
+    const showing = this.shown > 0.5;
+    const wants = (side: HandSide, keep: boolean): boolean => {
+      const f = facing[side];
+      return f !== null && open(side) && f > (keep ? CUFF.hideDot : CUFF.showDot);
+    };
+    const other: HandSide = this.side === 'left' ? 'right' : 'left';
+    let look = wants(this.side, showing);
+    if (!look && wants(other, false)) {
+      this.side = other;
+      look = true;
+      // A new hand under a fingertip is a new set of buttons: nothing on
+      // it fires until the finger has come away once.
+      for (const s of this.studs) s.armed = false;
+      for (const [, t] of this.tiles) t.armed = false;
+    }
+    const f = facing[this.side];
+    if (f === null) {
+      this.cuff.visible = false;
+      this.belt.visible = false;
+      this.shown = 0;
+      return;
+    }
+    this.facing = f;
+    const pc = _pcs[this.side];
+    const pn = _pns[this.side];
 
     // THE PANEL floats over the palm and turns to face you, upright as
     // you read it (its up is the HEAD's up, projected onto the face). The
     // header rides along the top of it, in the same plane.
-    _c.copy(_pc).addScaledVector(_pn, BELT.lift);
+    _c.copy(pc).addScaledVector(pn, BELT.lift);
     _x.copy(_cam).sub(_c).normalize();
     faceBasis(_x, _up, _m, _c);
     this.belt.matrix.copy(_m);
@@ -388,10 +450,6 @@ export class HandSystem extends createSystem({}) {
     this.cuff.matrix.copy(_m).setPosition(_c);
     this.cuff.matrixWorldNeedsUpdate = true;
 
-    _p.copy(_cam).sub(_pc).normalize();
-    this.facing = _pn.dot(_p);
-    const showing = this.shown > 0.5;
-    const look = open && (showing ? this.facing > CUFF.hideDot : this.facing > CUFF.showDot);
     this.shown = Math.max(0, Math.min(1, this.shown + (look ? delta : -delta) * 8));
     const vis = this.shown > 0.01;
     this.cuff.visible = vis;
@@ -405,10 +463,11 @@ export class HandSystem extends createSystem({}) {
     this.layoutBelt(delta);
     this.paintFace();
 
-    // THE POKE: the right index tip, pressed into a face.
+    // THE POKE: the OTHER hand's index tip, pressed into a face.
     if (this.shown < 0.9) return;
-    const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.right?.object3D as Object3D | undefined;
-    if (!tipObj || !xr.isPrimary('hand', 'right')) return;
+    const poker: HandSide = this.side === 'left' ? 'right' : 'left';
+    const tipObj = this.world.playerSpaceEntities?.indexTipSpaces?.[poker]?.object3D as Object3D | undefined;
+    if (!tipObj || !xr.isPrimary('hand', poker)) return;
     tipObj.getWorldPosition(_tip);
     this.cuff.updateMatrixWorld(true);
     this.belt.updateMatrixWorld(true);
@@ -614,7 +673,7 @@ export class HandSystem extends createSystem({}) {
     let core = -1;
     if (site.screen === 'factory' && sg.phase !== 'off') {
       left = { label: 'WAVE', value: `${sg.wave + 1}`, tone: UI.text, sub: sg.wave < 10 ? '/10' : '' };
-      right = { label: 'COINS', value: sg.coins.toLocaleString('en-US'), tone: '#ffd36a' };
+      right = { label: 'COINS', value: sg.coins.toLocaleString('en-US'), tone: SKIN.goldHi };
       core = coreHealth();
       if (sg.phase === 'core') {
         left = null;
@@ -625,7 +684,7 @@ export class HandSystem extends createSystem({}) {
         const t = Math.ceil(sg.buildT);
         mid = { label: 'NEXT WAVE IN', value: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, tone: UI.accent };
       } else if (sg.phase === 'wave') {
-        mid = { label: 'ENEMIES LEFT', value: siegeLeft().toLocaleString('en-US'), tone: UI.danger };
+        mid = { label: 'ENEMIES LEFT', value: siegeLeft().toLocaleString('en-US'), tone: SKIN.magentaSoft };
       } else {
         mid = { label: 'THE CORE', value: 'FALLEN', tone: UI.danger };
       }
@@ -642,73 +701,43 @@ export class HandSystem extends createSystem({}) {
     const W = g.canvas.width;
     const H = g.canvas.height;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(11,10,7,0.88)';
-    g.beginPath();
-    g.roundRect(3, 3, W - 6, H - 6, 26);
-    g.fill();
-    g.strokeStyle = 'rgba(255,162,46,0.5)';
-    g.lineWidth = 3;
-    g.stroke();
-    g.textBaseline = 'alphabetic';
-    const LABEL_Y = 34;
-    const VALUE_Y = 80;
-    const label = (text: string, x: number, align: CanvasTextAlign): void => {
-      g.textAlign = align;
-      g.font = font(600, 17);
-      g.fillStyle = UI.faint;
-      g.fillText(text, x, LABEL_Y);
-    };
+    // The same pane as every panel in the game: cut glass, lattice, a
+    // gold neon edge.
+    pane(g, 4, 4, W - 8, H - 8, { cut: 18, glow: 6 });
+    g.textBaseline = 'middle';
+    const LABEL_Y = 32;
+    const VALUE_Y = 68;
     // WAVE, on the left.
     if (left) {
-      label(left.label, 24, 'left');
+      caps(g, left.label, 24, LABEL_Y, { px: 15, track: 2 });
       g.textAlign = 'left';
-      g.font = font(700, 42);
+      g.font = font(700, 40);
       g.fillStyle = left.tone;
       g.fillText(left.value, 24, VALUE_Y);
       if (left.sub) {
         const w = g.measureText(left.value).width;
         g.font = font(600, 18);
         g.fillStyle = UI.faint;
-        g.fillText(left.sub, 24 + w + 3, VALUE_Y);
+        g.fillText(left.sub, 24 + w + 3, VALUE_Y + 6);
       }
     }
     // The clock (or the count), in the middle and biggest.
     const solo = !left && !right;
-    if (mid.label) label(mid.label, W / 2, 'center');
+    if (mid.label) caps(g, mid.label, W / 2, LABEL_Y, { px: 15, track: 2, align: 'center', color: solo ? SKIN.gold : UI.faint });
     g.textAlign = 'center';
-    g.font = font(700, solo ? 34 : 46);
+    g.font = font(700, solo ? 32 : 44);
     g.fillStyle = mid.tone;
-    g.fillText(mid.value, W / 2, solo ? 76 : VALUE_Y + 2, solo ? W - 40 : 150);
+    g.shadowColor = rgba(mid.tone.startsWith('#') ? mid.tone : SKIN.gold, 0.6);
+    g.shadowBlur = 10;
+    g.fillText(mid.value, W / 2, solo ? VALUE_Y + 2 : VALUE_Y, solo ? W - 40 : 150);
+    g.shadowBlur = 0;
     // COINS, on the right, behind a coin.
     if (right) {
-      label(right.label, W - 24, 'right');
-      g.textAlign = 'right';
-      g.font = font(700, 30);
-      g.fillStyle = right.tone;
-      g.fillText(right.value, W - 24, VALUE_Y - 4, 92);
-      const w = Math.min(92, g.measureText(right.value).width);
-      g.beginPath();
-      g.arc(W - 24 - w - 13, VALUE_Y - 14, 9, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = 'rgba(11,10,7,0.7)';
-      g.beginPath();
-      g.arc(W - 24 - w - 13, VALUE_Y - 14, 4.5, 0, Math.PI * 2);
-      g.fill();
+      caps(g, right.label, W - 24, LABEL_Y, { px: 15, track: 2, align: 'right' });
+      price(g, right.value, W - 24, VALUE_Y, { px: 30, align: 'right' });
     }
-    // THE CORE: a slim bar right across, coloured by how much is left.
-    if (core >= 0) {
-      const x = 24;
-      const y = 96;
-      const bw = W - 48;
-      g.fillStyle = 'rgba(255,255,255,0.1)';
-      g.beginPath();
-      g.roundRect(x, y, bw, 7, 3.5);
-      g.fill();
-      g.fillStyle = core > 0.5 ? UI.positive : core > 0.25 ? UI.warn : UI.danger;
-      g.beginPath();
-      g.roundRect(x, y, Math.max(7, bw * core), 7, 3.5);
-      g.fill();
-    }
+    // THE CORE: the same ten segments that float over it in the room.
+    if (core >= 0) coreGauge(g, 24, 94, W - 48, 12, core);
     this.face.tex.needsUpdate = true;
   }
 }
@@ -747,7 +776,7 @@ function makePoke(
   let ring: MeshBasicMaterial | null = null;
   if (ringGeo) {
     ring = new MeshBasicMaterial({
-      color: 0xffa22e,
+      color: 0xffcf3a,
       transparent: true,
       blending: AdditiveBlending,
       depthWrite: false,
@@ -777,11 +806,30 @@ function paintStud(s: Poke, label: string, icon: Icon | null, primary: boolean):
   const g = s.ctx;
   g.clearRect(0, 0, 128, 128);
   if (label && icon) {
-    g.fillStyle = primary ? UI.accent : '#211a10';
-    g.beginPath();
-    g.arc(64, 64, 62, 0, Math.PI * 2);
-    g.fill();
-    const ink = primary ? '#1a1206' : UI.accent;
+    // A hex of glass with a gold rim — or, for START, solid gold: the one
+    // thing a build phase is for.
+    hexPath(g, 64, 64, 61);
+    if (primary) {
+      const fill = g.createLinearGradient(0, 4, 0, 124);
+      fill.addColorStop(0, SKIN.goldHi);
+      fill.addColorStop(1, SKIN.goldDeep);
+      g.fillStyle = fill;
+      g.fill();
+    } else {
+      const fill = g.createLinearGradient(0, 4, 0, 124);
+      fill.addColorStop(0, 'rgba(24,30,48,0.96)');
+      fill.addColorStop(1, 'rgba(8,10,18,0.96)');
+      g.fillStyle = fill;
+      g.fill();
+      g.strokeStyle = SKIN.gold;
+      g.lineWidth = 4;
+      g.stroke();
+      hexPath(g, 64, 64, 50);
+      g.strokeStyle = rgba(SKIN.gold, 0.2);
+      g.lineWidth = 2;
+      g.stroke();
+    }
+    const ink = primary ? SKIN.onGold : SKIN.gold;
     g.fillStyle = ink;
     g.strokeStyle = ink;
     g.lineWidth = 7;
@@ -790,8 +838,10 @@ function paintStud(s: Poke, label: string, icon: Icon | null, primary: boolean):
     drawIcon(g, icon, 64, 50);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = font(700, label.length > 5 ? 17 : 20);
-    g.fillText(label, 64, 94);
+    g.font = font(700, label.length > 5 ? 17 : 19);
+    g.letterSpacing = '1px';
+    g.fillText(label, 64, 92);
+    g.letterSpacing = '0px';
   }
   s.tex.needsUpdate = true;
 }
@@ -849,29 +899,41 @@ function drawIcon(g: CanvasRenderingContext2D, icon: Icon, x: number, y: number)
   }
 }
 
-/** A toolbelt tile: the machine's shop drawing, its name, its price. */
+/** A toolbelt tile: the tower card every menu draws (ui/tiles.ts) — its
+ *  photograph on its pad, its name, and its price or what to do with it. */
 function paintTile(t: Poke, tool: string, armed: boolean, afford: boolean, cost: string): void {
   const g = t.ctx;
   const W = 160;
   const H = 176;
   g.clearRect(0, 0, W, H);
-  g.fillStyle = armed ? 'rgba(255,162,46,0.28)' : 'rgba(11,10,7,0.86)';
+  // Dark glass behind the card: the tiles float in the room on their own.
+  g.fillStyle = 'rgba(8,10,18,0.9)';
   g.beginPath();
-  g.roundRect(3, 3, W - 6, H - 6, 22);
+  g.moveTo(14, 3);
+  g.lineTo(W - 14, 3);
+  g.lineTo(W - 3, 14);
+  g.lineTo(W - 3, H - 14);
+  g.lineTo(W - 14, H - 3);
+  g.lineTo(14, H - 3);
+  g.lineTo(3, H - 14);
+  g.lineTo(3, 14);
+  g.closePath();
   g.fill();
-  g.strokeStyle = armed ? '#ffa22e' : tool === 'delete' ? 'rgba(255,90,70,0.6)' : 'rgba(255,162,46,0.45)';
-  g.lineWidth = armed ? 6 : 3;
-  g.stroke();
-  unitGlyph(g, tool as GlyphId, 25, 8, 110, afford ? GLYPH_LIVE : GLYPH_DEAD);
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.font = font(700, 24);
-  g.fillStyle = !afford ? 'rgba(250,244,235,0.35)' : tool === 'delete' ? '#ff6a52' : '#fdf6ec';
-  g.fillText(TOOL_NAME[tool] ?? tool.toUpperCase(), W / 2, 128, W - 16);
-  if (cost) {
-    g.font = font(600, 17);
-    g.fillStyle = afford ? '#ffa22e' : 'rgba(255,90,70,0.8)';
-    g.fillText(cost, W / 2, 154, W - 16);
-  }
+  const n = unitCostOf(tool);
+  towerCard(g, 3, 3, W - 6, H - 6, {
+    tool: tool as GlyphId,
+    name: TOOL_NAME[tool] ?? tool.toUpperCase(),
+    cost: cost ? n : undefined,
+    note: tool === 'dock' ? 'PLACE IT' : undefined,
+    costAt: 'foot',
+    live: afford,
+    armed,
+    scale: 1.3,
+  });
   t.tex.needsUpdate = true;
+}
+
+/** A tool's price in coins (0 for the core). */
+function unitCostOf(tool: string): number {
+  return unitCost(tool as UnitType);
 }

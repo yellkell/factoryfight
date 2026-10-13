@@ -6,11 +6,13 @@
  * the one accent is furnace amber now, and the glass floats over YOUR
  * room instead of a void, which it was built dark enough to survive.
  *
- * THE LOOK (the live-service discipline): quiet near-black glass, white-alpha
- * hairlines, and ONE accent that only marks what matters — the primary CTA,
- * the selected state, the active tab. Semantic colour lives in text and
- * status dots, never in button chrome. Glow is a budget, not a default:
- * the CTA and the under-halo carry it, everything else is matte. Weight and
+ * THE LOOK is the floor's: crystal & hex (ui/skin.ts draws it). Each panel
+ * is a pane of the towers' black glass with its corners cut like facets,
+ * a faint hex lattice in it, and its edge traced in neon — core gold by
+ * default, or the neon of whatever the panel is about (a tower's panel
+ * wears the tower's colour; the fall wears the tide's magenta). Buttons
+ * are cut plates of the same glass; the ONE primary CTA a screen is
+ * allowed is solid gold and the only thing that glows hard. Weight and
  * tracking do the hierarchy work (see ui/fonts.ts).
  *
  * THE MOTION (why this class owns a tick): state changes ease instead of
@@ -34,6 +36,7 @@ import {
   SRGBColorSpace,
 } from 'three';
 import { font, onFontsReady } from './fonts.js';
+import { SKIN, chamfer, pane, rgba, titleBar } from './skin.js';
 
 export interface PanelButton {
   id: string;
@@ -82,33 +85,34 @@ export interface PanelButton {
 
 export const UI = {
   /* Surfaces */
-  panel: 'rgba(14,11,7,0.92)',
-  well: 'rgba(0,0,0,0.32)',
-  plate: 'rgba(255,255,255,0.045)',
-  plateHover: 'rgba(255,255,255,0.09)',
+  panel: SKIN.glassBot,
+  well: SKIN.well,
+  plate: 'rgba(150,175,255,0.06)',
+  plateHover: 'rgba(150,175,255,0.12)',
   /* Hairlines */
-  line: 'rgba(255,255,255,0.14)',
-  lineHover: 'rgba(255,255,255,0.34)',
-  lineFaint: 'rgba(255,255,255,0.10)',
+  line: SKIN.line,
+  lineHover: SKIN.lineHi,
+  lineFaint: SKIN.lineFaint,
   /* Text. The whites are WHITE — a headset panel is a small emissive
    *  rectangle hanging in a real room, not a page in an office: every
    *  tier here is a step brighter than its web equivalent, or the
    *  secondary type reads as disabled and the disabled type as absent. */
-  text: '#ffffff',
-  textHi: '#ffffff',
-  dim: 'rgba(250,244,235,0.74)',
-  faint: 'rgba(250,244,235,0.52)',
-  disabled: 'rgba(250,244,235,0.36)',
-  /* The accent — identity, selection, primacy. Nothing else. */
-  accent: '#ffa22e',
-  accentDim: 'rgba(255,162,46,0.55)',
-  accentFaint: 'rgba(255,162,46,0.10)',
-  onAccent: '#221103',
-  /* Semantic roles (text + dots, never chrome) */
-  positive: '#2be28a',
-  info: '#6fc8ff',
-  warn: '#ffb454',
-  danger: '#ff5266',
+  text: SKIN.text,
+  textHi: SKIN.text,
+  dim: SKIN.dim,
+  faint: SKIN.faint,
+  disabled: SKIN.disabled,
+  /* The accent — CORE GOLD: identity, selection, primacy. */
+  accent: SKIN.gold,
+  accentDim: rgba(SKIN.gold, 0.55),
+  accentFaint: rgba(SKIN.gold, 0.12),
+  onAccent: SKIN.onGold,
+  /* Semantic roles. Danger is the TIDE's magenta: the thing that wants
+   *  the core is the colour of everything that costs you. */
+  positive: SKIN.positive,
+  info: SKIN.info,
+  warn: SKIN.warn,
+  danger: SKIN.magenta,
 };
 
 /* ── motion (research-tuned: M3/Carbon durations, VR-safe amplitudes) ── */
@@ -155,6 +159,8 @@ export class Panel {
   private buttons: PanelButton[] = [];
   private pxW: number;
   private pxH: number;
+  /** The neon this pane is traced in (see setAccent). */
+  private accent: string = SKIN.gold;
 
   /* Stored paint args, so transitions can repaint without the caller. */
   private title = '';
@@ -198,7 +204,7 @@ export class Panel {
       side: DoubleSide,
       depthWrite: false,
       blending: AdditiveBlending,
-      color: 0xffa22e,
+      color: 0xffcf3a,
     });
     const glow = new Mesh(new PlaneGeometry(widthM * 1.42, heightM * 1.56), this.glowMat);
     glow.renderOrder = 29;
@@ -209,6 +215,19 @@ export class Panel {
     onFontsReady(() => {
       if (this.body || this.buttons.length) this.draw();
     });
+  }
+
+  /**
+   * The neon this pane is traced in: its edge, its lit facets, the light
+   * pooled under its top edge, and the halo behind it in the room. A
+   * tower's panel wears the tower's colour, so the panel and the thing
+   * you touched are plainly one object.
+   */
+  setAccent(hex: string): void {
+    if (hex === this.accent) return;
+    this.accent = hex;
+    this.glowMat.color.set(hex);
+    if (this.body || this.buttons.length) this.draw();
   }
 
   ctx(): CanvasRenderingContext2D {
@@ -361,49 +380,10 @@ export class Panel {
     const H = this.pxH;
     g.clearRect(0, 0, W, H);
 
-    // Base glass.
-    g.beginPath();
-    g.roundRect(6, 6, W - 12, H - 12, 30);
-    g.fillStyle = UI.panel;
-    g.fill();
+    // The pane: cut glass, lattice, neon edge (ui/skin.ts).
+    pane(g, 9, 9, W - 18, H - 18, { accent: this.accent, glow: 10 });
 
-    // Top sheen — one soft gradient of depth, in place of a border glow.
-    g.save();
-    g.clip();
-    const sheen = g.createLinearGradient(0, 6, 0, 186);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.05)');
-    sheen.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = sheen;
-    g.fillRect(6, 6, W - 12, 180);
-    g.restore();
-
-    // Hairline frame.
-    g.lineWidth = 2;
-    g.strokeStyle = UI.line;
-    g.stroke();
-
-    // Corner brackets — the identity mark: a plant stencil, not a border.
-    g.strokeStyle = UI.accentDim;
-    g.lineWidth = 2.5;
-    const arm = 24;
-    g.beginPath();
-    g.moveTo(18 + arm, 18);
-    g.lineTo(18, 18);
-    g.lineTo(18, 18 + arm);
-    g.moveTo(W - 18 - arm, H - 18);
-    g.lineTo(W - 18, H - 18);
-    g.lineTo(W - 18, H - 18 - arm);
-    g.stroke();
-
-    if (this.title) {
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.font = font(700, 46);
-      g.letterSpacing = '3px';
-      g.fillStyle = UI.textHi;
-      g.fillText(this.title, W / 2, 78);
-      g.letterSpacing = '0px';
-    }
+    if (this.title) titleBar(g, this.title, W / 2, 74, { px: 44, accent: this.accent });
 
     this.body?.(g);
 
@@ -418,7 +398,8 @@ export class Panel {
   private drawButton(g: CanvasRenderingContext2D, b: PanelButton): void {
     const hov = this.hoverAmt.get(b.id) ?? 0;
     const flash = this.flashId === b.id ? easeOutCubic(this.flashAmt) : 0;
-    const r = 18;
+    // The plate's facets scale with it: a thin tab gets a small cut.
+    const cut = Math.max(7, Math.min(16, Math.min(b.w, b.h) * 0.2));
 
     // OWN the text state (bodies leave alignments behind).
     g.textAlign = 'center';
@@ -431,21 +412,24 @@ export class Panel {
     const glyphSize = b.glyph ? Math.min(b.h * 0.5, b.w * 0.52) : 0;
     const labelY = b.glyph
       ? b.y + glyphSize + (b.h - glyphSize) / 2 - (b.sub ? 12 : 0)
-      : b.y + b.h / 2 - (b.sub ? 16 : 0);
-    const subY = b.glyph ? labelY + 22 : b.y + b.h / 2 + 26;
+      : b.y + b.h / 2 - (b.sub ? 15 : 0);
+    const subY = b.glyph ? labelY + 22 : b.y + b.h / 2 + 24;
     const drawGlyph = (dead: boolean): void => {
       if (!b.glyph) return;
       b.glyph(g, b.x + (b.w - glyphSize) / 2, b.y + (b.h - glyphSize) * 0.14, glyphSize, dead);
     };
+    const tone = b.tone ?? null;
 
     if (b.display) {
-      // A value chip: quiet plate, live text, no chrome.
-      g.fillStyle = 'rgba(255,255,255,0.03)';
-      g.beginPath();
-      g.roundRect(b.x, b.y, b.w, b.h, r);
+      // A value chip: a recessed well, live text, no edge to press.
+      chamfer(g, b.x, b.y, b.w, b.h, cut);
+      g.fillStyle = SKIN.well;
       g.fill();
+      g.strokeStyle = SKIN.lineFaint;
+      g.lineWidth = 1.5;
+      g.stroke();
       drawGlyph(false);
-      g.fillStyle = b.tone ?? UI.text;
+      g.fillStyle = tone ?? UI.text;
       g.font = font(600, labelPx);
       g.letterSpacing = '1.5px';
       g.fillText(b.label, b.x + b.w / 2, labelY, b.w - 28);
@@ -459,79 +443,135 @@ export class Panel {
     }
 
     if (b.primary && !b.disabled) {
-      // THE CTA — the screen's one solid fill, and its one glow.
+      // THE CTA — the screen's one solid fill, and its one hard glow: a
+      // bar of core gold, cut at the corners like everything else.
+      chamfer(g, b.x, b.y, b.w, b.h, cut);
       const grad = g.createLinearGradient(0, b.y, 0, b.y + b.h);
-      grad.addColorStop(0, '#ffb14a');
-      grad.addColorStop(1, '#ef8c10');
-      g.shadowColor = UI.accentDim;
-      g.shadowBlur = 18 + 10 * hov + 12 * flash;
+      grad.addColorStop(0, SKIN.goldHi);
+      grad.addColorStop(0.5, SKIN.gold);
+      grad.addColorStop(1, SKIN.goldDeep);
+      g.shadowColor = rgba(SKIN.gold, 0.8);
+      g.shadowBlur = 20 + 12 * hov + 14 * flash;
       g.fillStyle = grad;
-      g.beginPath();
-      g.roundRect(b.x, b.y, b.w, b.h, r);
       g.fill();
       g.shadowBlur = 0;
-      // A glassy top light gives the fill its dimension.
-      const sheen = g.createLinearGradient(0, b.y, 0, b.y + b.h * 0.5);
-      sheen.addColorStop(0, 'rgba(255,255,255,0.22)');
-      sheen.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = sheen;
+      // A facet of light across the top third gives the bar its cut.
+      g.save();
+      g.clip();
+      g.fillStyle = 'rgba(255,255,255,0.2)';
+      g.beginPath();
+      g.moveTo(b.x, b.y);
+      g.lineTo(b.x + b.w, b.y);
+      g.lineTo(b.x + b.w, b.y + b.h * 0.22);
+      g.lineTo(b.x, b.y + b.h * 0.42);
+      g.closePath();
       g.fill();
       if (hov > 0 || flash > 0) {
-        g.fillStyle = `rgba(255,255,255,${(0.14 * hov + 0.18 * flash).toFixed(3)})`;
-        g.fill();
+        g.fillStyle = `rgba(255,255,255,${(0.14 * hov + 0.2 * flash).toFixed(3)})`;
+        g.fillRect(b.x, b.y, b.w, b.h);
+      }
+      g.restore();
+      // Chevrons either side of the word: this is the way on.
+      g.font = font(700, labelPx);
+      g.letterSpacing = '2px';
+      const tw = Math.min(b.w - 120, g.measureText(b.label).width);
+      if (b.w - tw > 150) {
+        g.fillStyle = 'rgba(29,20,3,0.55)';
+        const cy = labelY;
+        const s = labelPx * 0.22;
+        for (const dir of [-1, 1]) {
+          const cx = b.x + b.w / 2 + dir * (tw / 2 + 30);
+          for (let k = 0; k < 2; k++) {
+            const ox = cx + dir * k * s * 1.4;
+            g.beginPath();
+            g.moveTo(ox - dir * s * 0.6, cy - s);
+            g.lineTo(ox + dir * s * 0.4, cy);
+            g.lineTo(ox - dir * s * 0.6, cy + s);
+            g.lineWidth = 3;
+            g.strokeStyle = 'rgba(29,20,3,0.55)';
+            g.stroke();
+          }
+        }
       }
       drawGlyph(false);
       g.fillStyle = UI.onAccent;
-      g.font = font(700, labelPx);
-      g.letterSpacing = '2px';
       g.fillText(b.label, b.x + b.w / 2, labelY, b.w - 32);
       g.letterSpacing = '0px';
       if (b.sub) {
         g.font = font(600, 22);
-        g.fillStyle = 'rgba(34,17,3,0.8)';
+        g.fillStyle = 'rgba(29,20,3,0.78)';
         g.fillText(b.sub, b.x + b.w / 2, subY, b.w - 32);
       }
       return;
     }
 
-    // Neutral plate (the default), selected, or disabled.
-    const plateA = b.disabled ? 0.02 : 0.045 + 0.045 * hov;
-    g.fillStyle = b.selected ? UI.accentFaint : `rgba(255,255,255,${plateA.toFixed(3)})`;
-    g.beginPath();
-    g.roundRect(b.x, b.y, b.w, b.h, r);
+    // A cut plate of glass: neutral, selected, toned, or refused. Its
+    // edge takes the tone (a magenta QUIT is magenta-edged) and lights in
+    // the pane's neon as a finger or a ray comes onto it.
+    const edgeHue = b.selected ? this.accent : (tone ?? this.accent);
+    chamfer(g, b.x, b.y, b.w, b.h, cut);
+    const plate = g.createLinearGradient(0, b.y, 0, b.y + b.h);
+    if (b.disabled) {
+      plate.addColorStop(0, 'rgba(150,175,255,0.035)');
+      plate.addColorStop(1, 'rgba(150,175,255,0.015)');
+    } else if (b.selected) {
+      plate.addColorStop(0, rgba(this.accent, 0.2));
+      plate.addColorStop(1, rgba(this.accent, 0.07));
+    } else {
+      plate.addColorStop(0, `rgba(150,175,255,${(0.085 + 0.06 * hov).toFixed(3)})`);
+      plate.addColorStop(1, `rgba(150,175,255,${(0.03 + 0.04 * hov).toFixed(3)})`);
+    }
+    g.fillStyle = plate;
     g.fill();
     if (flash > 0) {
-      g.fillStyle = `rgba(255,162,46,${(0.2 * flash).toFixed(3)})`;
+      g.fillStyle = rgba(edgeHue, 0.25 * flash);
       g.fill();
     }
-    g.lineWidth = 2;
-    g.strokeStyle = b.disabled
-      ? 'rgba(255,255,255,0.05)'
-      : b.selected
-        ? 'rgba(255,162,46,0.9)'
-        : `rgba(255,255,255,${(0.1 + 0.2 * hov).toFixed(3)})`;
-    g.stroke();
-
-    // The edge tick: the accent's whole job on a resting screen.
-    const tick = b.selected ? 1 : hov;
-    if (tick > 0.02 && !b.disabled) {
-      g.globalAlpha = tick;
-      g.fillStyle = UI.accent;
-      g.beginPath();
-      g.roundRect(b.x + 7, b.y + 12, 5, b.h - 24, 2.5);
-      g.fill();
-      g.globalAlpha = 1;
+    if (b.disabled) {
+      g.strokeStyle = 'rgba(160,185,255,0.07)';
+      g.lineWidth = 1.5;
+      g.stroke();
+    } else {
+      const lit = b.selected ? 1 : hov;
+      if (lit > 0.02) {
+        g.shadowColor = edgeHue;
+        g.shadowBlur = 12 * lit;
+      }
+      g.strokeStyle =
+        lit > 0.02
+          ? rgba(edgeHue, 0.35 + 0.6 * lit)
+          : tone
+            ? rgba(tone, 0.4)
+            : SKIN.line;
+      g.lineWidth = b.selected ? 2.5 : 2;
+      g.stroke();
+      g.shadowBlur = 0;
+      // The lit facet: the top-left cut traced bright on the live one.
+      if (lit > 0.02) {
+        g.globalAlpha = lit;
+        g.strokeStyle = edgeHue;
+        g.lineWidth = 3.5;
+        g.lineCap = 'round';
+        g.beginPath();
+        g.moveTo(b.x, b.y + cut + Math.min(18, b.h * 0.25));
+        g.lineTo(b.x, b.y + cut);
+        g.lineTo(b.x + cut, b.y);
+        g.lineTo(b.x + cut + Math.min(28, b.w * 0.2), b.y);
+        g.stroke();
+        g.lineCap = 'butt';
+        g.globalAlpha = 1;
+      }
     }
 
     drawGlyph(Boolean(b.disabled));
-    g.fillStyle = b.disabled ? UI.disabled : (b.tone ?? UI.text);
+    g.fillStyle = b.disabled ? UI.disabled : (tone ?? UI.text);
     g.font = font(600, labelPx);
     g.letterSpacing = '1.5px';
     g.fillText(b.label, b.x + b.w / 2, labelY, b.w - 28);
     g.letterSpacing = '0px';
     if (b.sub) {
       g.font = font(500, 21);
-      g.fillStyle = b.disabled ? 'rgba(250,244,235,0.2)' : UI.dim;
+      g.fillStyle = b.disabled ? 'rgba(205,215,245,0.22)' : UI.dim;
       g.fillText(b.sub, b.x + b.w / 2, subY, b.w - 28);
     }
   }

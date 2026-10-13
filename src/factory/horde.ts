@@ -74,6 +74,8 @@ export class Horde {
   readonly stunT = new Float32Array(HORDE_CAP);
   readonly burnT = new Float32Array(HORDE_CAP);
   readonly burnDps = new Float32Array(HORDE_CAP);
+  /** Whose fire it is (unit id; 0 = nobody's) — the burn earns them XP. */
+  readonly burnBy = new Int32Array(HORDE_CAP);
   /** How far it still has to go to the core, by the road (targeting:
    *  least = first). */
   readonly fd = new Float32Array(HORDE_CAP);
@@ -121,6 +123,7 @@ export class Horde {
     this.stunT[i] = 0;
     this.burnT[i] = 0;
     this.burnDps[i] = 0;
+    this.burnBy[i] = 0;
     this.fd[i] = Infinity;
     this.y[i] = 0;
     this.vx[i] = 0;
@@ -178,6 +181,7 @@ export class Horde {
     this.stunT[to] = this.stunT[from];
     this.burnT[to] = this.burnT[from];
     this.burnDps[to] = this.burnDps[from];
+    this.burnBy[to] = this.burnBy[from];
     this.fd[to] = this.fd[from];
     this.y[to] = this.y[from];
     this.vx[to] = this.vx[from];
