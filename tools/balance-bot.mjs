@@ -9,7 +9,7 @@
  *
  * Every build phase it spends the lot: the cheapest tower type it has
  * fewest of, on the free cell nearest the core (they come from every
- * wall, so it builds a blob round the core) — but first it evolves every
+ * wall, so it builds a blob round the core) — but first it upgrades every
  * tower that has earned its next level; when nothing more fits, it
  * upgrades. Then it starts the wave and watches
  * at 6× speed. A careful player beats this bot; the ladder is tuned so
@@ -49,7 +49,7 @@ for (let w = 0; w < 10; w++) {
     const cells = [];
     for (let di = -9; di <= 9; di++) for (let dj = -9; dj <= 9; dj++) if (di || dj) cells.push({ i: core.i + di, j: core.j + dj, k: Math.hypot(di, dj) });
     cells.sort((a, b) => a.k - b.k);
-    // EVOLVE FIRST: every tower that has earned its next level and can be
+    // UPGRADE FIRST: every tower that has earned its next level and can be
     // paid for gets it before anything new is bought.
     for (const tw of t.siege.turrets()) {
       if (tw.xpNeed === null || tw.xp < tw.xpNeed) continue;

@@ -1983,17 +1983,17 @@ export class MenuSystem extends createSystem({}) {
     const footY = ch - PAD - 84;
     const buttons: PanelButton[] = [];
     if (tower) {
-      // EVOLVE: earned first (XP), then bought (coins). Until it has
+      // UPGRADE: earned first (XP), then bought (coins). Until it has
       // earned it the button says how far there is to go; once it has,
       // and the purse can pay, it is the panel's one gold button.
       const canPay = next !== null && coins >= next;
       buttons.push(
         {
           id: 'box:upgrade',
-          label: next === null ? 'MAX LEVEL' : 'EVOLVE',
+          label: next === null ? 'MAX LEVEL' : 'UPGRADE',
           sub:
             next === null || need === null
-              ? 'fully evolved'
+              ? 'fully upgraded'
               : !earned
                 ? `${Math.ceil(need - xp).toLocaleString('en-US')} XP to go`
                 : canPay
@@ -2056,7 +2056,7 @@ export class MenuSystem extends createSystem({}) {
         caps(g, `LEVEL ${level}/${SIEGE.levels.length}`, tx + SIEGE.levels.length * 25 + 8, 85, { px: 14, track: 2, color: UI.dim });
         price(g, coins, cw - PAD, 85, { px: 20, align: 'right' });
         // THE XP: what it has earned toward its next level — gold, and
-        // full and lit once it is ready to evolve.
+        // full and lit once it is ready to upgrade.
         const bx = tx + 64;
         const bw = cw - PAD - bx;
         caps(g, 'XP', tx, 118, { px: 14, track: 2 });
@@ -2074,7 +2074,7 @@ export class MenuSystem extends createSystem({}) {
         }
         caps(
           g,
-          need === null ? 'FULLY EVOLVED' : earned ? 'READY TO EVOLVE' : `${Math.floor(xp).toLocaleString('en-US')} / ${need.toLocaleString('en-US')}`,
+          need === null ? 'FULLY UPGRADED' : earned ? 'READY TO UPGRADE' : `${Math.floor(xp).toLocaleString('en-US')} / ${need.toLocaleString('en-US')}`,
           bx + bw / 2,
           119,
           { px: 11, track: 2, align: 'center', color: earned || need === null ? SKIN.onGold : UI.text },

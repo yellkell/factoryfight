@@ -53,7 +53,7 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import { ENEMIES, EVOLVE_SCALE, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
+import { ENEMIES, UPGRADE_SCALE, HORDE_KINDS, LINES, WEAPONS, type EnemyId, type ItemId, type WeaponId } from '../config.js';
 import * as sfx from '../audio/sfx.js';
 import { buzz } from '../game/haptics.js';
 import { intents } from '../input/intents.js';
@@ -1261,15 +1261,15 @@ export class SiegeSystem extends createSystem({}) {
       const level = levelOf(u);
       const refs = liveUnitRefs.get(u.id);
       cellCenter(u.i, u.j, _c);
-      // AN EVOLVED TOWER IS A BIGGER ANIMAL: it grows, mostly UP (the
+      // AN UPGRADED TOWER IS A BIGGER ANIMAL: it grows, mostly UP (the
       // floor is shared with its neighbours; the sky is not)…
       if (refs) {
-        const [sw, sh] = EVOLVE_SCALE[u.type as WeaponId][level - 1];
+        const [sw, sh] = UPGRADE_SCALE[u.type as WeaponId][level - 1];
         refs.group.scale.set(sw, sh, sw);
       }
       // …wears what each level adds…
       refs?.gun?.dress?.(level);
-      // READY TO EVOLVE: it has earned its next level, and a gold ring
+      // READY TO UPGRADE: it has earned its next level, and a gold ring
       // breathes on the floor round it until you buy it.
       if (xpReady(u) && n < 96) {
         const r = 0.27 + 0.025 * Math.sin(this.clock * 5 + u.id);

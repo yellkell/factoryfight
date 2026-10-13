@@ -240,7 +240,7 @@ const fresh = (await page.evaluate(() => window.__tubes.siege.turrets())).find((
 check(fresh.xp > 0 && fresh.xp < fresh.xpNeed, `wave 1 earned it XP for the damage it dealt (${Math.round(fresh.xp)} of ${fresh.xpNeed})`);
 await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
 towers = await page.evaluate(() => window.__tubes.siege.turrets());
-check(towers.find((t) => t.id === t0.id)?.level === 1 && (await siege()).coins === c1, 'and short of its XP it cannot evolve, coins or no coins');
+check(towers.find((t) => t.id === t0.id)?.level === 1 && (await siege()).coins === c1, 'and short of its XP it cannot upgrade, coins or no coins');
 const topUp = (id) =>
   page.evaluate((id) => {
     const tw = window.__tubes.siege.turrets().find((t) => t.id === id);
@@ -250,12 +250,12 @@ await topUp(t0.id);
 await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
 towers = await page.evaluate(() => window.__tubes.siege.turrets());
 const c2 = (await siege()).coins;
-check(towers.find((t) => t.id === t0.id)?.level === 2 && c1 - c2 === 40, `EVOLVE once it has earned it: level 2 for 40 coins (${c1} → ${c2})`);
+check(towers.find((t) => t.id === t0.id)?.level === 2 && c1 - c2 === 40, `UPGRADE once it has earned it: level 2 for 40 coins (${c1} → ${c2})`);
 await topUp(t0.id);
 await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
 towers = await page.evaluate(() => window.__tubes.siege.turrets());
 const c3 = (await siege()).coins;
-check(towers.find((t) => t.id === t0.id)?.level === 3 && c2 - c3 === 70, `EVOLVE again: level 3 for 70 (${c2} → ${c3})`);
+check(towers.find((t) => t.id === t0.id)?.level === 3 && c2 - c3 === 70, `UPGRADE again: level 3 for 70 (${c2} → ${c3})`);
 await page.evaluate(() => window.__tubes.menu.act('box:upgrade'));
 check((await siege()).coins === c3, 'and no further: level 3 is the top');
 await page.evaluate(() => window.__tubes.menu.act('box:remove'));

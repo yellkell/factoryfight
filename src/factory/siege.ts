@@ -31,7 +31,7 @@ import {
   type EnemyId,
   type WaveSpec,
   type WeaponId,
-  EVOLVE_SCALE,
+  UPGRADE_SCALE,
 } from '../config.js';
 import { CELL, cellCenter, cellInFloor, worldToCell } from '../floor/grid.js';
 import { floorLayout } from '../floor/plan.js';
@@ -1044,8 +1044,8 @@ function tickWeapons(dt: number): void {
     const reach = w === 'mortar' ? 0.22 : 0.18;
     const mx = _c.x + Math.sin(yaw) * reach;
     const mz = _c.z + Math.cos(yaw) * reach;
-    // An evolved tower stands taller, and fires from where its muzzle is.
-    const my = spec.muzzleY * EVOLVE_SCALE[w][levelOf(u) - 1][1];
+    // An upgraded tower stands taller, and fires from where its muzzle is.
+    const my = spec.muzzleY * UPGRADE_SCALE[w][levelOf(u) - 1][1];
     if (w === 'flamer') {
       flame(u, mx, my, mz, yaw);
       continue;

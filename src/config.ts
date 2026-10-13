@@ -1104,11 +1104,11 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
   },
 };
 
-/** How an evolved tower stands: [width, height] at each level. They grow
+/** How an upgraded tower stands: [width, height] at each level. They grow
  *  mostly UP — the floor round a tower is its neighbours', the air over it
  *  is not. The hammer grows evenly: its arm swings through the vertical,
  *  and a stretched swing would reach further going up than coming down. */
-export const EVOLVE_SCALE: Record<WeaponId, Array<[number, number]>> = {
+export const UPGRADE_SCALE: Record<WeaponId, Array<[number, number]>> = {
   turret: [[1, 1], [1.12, 1.35], [1.22, 1.75]],
   flamer: [[1, 1], [1.12, 1.3], [1.22, 1.6]],
   tesla: [[1, 1], [1.1, 1.3], [1.2, 1.65]],

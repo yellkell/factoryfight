@@ -341,7 +341,7 @@ const coinsBefore = (await page.evaluate(() => window.__tubes.siege.state())).co
 await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:upgrade')));
 let tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');
 let coinsNow = (await page.evaluate(() => window.__tubes.siege.state())).coins;
-check(tw?.level === 2 && coinsNow < coinsBefore, `POKE EVOLVE: level ${tw?.level}, ${coinsBefore} → ${coinsNow} coins`);
+check(tw?.level === 2 && coinsNow < coinsBefore, `POKE UPGRADE: level ${tw?.level}, ${coinsBefore} → ${coinsNow} coins`);
 await frames(6);
 await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:remove')));
 tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');
