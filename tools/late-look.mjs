@@ -50,7 +50,7 @@ const n = await page.evaluate((N) => {
   cells.sort((a, b) => a[2] - b[2]);
   let k = 0;
   for (const [di, dj] of cells) { if (k >= N) break; if (t.build.placeAt(core.i + di, core.j + dj, kinds[k % kinds.length], 0)) k++; }
-  for (const tw of t.siege.turrets()) { t.menu.inspect(tw.id); t.menu.act('box:upgrade'); t.menu.act('box:upgrade'); }
+  for (const tw of t.siege.turrets()) { t.siege.xp(tw.id, 1e6); t.menu.inspect(tw.id); t.menu.act('box:upgrade'); t.menu.act('box:upgrade'); }
   t.menu.act('box:close');
   return k;
 }, TOWERS);

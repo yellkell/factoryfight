@@ -204,6 +204,7 @@ check(stood === ring.length, `a ring of ${stood}/${ring.length} towers hugging t
 const top = await page.evaluate(() => {
   const t = window.__tubes;
   for (const tw of t.siege.turrets()) {
+    t.siege.xp(tw.id, 1e6); // the XP a ring at wave 7 has long since earned
     t.menu.inspect(tw.id);
     t.menu.act('box:upgrade');
     t.menu.act('box:upgrade');

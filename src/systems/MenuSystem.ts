@@ -99,7 +99,18 @@ import {
 } from '../factory/state.js';
 import { isWeapon, refundUnit, removeUnit } from '../factory/sim.js';
 
-import { coreHealth, levelOf, sellValue, siegeLeft, startWave, upgradeCost, upgradeTower } from '../factory/siege.js';
+import {
+  coreHealth,
+  levelOf,
+  sellValue,
+  siegeLeft,
+  startWave,
+  upgradeCost,
+  upgradeTower,
+  xpNeed,
+  xpOf,
+  xpReady,
+} from '../factory/siege.js';
 import { buildView, type BuildTool } from './BuildSystem.js';
 import { goopView } from './GoopSystem.js';
 import { font } from '../ui/fonts.js';
@@ -1063,6 +1074,9 @@ export class MenuSystem extends createSystem({}) {
       unit.rot,
       Math.round((unit.hp / Math.max(1, unit.maxHp)) * 20),
       levelOf(unit),
+      // XP to the percent: a firing tower earns every frame, and a panel
+      // need not upload a texture for every hit point of it.
+      Math.floor((xpOf(unit) / Math.max(1, xpNeed(unit) ?? 1)) * 100),
       held,
       unit.ports.join('/'),
       unit.craftT >= 0,
@@ -1962,18 +1976,32 @@ export class MenuSystem extends createSystem({}) {
     const level = levelOf(unit);
     const next = tower ? upgradeCost(unit) : null;
     const coins = plant.siege.coins;
+    const xp = xpOf(unit);
+    const need = xpNeed(unit);
+    const earned = xpReady(unit);
     const half = (cw - PAD * 2 - 12) / 2;
     const footY = ch - PAD - 84;
     const buttons: PanelButton[] = [];
     if (tower) {
+      // EVOLVE: earned first (XP), then bought (coins). Until it has
+      // earned it the button says how far there is to go; once it has,
+      // and the purse can pay, it is the panel's one gold button.
+      const canPay = next !== null && coins >= next;
       buttons.push(
         {
           id: 'box:upgrade',
-          label: next === null ? 'MAX LEVEL' : 'UPGRADE',
-          sub: next === null ? 'fully built' : `${next} coins`,
+          label: next === null ? 'MAX LEVEL' : 'EVOLVE',
+          sub:
+            next === null || need === null
+              ? 'fully evolved'
+              : !earned
+                ? `${Math.ceil(need - xp).toLocaleString('en-US')} XP to go`
+                : canPay
+                  ? `${next} coins`
+                  : `needs ${next} coins`,
           px: 26,
-          disabled: next === null || coins < next,
-          tone: next !== null && coins >= next ? UI.positive : undefined,
+          primary: earned && canPay,
+          disabled: next === null || !earned || !canPay,
           x: PAD,
           y: footY,
           w: half,
@@ -2024,13 +2052,37 @@ export class MenuSystem extends createSystem({}) {
           return;
         }
         // THE LEVEL: one hex per level, lit in the tower's neon.
-        pips(g, tx, 90, SIEGE.levels.length, level, hue, 10, 25);
-        caps(g, `LEVEL ${level}/${SIEGE.levels.length}`, tx + SIEGE.levels.length * 25 + 8, 91, { px: 14, track: 2, color: UI.dim });
-        price(g, coins, cw - PAD, 91, { px: 20, align: 'right' });
+        pips(g, tx, 84, SIEGE.levels.length, level, hue, 10, 25);
+        caps(g, `LEVEL ${level}/${SIEGE.levels.length}`, tx + SIEGE.levels.length * 25 + 8, 85, { px: 14, track: 2, color: UI.dim });
+        price(g, coins, cw - PAD, 85, { px: 20, align: 'right' });
+        // THE XP: what it has earned toward its next level — gold, and
+        // full and lit once it is ready to evolve.
+        const bx = tx + 64;
+        const bw = cw - PAD - bx;
+        caps(g, 'XP', tx, 118, { px: 14, track: 2 });
+        chamfer(g, bx, 111, bw, 14, 4);
+        g.fillStyle = 'rgba(160,185,255,0.12)';
+        g.fill();
+        const frac = need === null ? 1 : Math.min(1, xp / need);
+        if (frac > 0) {
+          chamfer(g, bx, 111, Math.max(8, bw * frac), 14, 4);
+          g.fillStyle = earned || need === null ? SKIN.gold : rgba(SKIN.gold, 0.7);
+          g.shadowColor = SKIN.gold;
+          g.shadowBlur = earned ? 10 : 0;
+          g.fill();
+          g.shadowBlur = 0;
+        }
+        caps(
+          g,
+          need === null ? 'FULLY EVOLVED' : earned ? 'READY TO EVOLVE' : `${Math.floor(xp).toLocaleString('en-US')} / ${need.toLocaleString('en-US')}`,
+          bx + bw / 2,
+          119,
+          { px: 11, track: 2, align: 'center', color: earned || need === null ? SKIN.onGold : UI.text },
+        );
         // THE PLATE: how much chewing it can still take.
         const hp = unit.maxHp > 0 ? Math.max(0, unit.hp / unit.maxHp) : 1;
-        caps(g, 'PLATE', tx, 128, { px: 14, track: 2 });
-        coreGauge(g, tx + 64, 120, cw - PAD - tx - 64, 15, hp);
+        caps(g, 'PLATE', tx, 150, { px: 14, track: 2 });
+        coreGauge(g, bx, 143, bw, 14, hp);
       },
       buttons,
       this.hover,

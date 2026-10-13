@@ -105,9 +105,25 @@ const towers = await page.evaluate(() => window.__tubes.siege.turrets());
 if (towers.length) {
   await page.evaluate((id) => window.__tubes.menu.inspect(id), towers[0].id);
   await frames(8);
+  const id = towers[0].id;
   save('tower', await page.evaluate(() => window.__tubes.menu.snapBox()));
   await inFrame('tower', await page.evaluate(() => window.__tubes.menu.boxRects()), await page.evaluate(() => window.__tubes.menu.boxLayout()));
+  const grant = (frac) =>
+    page.evaluate(
+      ({ id, frac }) => {
+        const tw = window.__tubes.siege.turrets().find((t) => t.id === id);
+        window.__tubes.siege.xp(id, tw.xpNeed * frac - tw.xp);
+      },
+      { id, frac },
+    );
+  await grant(0.55);
+  await frames(6);
+  save('tower-earning', await page.evaluate(() => window.__tubes.menu.snapBox()));
+  await grant(1);
+  await frames(6);
+  save('tower-ready', await page.evaluate(() => window.__tubes.menu.snapBox()));
   await act('box:upgrade');
+  await grant(1);
   await act('box:upgrade');
   await frames(6);
   save('tower-max', await page.evaluate(() => window.__tubes.menu.snapBox()));

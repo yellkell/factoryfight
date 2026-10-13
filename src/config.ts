@@ -1020,6 +1020,11 @@ export interface WeaponSpec {
   stunS?: number;
   /** COINS to build one; each upgrade costs a share of this. */
   cost: number;
+  /** XP (damage dealt, in first-wave hit points) it must have earned, all
+   *  told, before level 2 and level 3 can be bought. Tuned so the next
+   *  level comes after about one and a half waves' work, the last after
+   *  four or five more (tools/balance-bot.mjs prints what each earns). */
+  xp: [number, number];
   /** The colour it fires in. */
   color: number;
   /** Muzzle height (plant m). */
@@ -1036,6 +1041,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     damage: 10,
     speed: 10,
     cost: 50,
+    xp: [900, 3600],
     color: 0xffb347,
     muzzleY: 0.29,
   },
@@ -1049,6 +1055,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     cone: 0.5,
     burn: { dps: 5, s: 2.5 },
     cost: 80,
+    xp: [5000, 22000],
     color: 0xff7a1a,
     muzzleY: 0.27,
   },
@@ -1062,6 +1069,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     splash: 0.22,
     stunS: 0.5,
     cost: 70,
+    xp: [1000, 4200],
     color: 0xb8fff4,
     muzzleY: 0.3,
   },
@@ -1075,6 +1083,7 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     chain: 10,
     chainReach: 0.5,
     cost: 100,
+    xp: [1400, 5600],
     color: 0xc79bff,
     muzzleY: 0.72,
   },
@@ -1089,9 +1098,22 @@ export const WEAPONS: Record<WeaponId, WeaponSpec> = {
     splash: 0.5,
     speed: 2.4,
     cost: 120,
+    xp: [1600, 6400],
     color: 0xffd36a,
     muzzleY: 0.32,
   },
+};
+
+/** How an evolved tower stands: [width, height] at each level. They grow
+ *  mostly UP — the floor round a tower is its neighbours', the air over it
+ *  is not. The hammer grows evenly: its arm swings through the vertical,
+ *  and a stretched swing would reach further going up than coming down. */
+export const EVOLVE_SCALE: Record<WeaponId, Array<[number, number]>> = {
+  turret: [[1, 1], [1.12, 1.35], [1.22, 1.75]],
+  flamer: [[1, 1], [1.12, 1.3], [1.22, 1.6]],
+  tesla: [[1, 1], [1.1, 1.3], [1.2, 1.65]],
+  mortar: [[1, 1], [1.12, 1.25], [1.22, 1.5]],
+  hammer: [[1, 1], [1.18, 1.18], [1.36, 1.36]],
 };
 
 export const SIEGE = {
@@ -1132,12 +1154,14 @@ export const SIEGE = {
   hpPerWave2: 0.11,
   /** A sold tower returns this share of every coin put into it. */
   sellBack: 0.7,
-  /** TOWER LEVELS. Level 2 and 3 cost these shares of the tower's price,
-   *  and multiply its damage, reach, rate of fire and hit points. */
+  /** TOWER LEVELS — evolutions. A tower must EARN a level before it can
+   *  buy one (WEAPONS[…].xp); then the level costs `cost` × its price,
+   *  and multiplies its damage, reach, rate of fire and hit points. Each
+   *  one is a big step, because you waited for it. */
   levels: [
     { cost: 0, damage: 1, range: 1, rate: 1, hp: 1 },
-    { cost: 0.8, damage: 1.6, range: 1.12, rate: 1.2, hp: 1.5 },
-    { cost: 1.4, damage: 2.6, range: 1.25, rate: 1.45, hp: 2.2 },
+    { cost: 0.8, damage: 1.75, range: 1.14, rate: 1.2, hp: 1.6 },
+    { cost: 1.4, damage: 3, range: 1.28, rate: 1.45, hp: 2.4 },
   ],
   /** THE CHEW (factory/field.ts): a tower's cell costs the tide this
    *  many steps, plus `chewPerHp` a hit point, to go THROUGH rather than

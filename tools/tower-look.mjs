@@ -10,8 +10,9 @@
  * tower of each kind adds to the scene, at level 1 and at level 3 —
  * three.js walks every one of them every frame. Then the line-up, a
  * row of TURRET · HAMMER · FLAMER · TESLA · MORTAR with the CORE at the
- * end, photographed at each level: from where a standing player's eyes
- * are (`lineup-l1.png`), level with them from the side (`-side`), and
+ * end, photographed at each level (1, 2 and 3 — the evolutions): from
+ * where a standing player's eyes are (`lineup-l1.png`), level with them
+ * from the side (`-side`), and
  * from straight over (`-top`) — and the menu pictures the studio baked
  * of each (`lineup-pictures.png`).
  */
@@ -64,16 +65,21 @@ const count = () =>
     });
     return [c, m];
   });
-const upgrade = () =>
-  page.evaluate(() => {
+/** Every tower one level up (or `times` up): the XP it needs is granted
+ *  and the coins put in the purse, then it is bought through the panel. */
+const upgrade = (times = 1) =>
+  page.evaluate((times) => {
     const t = window.__tubes;
-    for (const tw of t.siege.turrets()) {
-      t.menu.inspect(tw.id);
-      t.menu.act('box:upgrade');
-      t.menu.act('box:upgrade');
+    for (let k = 0; k < times; k++) {
+      for (const tw of t.siege.turrets()) {
+        if (tw.xpNeed !== null) t.siege.xp(tw.id, Math.max(0, tw.xpNeed - tw.xp));
+        t.siege.coins(1000);
+        t.menu.inspect(tw.id);
+        t.menu.act('box:upgrade');
+      }
     }
     t.menu.act('box:close');
-  });
+  }, times);
 const core = (await page.evaluate(() => window.__tubes.plant.plan())).find((u) => u.type === 'dock');
 
 // THE COUNT: one tower at a time on an empty floor, the scene walked
@@ -85,7 +91,7 @@ for (const w of KINDS) {
   const ok = await page.evaluate(({ i, j, w }) => window.__tubes.build.placeAt(i, j, w, 0), { i: core.i - 2, j: core.j, w });
   await page.waitForTimeout(150);
   const [c1, m1] = await count();
-  await upgrade();
+  await upgrade(2);
   await page.waitForTimeout(150);
   const [c3, m3] = await count();
   counts[w] = { ok, l1: c1 - c0, l1Meshes: m1 - m0, l3: c3 - c0, l3Meshes: m3 - m0 };
@@ -144,8 +150,8 @@ if (row.some((r) => !r)) console.log('  ✗ the row did not all stand', row);
 await page.waitForTimeout(400);
 const cx = (core.i + 0.5) * CELL * S;
 const cz = (core.j - 2.5 + 0.5) * CELL * S;
-for (const level of [1, 3]) {
-  if (level === 3) {
+for (const level of [1, 2, 3]) {
+  if (level > 1) {
     await upgrade();
     await page.waitForTimeout(400);
   }

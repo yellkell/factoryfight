@@ -27,11 +27,22 @@ from every side at once: a *They Are Billions* horde in your living room.
 - **Ask a tower how it's holding up.** Point at one (or hover the mouse,
   in the emulator), reach a fingertip toward it, or open its panel, and it
   shows a health gauge like the core's; otherwise towers stay clean.
-- **Touch a tower to UPGRADE or SELL it.** The panel is just the tower, its
-  level dots and two big buttons: UPGRADE (with its price) and SELL (with what
-  you get back). Three levels, each buying damage, reach and rate of fire. An
-  upgraded tower stands a little bigger, wears a neon ring per level and
-  has thicker plate (×1.5, then ×2.2 hit points). Selling returns 70% of
+- **Towers EVOLVE — earned, then bought.** Every hit point of damage a
+  tower deals is XP (counted in first-wave hit points, so a wave's work is
+  worth about the same early and late; a flamer's burn counts too). Once it
+  has earned its next level a gold ring breathes on the floor round it, and
+  you can spend the coins to evolve it. Three levels, each a big step
+  (×1.75, then ×3 damage, more reach and rate of fire, ×1.6 then ×2.4
+  hit points), and each one an exaggerated form of the same tower: it
+  grows (mostly UP: a level-3 turret stands three quarters taller) and
+  sprouts new parts (the turret a crown of spears and a halo, the tesla a
+  court of three pylons, the flamer horns and exhaust stacks, the hammer
+  winged spikes, the mortar backfins). XP needed per tower is in
+  `WEAPONS[…].xp`: about a wave and a half for the first evolution, four
+  or five more for the last.
+- **Touch a tower to EVOLVE or SELL it.** The panel is the tower, its
+  level, its XP bar and plate, and two big buttons: EVOLVE (how much XP to
+  go, then its price) and SELL (what you get back). Selling returns 70% of
   everything you put in.
 - **Coins are tight.** Kills pay a little (a fifth of a coin a mite, 2 a
   beetle, 25 a hulk); clearing a wave pays more (40 + 15 × the wave). You
@@ -39,9 +50,10 @@ from every side at once: a *They Are Billions* horde in your living room.
 - **They get tougher every wave.** Hit points grow with the wave
   (× 1 + 0.15w + 0.11w² for wave index w): over twice as tough by wave 4,
   four and a half times by wave 6, eleven by the last. A level-1 turret
-  one-shots a mite only in the first wave; after that, upgrade or lose. `tools/balance-bot.mjs` plays the whole
-  ladder the blunt way (spend everything, every wave, on the free cells
-  nearest the core) and finishes it at about half a core.
+  one-shots a mite only in the first wave; after that, evolve or lose. `tools/balance-bot.mjs` plays the whole
+  ladder the blunt way (evolve whatever has earned it, then spend
+  everything on the free cells nearest the core) and finishes it
+  bloodied, at about a sixth of a core.
 - **They come out of EVERY WALL.** When a wave starts they climb out of the
   foot of every real wall in the room, anywhere along it, and make for the
   core: a hundred in the first wave, thousands by the end. Nobody knows the
@@ -131,7 +143,7 @@ other hand's, anything else with either.
 
   Header and tiles are one flat panel, so nothing on it can hide anything
   else.
-- **Touch a tower** (either hand) to open its panel: UPGRADE, SELL and ✕, with
+- **Touch a tower** (either hand) to open its panel: EVOLVE, SELL and ✕, with
   its reach drawn on the floor while it's open.
 - **Panels come to you.** Pause and tower panels appear within arm's reach,
   and you press them by touch.
@@ -152,8 +164,8 @@ stands in. Its hands can be switched on from its panel.
 ```bash
 npm run typecheck
 npm run dev &
-node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, upgrade, sell, a crack in the floor, the chew, a leak, the fall
-node tools/hand-walk.mjs    # bare hands: the palm panel, pokes, touching a tower to upgrade and sell
+node tools/siege-walk.mjs   # end to end: wave 1 from every wall, coins, XP, evolve, sell, a crack in the floor, the chew, a leak, the fall
+node tools/hand-walk.mjs    # bare hands: the palm panel (either palm), pokes, touching a tower to evolve and sell
 node tools/horde-look.mjs   # 3,600 alive at once (sim cost; CROWD=8000 for more), then a real 3,300-mite wave vs a ring of towers
 node tools/balance-bot.mjs  # plays all ten waves the blunt way: where the difficulty really sits
 node tools/weapons-look.mjs # each tower photographed firing (shots/weapons/)

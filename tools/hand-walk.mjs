@@ -330,11 +330,18 @@ await tipTo(towerPt, 0.35);
 await frames(4);
 await page.screenshot({ path: 'shots/hands/tower-panel.png' });
 console.log('  · shots/hands/tower-panel.png');
+// It has earned its evolution (the walk grants the XP a wave would).
+await page.evaluate(() => {
+  const t = window.__tubes;
+  const tw = t.siege.turrets().find((x) => x.type === 'turret');
+  t.siege.xp(tw.id, tw.xpNeed);
+});
+await frames(4);
 const coinsBefore = (await page.evaluate(() => window.__tubes.siege.state())).coins;
 await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:upgrade')));
 let tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');
 let coinsNow = (await page.evaluate(() => window.__tubes.siege.state())).coins;
-check(tw?.level === 2 && coinsNow < coinsBefore, `POKE UPGRADE: level ${tw?.level}, ${coinsBefore} → ${coinsNow} coins`);
+check(tw?.level === 2 && coinsNow < coinsBefore, `POKE EVOLVE: level ${tw?.level}, ${coinsBefore} → ${coinsNow} coins`);
 await frames(6);
 await poke(await page.evaluate(() => window.__tubes.menu.buttonWorld('box:remove')));
 tw = (await page.evaluate(() => window.__tubes.siege.turrets())).find((t) => t.type === 'turret');

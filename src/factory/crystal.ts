@@ -360,6 +360,14 @@ export function buildTurret(group: Group): GunRefs {
       const a = (s / 6) * Math.PI * 2 + Math.PI / 6;
       base.solid(blockGeo(0.05, 0.04, 0.11), at(Math.sin(a) * 0.104, 0.09, Math.cos(a) * 0.104, 0, a, 0, 1, 1, 0.2), 0.0035);
     }
+    base.neon(new Trim().ring(0.06, 0.13, 0.004));
+    base.from = 3;
+    // THE BASTION: six tall shards round the pad, leaning out like a
+    // crown of spears.
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
+      base.solid(shardGeo(0.018, 0.15, 0.014, 4), at(Math.sin(a) * 0.135, 0.06, Math.cos(a) * 0.135, Math.cos(a) * 0.28, 0, -Math.sin(a) * 0.28), 0.003);
+    }
     const head = new Piece();
     // The turntable, and the dome on it: a faceted cupola, cut flat on top.
     head.solid(prismGeo(0.088, 0.084, 0.024), at(0, 0.012, 0), 0.0045);
@@ -370,6 +378,14 @@ export function buildTurret(group: Group): GunRefs {
     head.solid(blockGeo(0.05, 0.042, 0.05), at(0, 0.064, 0.072, Math.PI / 2, 0, 0, 1.3, 1, 0.75), 0.004);
     head.from = 2;
     for (const sx of [-1, 1]) head.solid(prismGeo(0.03, 0.026, 0.09), at(sx * 0.098, 0.06, -0.01, Math.PI / 2, 0, 0, 1, 1, 0.75), 0.004);
+    // A dorsal fin swept back off the dome.
+    head.solid(shardGeo(0.022, 0.1, 0.012, 4), at(0, 0.13, -0.035, -0.45, 0, 0, 0.5, 1, 1.8), 0.003);
+    head.from = 3;
+    // THE CROWN: three horns off the dome, and a halo floating round it.
+    for (const a of [-0.75, 0.75]) {
+      head.solid(shardGeo(0.016, 0.12, 0.01, 4), at(Math.sin(a) * 0.05, 0.12, -0.02, -0.25, 0, -a * 0.6), 0.003);
+    }
+    head.neon(new Trim().ring(0.1, 0.125, 0.005));
     const barrel = new Piece();
     // THE LANCES: two long hex barrels, each with a brake at the muzzle.
     for (const sx of [-1, 1]) {
@@ -420,15 +436,25 @@ export function buildMortar(group: Group): GunRefs {
       const a = Math.PI + s * 0.5;
       base.solid(shardGeo(0.018, 0.06, 0.012, 6), at(Math.sin(a) * 0.118, 0.115, Math.cos(a) * 0.118), 0.003);
     }
+    base.neon(new Trim().ring(0.105, 0.115, 0.004));
     base.from = 3;
     for (let s = 0; s < 6; s++) {
       const a = (s / 6) * Math.PI * 2;
       base.solid(shardGeo(0.018, 0.07, 0.014), at(Math.sin(a) * 0.17, 0.035, Math.cos(a) * 0.17, Math.cos(a) * 0.6, 0, -Math.sin(a) * 0.6), 0.003);
     }
+    // THE BACKFINS: three great shards fanned up behind the pedestal.
+    for (const a of [Math.PI - 0.7, Math.PI, Math.PI + 0.7]) {
+      base.solid(shardGeo(0.03, 0.2, 0.02, 4), at(Math.sin(a) * 0.12, 0.09, Math.cos(a) * 0.12, Math.cos(a) * 0.35, 0, -Math.sin(a) * 0.35), 0.0035);
+    }
     const head = new Piece();
     head.solid(prismGeo(0.1, 0.088, 0.04), at(0, 0.02, 0));
     // The trunnion cheeks the tube is slung between.
     for (const sx of [-1, 1]) head.solid(blockGeo(0.05, 0.036, 0.1), at(sx * 0.084, 0.07, 0, 0, 0, 0, 0.3, 1, 1), 0.0035);
+    head.from = 2;
+    // Antlers off the cheeks.
+    for (const sx of [-1, 1]) head.solid(shardGeo(0.012, 0.08, 0.008, 4), at(sx * 0.09, 0.15, -0.01, 0, 0, sx * -0.3), 0.003);
+    head.from = 3;
+    for (const sx of [-1, 1]) head.solid(shardGeo(0.01, 0.06, 0.006, 4), at(sx * 0.1, 0.13, 0.04, 0.3, 0, sx * -0.6), 0.003);
     const barrel = new Piece();
     // THE TUBE: fat and short, a hex bore with a heavy breech.
     barrel.solid(prismGeo(0.072, 0.066, 0.2), at(0, 0, 0.07, Math.PI / 2));
@@ -493,8 +519,21 @@ export function buildTesla(group: Group): GunRefs {
     plate(0.33, 0.078);
     base.from = 2;
     plate(0.47, 0.06);
+    // OUTRIGGERS: three prongs off the middle plate, lit at the tips.
+    for (let s = 0; s < 3; s++) {
+      const a = (s / 3) * Math.PI * 2 + Math.PI / 3;
+      base.solid(shardGeo(0.011, 0.13, 0.05, 4), at(Math.sin(a) * 0.06, 0.39, Math.cos(a) * 0.06, Math.cos(a) * 0.35, 0, -Math.sin(a) * 0.35), 0.003);
+      base.lit(new OctahedronGeometry(0.013, 0), at(Math.sin(a) * 0.105, 0.515, Math.cos(a) * 0.105));
+    }
     base.from = 3;
     plate(0.58, 0.046);
+    // THE PYLONS: three slim towers of their own round the pad, each
+    // with a spark on its point — a coil with a court.
+    for (let s = 0; s < 3; s++) {
+      const a = (s / 3) * Math.PI * 2;
+      base.solid(prismGeo(0.016, 0.006, 0.3, 4), at(Math.sin(a) * 0.105, 0.18, Math.cos(a) * 0.105), 0.003);
+      base.lit(new OctahedronGeometry(0.014, 0), at(Math.sin(a) * 0.105, 0.34, Math.cos(a) * 0.105));
+    }
     const crown = new Piece();
     for (const [rx, rz] of [
       [Math.PI / 2, 0.5],
@@ -503,7 +542,10 @@ export function buildTesla(group: Group): GunRefs {
       crown.neon(new Trim().ring(0, 0.085, 0.005), at(0, 0, 0, rx, 0, rz));
     }
     crown.lit(new OctahedronGeometry(0.042, 1), at());
+    crown.from = 2;
+    crown.neon(new Trim().ring(0, 0.11, 0.004));
     crown.from = 3;
+    crown.neon(new Trim().ring(0, 0.15, 0.004), at(0, 0, 0, 0.35, 0, 0));
     for (let s = 0; s < 3; s++) {
       const a = (s / 3) * Math.PI * 2;
       crown.solid(shardGeo(0.012, 0.07, 0.01, 4), at(Math.sin(a) * 0.045, -0.05, Math.cos(a) * 0.045, Math.cos(a) * 0.5, 0, -Math.sin(a) * 0.5), 0.003);
@@ -549,6 +591,20 @@ export function buildFlamer(group: Group): GunRefs {
       base.solid(prismGeo(0.04, 0.04, 0.13), at(sx * 0.15, 0.1, -0.03), 0.0035);
       base.solid(prismGeo(0.04, 0.012, 0.03), at(sx * 0.15, 0.18, -0.03), 0.0035);
     }
+    // EXHAUST STACKS up the back, glowing at the top.
+    for (const sx of [-1, 1]) {
+      base.solid(prismGeo(0.018, 0.022, 0.17), at(sx * 0.055, 0.25, -0.1), 0.0035);
+      base.lit(new CylinderGeometry(0.013, 0.013, 0.012, 6), at(sx * 0.055, 0.34, -0.1));
+    }
+    base.from = 3;
+    // THE HORNS: two great swept shards off the drum's shoulders, and a
+    // spine of smaller ones down its back.
+    for (const sx of [-1, 1]) {
+      base.solid(shardGeo(0.026, 0.17, 0.016, 4), at(sx * 0.1, 0.23, 0.0, -0.35, 0, sx * -0.55), 0.0035);
+    }
+    for (let s = 0; s < 3; s++) {
+      base.solid(shardGeo(0.012, 0.05 + s * 0.012, 0.008, 4), at(0, 0.19 + s * 0.012, -0.08 - s * 0.03, -0.5, 0, 0), 0.003);
+    }
     const head = new Piece();
     head.solid(prismGeo(0.06, 0.055, 0.02), at(0, 0.01, 0), 0.004);
     head.solid(blockGeo(0.045, 0.035, 0.055), at(0, 0.045, -0.02, 0, 0, 0, 1, 1, 1.3), 0.004);
@@ -559,11 +615,14 @@ export function buildFlamer(group: Group): GunRefs {
     barrel.solid(new OctahedronGeometry(0.042, 0), at(0, 0, -0.035, 0, 0, 0, 1, 1, 1.2));
     barrel.neon(new Trim().hoop(0, 0, 0.16, 0.068, 0.006));
     barrel.lit(new SphereGeometry(1, 10, 8), at(0, 0, 0.17, 0, 0, 0, 0.022, 0.022, 0.03));
+    barrel.from = 2;
+    barrel.neon(new Trim().hoop(0, 0, 0.13, 0.058, 0.004));
     barrel.from = 3;
     for (let s = 0; s < 6; s++) {
       const a = (s / 6) * Math.PI * 2;
       barrel.solid(shardGeo(0.012, 0.035, 0.006, 4), at(Math.sin(a) * 0.056, Math.cos(a) * 0.056, 0.12, 0, 0, -a), 0.003);
     }
+    barrel.neon(new Trim().hoop(0, 0, 0.17, 0.088, 0.005));
     return { base, head, barrel };
   });
   const w = new Wardrobe(hex);
@@ -626,6 +685,14 @@ export function buildHammer(group: Group): GunRefs {
     // THE PYLON: one tapering crystal, turning with what it watches.
     const head = new Piece();
     head.solid(prismGeo(0.07, 0.05, 0.3), at(0, 0.18, -0.03));
+    head.from = 2;
+    // BUTTRESSES: two shards braced against the pylon's flanks.
+    for (const sx of [-1, 1]) head.solid(shardGeo(0.022, 0.15, 0.012, 4), at(sx * 0.065, 0.1, -0.03, 0, 0, sx * -0.28), 0.003);
+    head.from = 3;
+    // A crown of three spikes behind the hinge.
+    for (const a of [-0.5, 0, 0.5]) {
+      head.solid(shardGeo(0.014, 0.1, 0.008, 4), at(Math.sin(a) * 0.04, 0.38, -0.07, -0.5, 0, -a * 0.8), 0.003);
+    }
     const swing = new Piece();
     // The hinge: a gem through the top of the pylon.
     swing.solid(new OctahedronGeometry(0.045, 0), at(0, 0, 0, 0, 0, 0, 1.6, 0.8, 0.8));
@@ -643,6 +710,8 @@ export function buildHammer(group: Group): GunRefs {
       const a = (s / 6) * Math.PI * 2;
       swing.solid(shardGeo(0.012, 0.04, 0.005, 4), at(Math.sin(a) * 0.045, 0.06, 0.5 + Math.cos(a) * 0.045), 0.003);
     }
+    // THE WINGS of the head: a great spike out of either end.
+    for (const sx of [-1, 1]) swing.solid(shardGeo(0.026, 0.09, 0.02, 4), at(sx * 0.085, -0.02, 0.5, 0, 0, sx * -Math.PI / 2), 0.0035);
     return { base, head, swing };
   });
   const w = new Wardrobe(hex);
