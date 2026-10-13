@@ -930,6 +930,11 @@ export interface EnemySpec {
   leak: number;
   /** Hit points a second it chews off a tower standing in its way. */
   bite: number;
+  /** THE GRUDGE: the share of this kind that turn on a tower they brush
+   *  past and chew it, instead of only chewing what stands in their way.
+   *  Settled per crawler as it spawns, so it is a temper, not a dice roll
+   *  every step: half the hulks, most beetles, a few mites. */
+  aggro: number;
   /** Body radius — the hit circle and the mesh's scale. */
   radius: number;
   /** How far a mortar's blast throws it back (1 = all the way). */
@@ -950,6 +955,7 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     speed: 0.42,
     leak: 1,
     bite: 0.6,
+    aggro: 0.2,
     radius: 0.05,
     give: 1,
     coin: 0.2,
@@ -963,6 +969,7 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     speed: 0.28,
     leak: 5,
     bite: 3,
+    aggro: 0.6,
     radius: 0.085,
     give: 0.6,
     coin: 2,
@@ -976,6 +983,7 @@ export const ENEMIES: Record<EnemyId, EnemySpec> = {
     speed: 0.14,
     leak: 20,
     bite: 25,
+    aggro: 0.5,
     radius: 0.2,
     give: 0.2,
     coin: 25,
@@ -1151,7 +1159,7 @@ export const SIEGE = {
    *  for wave index w — a mite is three times as tough by wave 5 and
    *  eleven times by the last shift, which is what upgrades are for. */
   hpPerWave: 0.15,
-  hpPerWave2: 0.11,
+  hpPerWave2: 0.125,
   /** A sold tower returns this share of every coin put into it. */
   sellBack: 0.7,
   /** TOWER LEVELS — evolutions. A tower must EARN a level before it can
